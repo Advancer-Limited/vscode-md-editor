@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "askance": {
+      "command": "node",
+      "args": [
+        "D:/Development/advancer/VSMarkdownEditor/node_modules/@askance/cli/dist/mcp-server/index.js"
+      ]
+    }
+  }
+}

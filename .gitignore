@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.vsix
+.vscode-test/
+
+# Askance credentials (do not commit)
+.askance/credentials
+
+# OS files
+.DS_Store
+Thumbs.db

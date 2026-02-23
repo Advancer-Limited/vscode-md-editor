@@ -1,0 +1,169 @@
+{
+  "name": "vscode-md-editor",
+  "displayName": "VS Code MD Editor",
+  "description": "A rich Markdown editor with live preview, wikilinks, backlink panel, graph visualizer, and LanguageTool grammar checking",
+  "version": "0.1.0",
+  "publisher": "advancer",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vscodeMdEditorSidebar",
+          "title": "Markdown Links",
+          "icon": "$(link)"
+        }
+      ]
+    },
+    "views": {
+      "vscodeMdEditorSidebar": [
+        {
+          "id": "vscodeMdEditor.backlinks",
+          "name": "Backlinks"
+        },
+        {
+          "id": "vscodeMdEditor.graph",
+          "name": "Graph",
+          "type": "webview"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "vscodeMdEditor.editor",
+        "displayName": "VS Code MD Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "vscodeMdEditor.openWithEditor",
+        "title": "Open with VS Code MD Editor",
+        "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.checkGrammar",
+        "title": "Check Grammar with LanguageTool",
+        "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.setAsDefault",
+        "title": "Set VS Code MD Editor as Default for .md Files",
+        "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.showGraph",
+        "title": "Show Link Graph",
+        "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.toggleGraphMode",
+        "title": "Toggle Graph Mode (Local/Global)",
+        "category": "Markdown Editor"
+      }
+    ],
+    "configuration": {
+      "title": "VS Code MD Editor",
+      "properties": {
+        "vscodeMdEditor.languageTool.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable LanguageTool grammar and spelling checking"
+        },
+        "vscodeMdEditor.languageTool.apiUrl": {
+          "type": "string",
+          "default": "https://api.languagetoolplus.com/v2/check",
+          "description": "LanguageTool API endpoint URL. Change this for self-hosted instances."
+        },
+        "vscodeMdEditor.languageTool.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "LanguageTool Premium API key (leave empty for free tier)"
+        },
+        "vscodeMdEditor.languageTool.username": {
+          "type": "string",
+          "default": "",
+          "description": "LanguageTool Premium username/email (required with API key)"
+        },
+        "vscodeMdEditor.languageTool.language": {
+          "type": "string",
+          "default": "auto",
+          "description": "Language code for checking (e.g., 'en-US', 'de-DE', or 'auto' for auto-detection)"
+        },
+        "vscodeMdEditor.languageTool.motherTongue": {
+          "type": "string",
+          "default": "",
+          "description": "Your mother tongue language code for better error detection"
+        },
+        "vscodeMdEditor.languageTool.checkDelayMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 500,
+          "maximum": 10000,
+          "description": "Delay in milliseconds before triggering a grammar check after typing"
+        },
+        "vscodeMdEditor.graph.defaultMode": {
+          "type": "string",
+          "enum": [
+            "local",
+            "global"
+          ],
+          "default": "local",
+          "description": "Default graph view mode"
+        },
+        "vscodeMdEditor.graph.localDepth": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Default BFS depth for local graph mode (1-3 hops)"
+        }
+      }
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "vscodeMdEditor.openWithEditor",
+          "when": "resourceExtname == .md",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "copy-vendor": "node scripts/copy-vendor.js",
+    "compile": "npm run check-types && npm run copy-vendor && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "watch": "npm run copy-vendor && node esbuild.js --watch",
+    "package": "npm run check-types && npm run copy-vendor && node esbuild.js --production",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@askance/cli": "^0.3.5",
+    "@types/markdown-it": "^14.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "force-graph": "^1.51.1",
+    "markdown-it": "^14.0.0"
+  }
+}
