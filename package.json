@@ -3,7 +3,16 @@
   "displayName": "VS Code MD Editor",
   "description": "A rich Markdown editor with live preview, wikilinks, backlink panel, graph visualizer, and LanguageTool grammar checking",
   "version": "0.1.0",
+  "license": "MIT",
   "publisher": "advancer",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Advancer-Limited/vscode-md-editor.git"
+  },
+  "homepage": "https://github.com/Advancer-Limited/vscode-md-editor#readme",
+  "bugs": {
+    "url": "https://github.com/Advancer-Limited/vscode-md-editor/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
