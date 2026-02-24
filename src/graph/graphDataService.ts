@@ -1,5 +1,5 @@
 import { FileIndexService } from '../wikilink/fileIndexService.js';
-import { GraphNode, GraphEdge, GraphFilters } from '../types.js';
+import { GraphNode, GraphEdge, GraphFilters, RelationshipItem } from '../types.js';
 
 export class GraphDataService {
   constructor(private readonly fileIndexService: FileIndexService) {}
@@ -104,6 +104,79 @@ export class GraphDataService {
     }
 
     return { nodes, edges };
+  }
+
+  /** Get relationship items for a file, grouped by direction and depth. */
+  public getRelationships(filePath: string, maxDepth: number): RelationshipItem[] {
+    const entry = this.fileIndexService.getFileEntry(filePath);
+    if (!entry) {
+      return [];
+    }
+
+    const items: RelationshipItem[] = [];
+    const visited = new Set<string>([filePath]);
+
+    // BFS queue: [relativePath, depth, direction-from-start]
+    const queue: Array<{ path: string; depth: number; direction: 'outgoing' | 'incoming' }> = [];
+
+    // Seed depth-1: direct outgoing links
+    for (const link of entry.outgoingLinks) {
+      const resolved = this.fileIndexService.resolveWikilink(link.target);
+      if (resolved && !visited.has(resolved)) {
+        visited.add(resolved);
+        queue.push({ path: resolved, depth: 1, direction: 'outgoing' });
+      }
+    }
+
+    // Seed depth-1: direct incoming links (backlinks)
+    const backlinks = this.fileIndexService.getBacklinksFor(entry.stem);
+    for (const bl of backlinks) {
+      if (!visited.has(bl.relativePath)) {
+        visited.add(bl.relativePath);
+        queue.push({ path: bl.relativePath, depth: 1, direction: 'incoming' });
+      }
+    }
+
+    // Process BFS
+    let idx = 0;
+    while (idx < queue.length) {
+      const { path, depth, direction } = queue[idx++];
+      const neighbor = this.fileIndexService.getFileEntry(path);
+      if (!neighbor) {
+        continue;
+      }
+
+      items.push({
+        relativePath: path,
+        label: neighbor.stem,
+        direction,
+        depth,
+      });
+
+      // Expand further if within maxDepth
+      if (depth < maxDepth) {
+        // Outgoing from this neighbor
+        for (const link of neighbor.outgoingLinks) {
+          const resolved = this.fileIndexService.resolveWikilink(link.target);
+          if (resolved && !visited.has(resolved)) {
+            visited.add(resolved);
+            queue.push({ path: resolved, depth: depth + 1, direction });
+          }
+        }
+        // Incoming to this neighbor
+        const nBacklinks = this.fileIndexService.getBacklinksFor(neighbor.stem);
+        for (const bl of nBacklinks) {
+          if (!visited.has(bl.relativePath)) {
+            visited.add(bl.relativePath);
+            queue.push({ path: bl.relativePath, depth: depth + 1, direction });
+          }
+        }
+      }
+    }
+
+    // Sort by depth, then label
+    items.sort((a, b) => a.depth - b.depth || a.label.localeCompare(b.label));
+    return items;
   }
 
   /** Apply filters to graph data. */

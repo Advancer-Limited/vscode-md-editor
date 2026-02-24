@@ -60,19 +60,33 @@ export interface LanguageToolReplacement {
 // Webview Message Protocol
 // ========================================
 
+/** Grammar match data sent to the webview for inline highlights */
+export interface GrammarMatch {
+  originalOffset: number;
+  originalLength: number;
+  matchedText: string;
+  message: string;
+  shortMessage: string;
+  severity: 'error' | 'warning';
+  ruleId: string;
+  replacements: string[];
+}
+
 /** Messages from extension host -> editor webview */
 export type ExtensionToWebviewMessage =
   | { type: 'update'; text: string }
   | { type: 'setTheme'; theme: 'light' | 'dark' | 'auto' }
-  | { type: 'wikilinkSuggestions'; suggestions: WikilinkSuggestion[] };
+  | { type: 'wikilinkSuggestions'; suggestions: WikilinkSuggestion[] }
+  | { type: 'grammarResults'; matches: GrammarMatch[] };
 
 /** Messages from editor webview -> extension host */
 export type WebviewToExtensionMessage =
-  | { type: 'edit'; text: string }
+  | { type: 'edit'; text: string; cursorOffset?: number }
   | { type: 'ready' }
   | { type: 'requestGrammarCheck' }
   | { type: 'requestWikilinkSuggestions'; prefix: string }
-  | { type: 'openWikilink'; target: string };
+  | { type: 'openWikilink'; target: string }
+  | { type: 'applyGrammarFix'; offset: number; length: number; replacement: string };
 
 export interface WikilinkSuggestion {
   stem: string;
@@ -109,14 +123,35 @@ export interface GraphFilters {
   searchQuery: string;
 }
 
-/** Messages from extension host -> graph webview */
+export interface RelationshipItem {
+  relativePath: string;
+  label: string;
+  direction: 'incoming' | 'outgoing';
+  depth: number;
+}
+
+/** Messages from extension host -> graph sidebar webview */
 export type ExtensionToGraphMessage =
   | { type: 'graphData'; nodes: GraphNode[]; edges: GraphEdge[] }
+  | { type: 'relationshipData'; items: RelationshipItem[]; activeFile: string | null }
   | { type: 'activeFileChanged'; nodeId: string | null }
   | { type: 'filterState'; filters: GraphFilters };
 
-/** Messages from graph webview -> extension host */
+/** Messages from graph sidebar webview -> extension host */
 export type GraphToExtensionMessage =
+  | { type: 'ready' }
+  | { type: 'openFile'; relativePath: string }
+  | { type: 'openFullGraph' }
+  | { type: 'filterChanged'; filters: GraphFilters }
+  | { type: 'requestRefresh' };
+
+/** Messages from extension host -> full graph webview */
+export type ExtensionToFullGraphMessage =
+  | { type: 'graphData'; nodes: GraphNode[]; edges: GraphEdge[] }
+  | { type: 'activeFileChanged'; nodeId: string | null };
+
+/** Messages from full graph webview -> extension host */
+export type FullGraphToExtensionMessage =
   | { type: 'ready' }
   | { type: 'openFile'; relativePath: string }
   | { type: 'filterChanged'; filters: GraphFilters }

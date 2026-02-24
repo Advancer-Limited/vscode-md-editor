@@ -1,0 +1,233 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-size: 12px;
+}
+
+/* ================================================
+   Graph Container (fills viewport)
+   ================================================ */
+
+#graph-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#graph-container canvas {
+  display: block;
+}
+
+/* ================================================
+   Controls Panel (overlay on left)
+   ================================================ */
+
+#controls-panel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  background: var(--vscode-editorGroupHeader-tabsBackground, rgba(37, 37, 38, 0.92));
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 6px;
+  min-width: 180px;
+  max-width: 220px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.controls-header {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.controls-header::before {
+  content: '\25BC';
+  font-size: 8px;
+  transition: transform 0.2s;
+}
+
+.controls-header.collapsed::before {
+  transform: rotate(-90deg);
+}
+
+.controls-body {
+  padding: 0 12px 10px;
+}
+
+.control-section {
+  margin-bottom: 10px;
+}
+
+.control-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground, #888);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.control-section label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
+.control-section input[type="text"] {
+  width: 100%;
+  padding: 3px 6px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #ccc);
+  border: 1px solid var(--vscode-input-border, #555);
+  border-radius: 3px;
+  font-size: 11px;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.control-section input[type="text"]:focus {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.control-section input[type="range"] {
+  width: 80px;
+  accent-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.control-section input[type="checkbox"] {
+  accent-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.control-section select {
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #ccc);
+  border: 1px solid var(--vscode-input-border, #555);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+  outline: none;
+}
+
+.control-section select:focus {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+/* ================================================
+   Node Tooltip
+   ================================================ */
+
+#node-tooltip {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  background: var(--vscode-editorGroupHeader-tabsBackground, rgba(37, 37, 38, 0.95));
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 6px;
+  padding: 10px 14px;
+  min-width: 160px;
+  max-width: 250px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+#node-tooltip.hidden {
+  display: none;
+}
+
+.tooltip-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--vscode-editor-foreground, #d4d4d4);
+}
+
+.tooltip-detail {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #888);
+  margin-bottom: 2px;
+}
+
+.tooltip-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.tooltip-btn {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+  border: none;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tooltip-btn:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+/* ================================================
+   Zoom Controls
+   ================================================ */
+
+#zoom-controls {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  z-index: 10;
+  display: flex;
+  gap: 4px;
+}
+
+#zoom-controls button {
+  background: var(--vscode-button-secondaryBackground, rgba(58, 61, 65, 0.9));
+  color: var(--vscode-button-secondaryForeground, #ccc);
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#zoom-controls button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #505357);
+}
+
+#btn-fit {
+  width: auto !important;
+  padding: 0 10px;
+  font-size: 11px;
+}

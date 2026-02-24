@@ -34,10 +34,6 @@
     "views": {
       "vscodeMdEditorSidebar": [
         {
-          "id": "vscodeMdEditor.backlinks",
-          "name": "Backlinks"
-        },
-        {
           "id": "vscodeMdEditor.graph",
           "name": "Graph",
           "type": "webview"
@@ -56,7 +52,7 @@
             "filenamePattern": "*.markdown"
           }
         ],
-        "priority": "option"
+        "priority": "default"
       }
     ],
     "commands": [
@@ -83,6 +79,11 @@
       {
         "command": "vscodeMdEditor.toggleGraphMode",
         "title": "Toggle Graph Mode (Local/Global)",
+        "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.openFullGraph",
+        "title": "Open Full Graph",
         "category": "Markdown Editor"
       }
     ],
@@ -173,6 +174,7 @@
   },
   "dependencies": {
     "force-graph": "^1.51.1",
-    "markdown-it": "^14.0.0"
+    "markdown-it": "^14.0.0",
+    "turndown": "^7.2.2"
   }
 }

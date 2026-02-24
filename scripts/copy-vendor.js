@@ -17,6 +17,18 @@ if (fs.existsSync(src)) {
   console.warn('Run npm install first.');
 }
 
+// Copy turndown
+const tdSrc = path.join(__dirname, '..', 'node_modules', 'turndown', 'lib', 'turndown.browser.umd.js');
+const tdDest = path.join(destDir, 'turndown.browser.umd.js');
+
+if (fs.existsSync(tdSrc)) {
+  fs.copyFileSync(tdSrc, tdDest);
+  console.log('Copied turndown.browser.umd.js to media/');
+} else {
+  console.warn('WARNING: turndown.browser.umd.js not found at', tdSrc);
+  console.warn('Run npm install first.');
+}
+
 // Copy force-graph
 const fgSrc = path.join(__dirname, '..', 'node_modules', 'force-graph', 'dist', 'force-graph.min.js');
 const fgDest = path.join(destDir, 'force-graph.min.js');

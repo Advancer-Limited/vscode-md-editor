@@ -2,7 +2,7 @@
 (function () {
   // @ts-ignore - markdownit loaded globally from markdown-it.min.js
   const md = window.markdownit({
-    html: false,
+    html: true,
     linkify: true,
     typographer: true,
     breaks: true,
@@ -33,6 +33,58 @@
   // Track whether the current content update originated from the extension host
   let isExternalUpdate = false;
 
+  // Track whether the current update originated from contenteditable input
+  let isContentEditableUpdate = false;
+
+  // Stored frontmatter to preserve during contenteditable round-trips
+  let currentFrontmatter = '';
+
+  // Grammar check results for inline highlighting
+  let currentGrammarMatches = [];
+  let grammarTooltip = null;
+
+  // ================================================
+  // Turndown (HTML → Markdown) initialization
+  // ================================================
+  // @ts-ignore - TurndownService loaded globally from turndown.browser.umd.js
+  const turndownService = new TurndownService({
+    headingStyle: 'atx',
+    hr: '---',
+    bulletListMarker: '-',
+    codeBlockStyle: 'fenced',
+    emDelimiter: '*',
+    strongDelimiter: '**',
+  });
+
+  // Custom rule: preserve wikilinks
+  turndownService.addRule('wikilink', {
+    filter: function (node) {
+      return node.nodeName === 'A' && node.classList.contains('wikilink');
+    },
+    replacement: function (content, node) {
+      const target = node.getAttribute('data-target');
+      if (content === target) {
+        return '[[' + target + ']]';
+      }
+      return '[[' + target + '|' + content + ']]';
+    },
+  });
+
+  // Custom rule: strip grammar error spans during conversion
+  turndownService.addRule('grammarError', {
+    filter: function (node) {
+      return node.nodeName === 'SPAN' && node.classList.contains('grammar-error');
+    },
+    replacement: function (content) {
+      return content;
+    },
+  });
+
+  /** Check if the editor is in preview-only (WYSIWYG) mode */
+  function isPreviewMode() {
+    return editorContainer.classList.contains('preview-only');
+  }
+
   // ================================================
   // Message handling from extension host
   // ================================================
@@ -50,14 +102,35 @@
           textarea.selectionEnd = Math.min(selEnd, text.length);
           isExternalUpdate = false;
         }
-        renderPreview(text);
+        // Don't re-render preview if change came from contenteditable
+        if (!isContentEditableUpdate) {
+          renderPreview(text);
+        }
         updateStatusBar();
         break;
       }
       case 'wikilinkSuggestions': {
-        if (autocomplete.triggerOffset >= 0) {
+        if (linkPickerMode && linkPickerCallback) {
+          // Show file picker overlay for Link button
+          linkPickerMode = false;
+          showLinkPicker(message.suggestions, linkPickerCallback);
+          linkPickerCallback = null;
+        } else if (autocomplete.triggerOffset >= 0) {
           autocomplete.show(message.suggestions);
         }
+        break;
+      }
+      case 'grammarResults': {
+        currentGrammarMatches = message.matches || [];
+        // Reset the grammar button
+        const gBtn = document.getElementById('btn-check-grammar');
+        if (gBtn) {
+          gBtn.textContent = '\u2713 Grammar';
+          gBtn.disabled = false;
+        }
+        statusWordCount.textContent = currentGrammarMatches.length + ' grammar issue(s) found';
+        // Re-render preview to apply highlights
+        renderPreview(textarea.value);
         break;
       }
     }
@@ -79,8 +152,39 @@
 
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      vscode.postMessage({ type: 'edit', text: text });
+      vscode.postMessage({ type: 'edit', text: text, cursorOffset: textarea.selectionStart });
     }, 50);
+  });
+
+  // ================================================
+  // Contenteditable (WYSIWYG) input handling
+  // ================================================
+  let contentEditableDebounce;
+
+  previewContent.addEventListener('input', () => {
+    if (isExternalUpdate) return;
+
+    isContentEditableUpdate = true;
+
+    // Convert HTML back to markdown via Turndown
+    const bodyMarkdown = turndownService.turndown(previewContent.innerHTML);
+
+    // Re-attach frontmatter that was stripped during rendering
+    const markdown = currentFrontmatter + bodyMarkdown;
+
+    // Sync to textarea (source of truth)
+    textarea.value = markdown;
+
+    // Debounced send to extension host
+    clearTimeout(contentEditableDebounce);
+    contentEditableDebounce = setTimeout(() => {
+      // Estimate cursor offset from the markdown text length up to current position
+      const cursorOffset = markdown.length > 0 ? Math.min(textarea.selectionStart || 0, markdown.length) : 0;
+      vscode.postMessage({ type: 'edit', text: markdown, cursorOffset });
+      isContentEditableUpdate = false;
+    }, 100);
+
+    updateStatusBar();
   });
 
   // Handle Tab key - insert tab instead of moving focus
@@ -229,75 +333,130 @@
     textarea.dispatchEvent(new Event('input'));
   }
 
-  // Toolbar: Formatting
-  document.getElementById('btn-bold')?.addEventListener('click', () => wrapSelection('**', '**'));
-  document.getElementById('btn-italic')?.addEventListener('click', () => wrapSelection('*', '*'));
-  document.getElementById('btn-strikethrough')?.addEventListener('click', () => wrapSelection('~~', '~~'));
+  // Toolbar: Formatting (dispatches to contenteditable or textarea)
+  document.getElementById('btn-bold')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('bold'); } else { wrapSelection('**', '**'); }
+  });
+  document.getElementById('btn-italic')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('italic'); } else { wrapSelection('*', '*'); }
+  });
+  document.getElementById('btn-strikethrough')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('strikethrough'); } else { wrapSelection('~~', '~~'); }
+  });
 
   // Toolbar: Headings
-  document.getElementById('btn-h1')?.addEventListener('click', () => insertAtLineStart('# '));
-  document.getElementById('btn-h2')?.addEventListener('click', () => insertAtLineStart('## '));
-  document.getElementById('btn-h3')?.addEventListener('click', () => insertAtLineStart('### '));
+  document.getElementById('btn-h1')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('formatBlock', false, 'h1'); } else { insertAtLineStart('# '); }
+  });
+  document.getElementById('btn-h2')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('formatBlock', false, 'h2'); } else { insertAtLineStart('## '); }
+  });
+  document.getElementById('btn-h3')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('formatBlock', false, 'h3'); } else { insertAtLineStart('### '); }
+  });
 
-  // Toolbar: Insert elements
+  // Toolbar: Insert wikilink (Link button)
+  let linkPickerMode = false; // Track if we're in link picker mode
+  let linkPickerCallback = null; // Callback when a link is selected
+
   document.getElementById('btn-link')?.addEventListener('click', () => {
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = textarea.value.substring(start, end);
-    const replacement = `[${selected || 'link text'}](url)`;
-    textarea.value =
-      textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
-    if (selected) {
-      // Select the "url" part
-      textarea.selectionStart = start + selected.length + 3;
-      textarea.selectionEnd = start + selected.length + 6;
-    } else {
-      // Select "link text"
-      textarea.selectionStart = start + 1;
-      textarea.selectionEnd = start + 10;
-    }
-    textarea.focus();
-    textarea.dispatchEvent(new Event('input'));
+    // Request all wikilink suggestions (empty prefix = all files)
+    linkPickerMode = true;
+    linkPickerCallback = (stem) => {
+      if (isPreviewMode()) {
+        // Insert wikilink as HTML in contenteditable
+        const wikilinkHtml = `<a class="wikilink" data-target="${escapeHtml(stem)}">${escapeHtml(stem)}</a>&nbsp;`;
+        document.execCommand('insertHTML', false, wikilinkHtml);
+        // Sync back to markdown
+        const bodyMarkdown = turndownService.turndown(previewContent.innerHTML);
+        const markdown = currentFrontmatter + bodyMarkdown;
+        textarea.value = markdown;
+        vscode.postMessage({ type: 'edit', text: markdown });
+      } else {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const insertion = `[[${stem}]]`;
+        textarea.value =
+          textarea.value.substring(0, start) + insertion + textarea.value.substring(end);
+        textarea.selectionStart = textarea.selectionEnd = start + insertion.length;
+        textarea.focus();
+        textarea.dispatchEvent(new Event('input'));
+      }
+    };
+    vscode.postMessage({ type: 'requestWikilinkSuggestions', prefix: '' });
   });
 
   document.getElementById('btn-image')?.addEventListener('click', () => {
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = textarea.value.substring(start, end);
-    const replacement = `![${selected || 'alt text'}](image-url)`;
-    textarea.value =
-      textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
-    textarea.focus();
-    textarea.dispatchEvent(new Event('input'));
+    if (isPreviewMode()) {
+      const url = prompt('Enter image URL:');
+      if (url) { document.execCommand('insertImage', false, url); }
+    } else {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const selected = textarea.value.substring(start, end);
+      const replacement = `![${selected || 'alt text'}](image-url)`;
+      textarea.value =
+        textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
+      textarea.focus();
+      textarea.dispatchEvent(new Event('input'));
+    }
   });
 
-  document.getElementById('btn-code')?.addEventListener('click', () => wrapSelection('`', '`'));
+  document.getElementById('btn-code')?.addEventListener('click', () => {
+    if (isPreviewMode()) {
+      // Wrap selection in <code> via insertHTML
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const text = sel.toString();
+        document.execCommand('insertHTML', false, '<code>' + escapeHtml(text) + '</code>');
+      }
+    } else {
+      wrapSelection('`', '`');
+    }
+  });
 
   document.getElementById('btn-codeblock')?.addEventListener('click', () => {
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = textarea.value.substring(start, end);
-    const replacement = '```\n' + (selected || 'code here') + '\n```';
-    textarea.value =
-      textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
-    textarea.selectionStart = start + 4;
-    textarea.selectionEnd = start + 4 + (selected || 'code here').length;
-    textarea.focus();
-    textarea.dispatchEvent(new Event('input'));
+    if (isPreviewMode()) {
+      const sel = window.getSelection();
+      const text = sel ? sel.toString() : 'code here';
+      document.execCommand('insertHTML', false, '<pre><code>' + escapeHtml(text) + '</code></pre>');
+    } else {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const selected = textarea.value.substring(start, end);
+      const replacement = '```\n' + (selected || 'code here') + '\n```';
+      textarea.value =
+        textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
+      textarea.selectionStart = start + 4;
+      textarea.selectionEnd = start + 4 + (selected || 'code here').length;
+      textarea.focus();
+      textarea.dispatchEvent(new Event('input'));
+    }
   });
 
   // Toolbar: Lists & blocks
-  document.getElementById('btn-ul')?.addEventListener('click', () => insertAtLineStart('- '));
-  document.getElementById('btn-ol')?.addEventListener('click', () => insertAtLineStart('1. '));
-  document.getElementById('btn-quote')?.addEventListener('click', () => insertAtLineStart('> '));
+  document.getElementById('btn-ul')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('insertUnorderedList'); } else { insertAtLineStart('- '); }
+  });
+  document.getElementById('btn-ol')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('insertOrderedList'); } else { insertAtLineStart('1. '); }
+  });
+  document.getElementById('btn-quote')?.addEventListener('click', () => {
+    if (isPreviewMode()) { document.execCommand('formatBlock', false, 'blockquote'); } else { insertAtLineStart('> '); }
+  });
   document.getElementById('btn-hr')?.addEventListener('click', () => {
-    insertAtCursor('\n---\n');
+    if (isPreviewMode()) { document.execCommand('insertHorizontalRule'); } else { insertAtCursor('\n---\n'); }
   });
 
   // Toolbar: Grammar check
-  document.getElementById('btn-check-grammar')?.addEventListener('click', () => {
-    vscode.postMessage({ type: 'requestGrammarCheck' });
-  });
+  const grammarBtn = document.getElementById('btn-check-grammar');
+  if (grammarBtn) {
+    grammarBtn.addEventListener('click', () => {
+      grammarBtn.textContent = 'Checking...';
+      grammarBtn.disabled = true;
+      vscode.postMessage({ type: 'requestGrammarCheck' });
+    });
+  }
 
   // ================================================
   // View toggle
@@ -314,6 +473,7 @@
   document.getElementById('btn-split')?.addEventListener('click', () => {
     editorContainer.className = 'editor-container';
     setActiveToggle('btn-split');
+    renderPreview(textarea.value);
   });
   document.getElementById('btn-editor-only')?.addEventListener('click', () => {
     editorContainer.className = 'editor-container editor-only';
@@ -322,6 +482,8 @@
   document.getElementById('btn-preview-only')?.addEventListener('click', () => {
     editorContainer.className = 'editor-container preview-only';
     setActiveToggle('btn-preview-only');
+    renderPreview(textarea.value);
+    previewContent.focus();
   });
 
   // ================================================
@@ -514,6 +676,109 @@
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  // Link picker overlay (reuses autocomplete styling)
+  function showLinkPicker(suggestions, onSelect) {
+    const existing = document.getElementById('link-picker-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'link-picker-overlay';
+    overlay.className = 'autocomplete-overlay';
+
+    // Add search input
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search files...';
+    searchInput.className = 'link-picker-search';
+    overlay.appendChild(searchInput);
+
+    const list = document.createElement('div');
+    list.className = 'link-picker-list';
+    overlay.appendChild(list);
+
+    let filtered = suggestions;
+    let selectedIndex = 0;
+
+    function render() {
+      if (filtered.length === 0) {
+        list.innerHTML = '<div class="autocomplete-empty">No matches</div>';
+        return;
+      }
+      list.innerHTML = filtered.map((s, i) =>
+        `<div class="autocomplete-item${i === selectedIndex ? ' selected' : ''}" data-index="${i}">` +
+        `<span class="autocomplete-stem">${escapeHtml(s.stem)}</span>` +
+        (s.folder ? `<span class="autocomplete-folder">${escapeHtml(s.folder)}</span>` : '') +
+        `</div>`
+      ).join('');
+    }
+
+    function confirm() {
+      if (filtered.length > 0) {
+        onSelect(filtered[selectedIndex].stem);
+      }
+      overlay.remove();
+      document.removeEventListener('click', outsideClick);
+    }
+
+    function outsideClick(e) {
+      if (!overlay.contains(e.target) && e.target.id !== 'btn-link') {
+        overlay.remove();
+        document.removeEventListener('click', outsideClick);
+      }
+    }
+
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.toLowerCase();
+      filtered = suggestions.filter(s => s.stem.toLowerCase().includes(q));
+      selectedIndex = 0;
+      render();
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1);
+        render();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = Math.max(selectedIndex - 1, 0);
+        render();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        confirm();
+      } else if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('click', outsideClick);
+      }
+    });
+
+    list.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.autocomplete-item');
+      if (item) {
+        e.preventDefault();
+        selectedIndex = parseInt(item.dataset.index);
+        confirm();
+      }
+    });
+
+    // Position below the Link button
+    const btn = document.getElementById('btn-link');
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      overlay.style.top = (rect.bottom + 4) + 'px';
+      overlay.style.left = rect.left + 'px';
+    }
+
+    render();
+    document.body.appendChild(overlay);
+    searchInput.focus();
+
+    // Close on outside click (delayed to avoid immediate close)
+    setTimeout(() => {
+      document.addEventListener('click', outsideClick);
+    }, 100);
+  }
+
   // Detect [[ trigger on input
   textarea.addEventListener('input', () => {
     if (isExternalUpdate) return;
@@ -601,15 +866,206 @@
     return processed;
   }
 
-  function renderPreview(text) {
-    const processed = preprocessWikilinks(text);
-    previewContent.innerHTML = md.render(processed);
+  /**
+   * Strip YAML frontmatter (---...---) from the beginning of the text.
+   * Stores the frontmatter so it can be re-attached during contenteditable sync.
+   * Returns the text without frontmatter for rendering.
+   */
+  function stripFrontmatter(text) {
+    const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+    if (match) {
+      currentFrontmatter = match[0];
+      return text.slice(match[0].length);
+    }
+    currentFrontmatter = '';
+    return text;
   }
 
+  /** Sanitize HTML output — strip script tags, event handlers, and dangerous elements */
+  function sanitizeHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // Remove dangerous elements
+    for (const el of doc.querySelectorAll('script, iframe, object, embed, form, meta, link[rel="import"]')) {
+      el.remove();
+    }
+    // Remove all on* event handler attributes from every element
+    for (const el of doc.querySelectorAll('*')) {
+      for (const attr of [...el.attributes]) {
+        if (attr.name.startsWith('on') || (attr.name === 'href' && attr.value.trimStart().startsWith('javascript:'))) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+    return doc.body.innerHTML;
+  }
+
+  function renderPreview(text) {
+    const withoutFrontmatter = stripFrontmatter(text);
+    const processed = preprocessWikilinks(withoutFrontmatter);
+    const rendered = md.render(processed);
+
+    previewContent.innerHTML = sanitizeHtml(rendered);
+    applyGrammarHighlights();
+  }
+
+  // ================================================
+  // Grammar highlight rendering
+  // ================================================
+  function applyGrammarHighlights() {
+    if (currentGrammarMatches.length === 0) return;
+
+    // Build a plain text representation of the preview with offset mapping
+    // to locate grammar errors in the rendered DOM
+    const walker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      textNodes.push(node);
+    }
+
+    let highlightCount = 0;
+
+    // For each grammar match, try to find its text in the preview
+    for (let mi = 0; mi < currentGrammarMatches.length; mi++) {
+      const match = currentGrammarMatches[mi];
+      const searchText = match.matchedText;
+      if (!searchText) continue;
+
+      // Search through text nodes for the matched text
+      let found = false;
+      for (let ni = 0; ni < textNodes.length && !found; ni++) {
+        const textNode = textNodes[ni];
+        const content = textNode.textContent;
+        const idx = content.indexOf(searchText);
+        if (idx === -1) continue;
+
+        // Split the text node and wrap the match in a span
+        const range = document.createRange();
+        range.setStart(textNode, idx);
+        range.setEnd(textNode, idx + searchText.length);
+
+        const span = document.createElement('span');
+        span.className = 'grammar-error severity-' + match.severity;
+        span.dataset.matchIndex = String(mi);
+        span.title = match.message;
+
+        range.surroundContents(span);
+        found = true;
+        highlightCount++;
+
+        // Update textNodes since we split the node
+        const newWalker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT);
+        textNodes.length = 0;
+        let n;
+        while ((n = newWalker.nextNode())) {
+          textNodes.push(n);
+        }
+      }
+
+      if (!found) {
+        // Match text not found in preview DOM
+      }
+    }
+
+  }
+
+  function showGrammarTooltip(span, match) {
+    hideGrammarTooltip();
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'grammar-tooltip';
+
+    const msg = document.createElement('div');
+    msg.className = 'grammar-tooltip-message';
+    msg.textContent = match.message;
+    tooltip.appendChild(msg);
+
+    if (match.replacements && match.replacements.length > 0) {
+      const sugBox = document.createElement('div');
+      sugBox.className = 'grammar-tooltip-suggestions';
+      for (const replacement of match.replacements.slice(0, 5)) {
+        const btn = document.createElement('button');
+        btn.className = 'grammar-suggestion';
+        btn.textContent = replacement;
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          vscode.postMessage({
+            type: 'applyGrammarFix',
+            offset: match.originalOffset,
+            length: match.originalLength,
+            replacement: replacement,
+          });
+          hideGrammarTooltip();
+        });
+        sugBox.appendChild(btn);
+      }
+      tooltip.appendChild(sugBox);
+    }
+
+    document.body.appendChild(tooltip);
+    grammarTooltip = tooltip;
+
+    // Position below the error span
+    const rect = span.getBoundingClientRect();
+    tooltip.style.top = (rect.bottom + 4) + 'px';
+    tooltip.style.left = rect.left + 'px';
+
+    // Clamp to viewport
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const viewW = document.documentElement.clientWidth;
+    if (tooltipRect.right > viewW) {
+      tooltip.style.left = (viewW - tooltipRect.width - 8) + 'px';
+    }
+  }
+
+  function hideGrammarTooltip() {
+    if (grammarTooltip) {
+      grammarTooltip.remove();
+      grammarTooltip = null;
+    }
+  }
+
+  // Hover and click handlers for grammar errors (event delegation on preview)
+  previewContent.addEventListener('mouseover', (e) => {
+    const span = e.target.closest('.grammar-error');
+    if (span) {
+      const idx = parseInt(span.dataset.matchIndex);
+      const match = currentGrammarMatches[idx];
+      if (match) {
+        showGrammarTooltip(span, match);
+      }
+    }
+  });
+
+  previewContent.addEventListener('mouseout', (e) => {
+    const span = e.target.closest('.grammar-error');
+    if (span) {
+      // Delay hiding so user can move to tooltip
+      setTimeout(() => {
+        if (grammarTooltip && !grammarTooltip.matches(':hover')) {
+          hideGrammarTooltip();
+        }
+      }, 200);
+    }
+  });
+
+  // Hide tooltip when clicking elsewhere
+  document.addEventListener('click', (e) => {
+    if (grammarTooltip && !grammarTooltip.contains(e.target) && !e.target.closest('.grammar-error')) {
+      hideGrammarTooltip();
+    }
+  });
+
   // Wikilink click handler in preview
+  // In contenteditable (preview) mode: Ctrl+Click to navigate, plain click places cursor
+  // In non-editable mode: any click navigates
   previewContent.addEventListener('click', (e) => {
     const link = e.target.closest('.wikilink');
     if (link) {
+      if (isPreviewMode() && !e.ctrlKey && !e.metaKey) {
+        // Plain click in contenteditable mode — let the cursor land naturally
+        return;
+      }
       e.preventDefault();
       vscode.postMessage({ type: 'openWikilink', target: link.dataset.target });
     }
@@ -619,22 +1075,32 @@
   // Status bar
   // ================================================
   function updateStatusBar() {
-    // Line and column
-    const pos = textarea.selectionStart;
-    const textBefore = textarea.value.substring(0, pos);
-    const lines = textBefore.split('\n');
-    const line = lines.length;
-    const col = lines[lines.length - 1].length + 1;
-    statusLineInfo.textContent = `Ln ${line}, Col ${col}`;
+    if (isPreviewMode()) {
+      // In preview mode, get word count from preview content
+      statusLineInfo.textContent = 'Edit';
+      const text = (previewContent.textContent || '').trim();
+      const words = text === '' ? 0 : text.split(/\s+/).length;
+      statusWordCount.textContent = `${words} word${words !== 1 ? 's' : ''}`;
+    } else {
+      // Line and column from textarea
+      const pos = textarea.selectionStart;
+      const textBefore = textarea.value.substring(0, pos);
+      const lines = textBefore.split('\n');
+      const line = lines.length;
+      const col = lines[lines.length - 1].length + 1;
+      statusLineInfo.textContent = `Ln ${line}, Col ${col}`;
 
-    // Word count
-    const text = textarea.value.trim();
-    const words = text === '' ? 0 : text.split(/\s+/).length;
-    statusWordCount.textContent = `${words} word${words !== 1 ? 's' : ''}`;
+      // Word count
+      const text = textarea.value.trim();
+      const words = text === '' ? 0 : text.split(/\s+/).length;
+      statusWordCount.textContent = `${words} word${words !== 1 ? 's' : ''}`;
+    }
   }
 
   textarea.addEventListener('click', updateStatusBar);
   textarea.addEventListener('keyup', updateStatusBar);
+  previewContent.addEventListener('click', updateStatusBar);
+  previewContent.addEventListener('keyup', updateStatusBar);
 
   // ================================================
   // Keyboard shortcuts
@@ -651,6 +1117,23 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
       e.preventDefault();
       document.getElementById('btn-link')?.click();
+    }
+  });
+
+  // Keyboard shortcuts for contenteditable preview mode
+  previewContent.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+      e.preventDefault();
+      document.execCommand('bold');
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+      e.preventDefault();
+      document.execCommand('italic');
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      const url = prompt('Enter URL:');
+      if (url) { document.execCommand('createLink', false, url); }
     }
   });
 
