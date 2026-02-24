@@ -32,9 +32,29 @@ This project uses a **master / develop / feature** branching model.
 3. **Merge to develop**: Open a PR from `feature/<name>` → `develop`. Merge after review.
 4. **Release to master**: Open a PR from `develop` → `master`. Merge after review.
 
+### PR Review Process (feature → develop)
+
+Before merging any PR to `develop`, perform a self-review:
+
+1. **Create the PR** from `feature/<name>` → `develop`.
+2. **Review the diff** — read through all changed files in the PR using `gh pr diff`.
+3. **Add review comments** on the PR for any issues found:
+   - Bugs, logic errors, or edge cases
+   - Code style / convention violations
+   - Missing error handling or validation
+   - Dead code, unused imports, or unnecessary complexity
+   - Security concerns (XSS, injection, etc.)
+   - Performance issues
+4. **Fix all issues** — commit fixes to the feature branch and push. The PR updates automatically.
+5. **Re-review** — verify all comments are addressed.
+6. **Merge** only when the review is clean and `npm run compile` passes.
+
+Use `gh pr review <number> --comment --body "..."` to add general comments, or `gh api` for inline file comments.
+
 ### Rules
 
 - Never commit directly to `master` or `develop` — always use a PR.
+- Always self-review PRs to `develop` before merging (see PR Review Process above).
 - Keep feature branches short-lived and focused on a single concern.
 - Delete feature/fix branches after merging.
 - Use descriptive PR titles and include a summary of changes.
