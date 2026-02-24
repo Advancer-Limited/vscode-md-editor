@@ -1,9 +1,29 @@
 .vscode/**
+.vscode-test/**
+.github/**
+.claude/**
+.askance/**
 src/**
-scripts/**
 node_modules/**
+scripts/**
 tsconfig.json
 esbuild.js
 .eslintrc.json
+.mcp.json
+.gitignore
 **/*.ts
 **/*.map
+
+# Internal project files
+CLAUDE.md
+CONTRIBUTING.md
+CLA.md
+log.md
+todo.md
+serve-test.js
+test-sample.md
+test-server.html
+
+# OS files
+.DS_Store
+Thumbs.db
