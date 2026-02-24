@@ -122,10 +122,6 @@
       }
       case 'grammarResults': {
         currentGrammarMatches = message.matches || [];
-        console.log('[Webview] Received grammarResults:', currentGrammarMatches.length, 'matches');
-        if (currentGrammarMatches.length > 0) {
-          console.log('[Webview] First match:', currentGrammarMatches[0].matchedText, 'at offset', currentGrammarMatches[0].originalOffset);
-        }
         // Reset the grammar button
         const gBtn = document.getElementById('btn-check-grammar');
         if (gBtn) {
@@ -369,7 +365,7 @@
     linkPickerCallback = (stem) => {
       if (isPreviewMode()) {
         // Insert wikilink as HTML in contenteditable
-        const wikilinkHtml = `<a class="wikilink" data-target="${stem}">${stem}</a>&nbsp;`;
+        const wikilinkHtml = `<a class="wikilink" data-target="${escapeHtml(stem)}">${escapeHtml(stem)}</a>&nbsp;`;
         document.execCommand('insertHTML', false, wikilinkHtml);
         // Sync back to markdown
         const bodyMarkdown = turndownService.turndown(previewContent.innerHTML);
@@ -885,20 +881,30 @@
     return text;
   }
 
+  /** Sanitize HTML output — strip script tags, event handlers, and dangerous elements */
+  function sanitizeHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // Remove dangerous elements
+    for (const el of doc.querySelectorAll('script, iframe, object, embed, form, meta, link[rel="import"]')) {
+      el.remove();
+    }
+    // Remove all on* event handler attributes from every element
+    for (const el of doc.querySelectorAll('*')) {
+      for (const attr of [...el.attributes]) {
+        if (attr.name.startsWith('on') || (attr.name === 'href' && attr.value.trimStart().startsWith('javascript:'))) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+    return doc.body.innerHTML;
+  }
+
   function renderPreview(text) {
     const withoutFrontmatter = stripFrontmatter(text);
     const processed = preprocessWikilinks(withoutFrontmatter);
     const rendered = md.render(processed);
 
-    // Debug: check if wikilinks are being processed correctly
-    if (processed.includes('class="wikilink"')) {
-      const preserved = rendered.includes('class="wikilink"');
-      const escaped = rendered.includes('&lt;a');
-      console.log('[Editor] Wikilink debug — preserved:', preserved, 'escaped:', escaped,
-        'html option:', md.options?.html);
-    }
-
-    previewContent.innerHTML = rendered;
+    previewContent.innerHTML = sanitizeHtml(rendered);
     applyGrammarHighlights();
   }
 
@@ -908,8 +914,6 @@
   function applyGrammarHighlights() {
     if (currentGrammarMatches.length === 0) return;
 
-    console.log('[Webview] Applying grammar highlights for', currentGrammarMatches.length, 'matches');
-
     // Build a plain text representation of the preview with offset mapping
     // to locate grammar errors in the rendered DOM
     const walker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT);
@@ -918,8 +922,6 @@
     while ((node = walker.nextNode())) {
       textNodes.push(node);
     }
-
-    console.log('[Webview] Found', textNodes.length, 'text nodes in preview');
 
     let highlightCount = 0;
 
@@ -961,11 +963,10 @@
       }
 
       if (!found) {
-        console.log('[Webview] Could not find text for match:', JSON.stringify(searchText));
+        // Match text not found in preview DOM
       }
     }
 
-    console.log('[Webview] Applied', highlightCount, '/', currentGrammarMatches.length, 'highlights');
   }
 
   function showGrammarTooltip(span, match) {

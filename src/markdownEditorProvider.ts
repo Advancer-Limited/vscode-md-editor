@@ -25,14 +25,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
   /** Send grammar results to the webview for the given document URI. */
   public sendGrammarResults(uri: vscode.Uri, matches: GrammarMatch[]): void {
-    console.log(`[Grammar] sendGrammarResults: ${matches.length} matches for ${uri.toString()}`);
-    console.log(`[Grammar] Known panels: ${Array.from(this.webviewPanels.keys()).join(', ')}`);
     const panel = this.webviewPanels.get(uri.toString());
     if (panel) {
-      console.log('[Grammar] Found panel, posting message');
       panel.webview.postMessage({ type: 'grammarResults', matches });
-    } else {
-      console.log('[Grammar] No panel found for URI');
     }
   }
 

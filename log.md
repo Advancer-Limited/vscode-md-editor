@@ -237,3 +237,39 @@
 - Pending user test to check Developer Console output
 
 - Full build: `npm run compile` passes clean
+
+### Debug Logging Cleanup (2026-02-24)
+
+Removed excessive `console.log` debug statements from 5 files while preserving all `console.error` and `console.warn` statements:
+
+**`media/editor.js`** (6 statements removed):
+
+- Removed grammar results reception logging (match count, first match details)
+- Removed grammar highlight application logging (match count, text node count, per-match failure, applied count)
+
+**`src/diagnosticsProvider.ts`** (2 statements removed):
+
+- Removed paragraph check logging (char count, offset)
+- Removed match count per-paragraph logging
+
+**`src/graph/fullGraphPanel.ts`** (3 statements removed):
+
+- Removed graph data send logging (node/edge counts)
+- Removed message delivery logging and retry logging
+- Preserved `console.error` for sendGraphData errors
+
+**`src/languageToolService.ts`** (6 statements removed):
+
+- Removed chunk splitting logging (text length, chunk count)
+- Removed per-chunk send logging (chunk number, size, offset)
+- Removed total matches summary logging
+- Removed API response logging (match count, language)
+- Removed proxy detection logging
+- Removed connection logging (hostname, port)
+- Preserved `console.error` for chunk failures
+
+**`src/markdownEditorProvider.ts`** (4 statements removed):
+
+- Removed `sendGrammarResults` logging (match count, known panels, panel found/not found)
+
+- Full build: `npm run compile` passes clean

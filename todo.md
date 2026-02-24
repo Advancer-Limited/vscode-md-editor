@@ -69,7 +69,7 @@
 - [x] Add real-time incremental grammar checking (paragraph-level on edit)
 - [x] Fix grammar highlight CSS — use `text-decoration: underline wavy` instead of invalid `border-bottom: wavy`
 - [ ] Verify grammar highlighting renders in preview (pending user test)
-- [ ] Clean up debug logging
+- [x] Clean up debug logging
 
 ## Phase 10: Obsidian-Style Graph Experience
 

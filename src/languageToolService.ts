@@ -48,14 +48,12 @@ export class LanguageToolService {
     }
 
     const chunks = this.splitIntoChunks(text, LanguageToolService.MAX_CHUNK_SIZE);
-    console.log(`[Grammar] Text: ${text.length} chars → ${chunks.length} chunk(s)`);
 
     const allMatches: LanguageToolMatch[] = [];
     let offsetAdjustment = 0;
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      console.log(`[Grammar] Sending chunk ${i + 1}/${chunks.length}: ${chunk.length} chars (offset +${offsetAdjustment})`);
 
       try {
         const matches = await this.checkChunk(chunk);
@@ -74,7 +72,6 @@ export class LanguageToolService {
       offsetAdjustment += chunk.length;
     }
 
-    console.log(`[Grammar] Total: ${allMatches.length} matches across ${chunks.length} chunk(s)`);
     return allMatches;
   }
 
@@ -96,7 +93,6 @@ export class LanguageToolService {
 
     const responseText = await this.postRequest(this.config.apiUrl, params.toString());
     const data = JSON.parse(responseText) as LanguageToolResponse;
-    console.log(`[Grammar] API response: ${data.matches.length} matches, language: ${data.language?.name || 'unknown'}`);
     return data.matches;
   }
 
@@ -183,7 +179,6 @@ export class LanguageToolService {
         || process.env.HTTP_PROXY;
 
       if (proxyUrl) {
-        console.log(`[Grammar] Using proxy: ${proxyUrl}`);
         this.postViaProxy(proxyUrl, parsedUrl, body).then(resolve, reject);
         return;
       }
@@ -201,8 +196,6 @@ export class LanguageToolService {
           'Content-Length': Buffer.byteLength(body),
         },
       };
-
-      console.log(`[Grammar] Connecting to ${options.hostname}:${options.port} (IPv4)`);
 
       const req = transport.request(options, (res) => {
         const chunks: Buffer[] = [];

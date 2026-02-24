@@ -10,20 +10,6 @@ import { GraphViewProvider } from './graph/graphViewProvider.js';
 import { FullGraphPanel } from './graph/fullGraphPanel.js';
 
 export function activate(context: vscode.ExtensionContext): void {
-  // 0. Ensure our editor is the default for .md files
-  const config = vscode.workspace.getConfiguration();
-  const associations =
-    config.get<Record<string, string>>('workbench.editorAssociations') || {};
-  if (associations['*.md'] !== 'vscodeMdEditor.editor') {
-    associations['*.md'] = 'vscodeMdEditor.editor';
-    associations['*.markdown'] = 'vscodeMdEditor.editor';
-    config.update(
-      'workbench.editorAssociations',
-      associations,
-      vscode.ConfigurationTarget.Global
-    );
-  }
-
   // 1. Create the file index service (shared foundation for wikilinks + graph)
   const fileIndexService = new FileIndexService();
   context.subscriptions.push(fileIndexService);

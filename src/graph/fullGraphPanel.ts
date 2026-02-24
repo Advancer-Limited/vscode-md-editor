@@ -141,19 +141,14 @@ export class FullGraphPanel {
         }
       }
 
-      console.log(`[FullGraph] Sending ${data.nodes.length} nodes, ${data.edges.length} edges`);
-
       const delivered = await this.panel.webview.postMessage({
         type: 'graphData',
         nodes: data.nodes,
         edges: data.edges,
       });
 
-      console.log(`[FullGraph] Message delivered: ${delivered}`);
-
       // If message wasn't delivered, retry after a delay
       if (!delivered) {
-        console.log('[FullGraph] Message not delivered, retrying in 500ms...');
         setTimeout(() => this.sendGraphData(), 500);
       }
     } catch (err) {

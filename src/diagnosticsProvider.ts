@@ -147,16 +147,12 @@ export class LanguageToolDiagnosticsProvider implements vscode.Disposable {
       return;
     }
 
-    console.log(`[Grammar:auto] Checking paragraph (${strippedParagraph.length} chars) at offset ${paraStart}`);
-
     let matches: LanguageToolMatch[];
     try {
       matches = await this.languageToolService.check(strippedParagraph);
     } catch {
       return; // Silently fail for auto-checks
     }
-
-    console.log(`[Grammar:auto] ${matches.length} matches in paragraph`);
 
     // Convert API matches to GrammarMatches with document-level offsets
     const newParaMatches: GrammarMatch[] = matches
