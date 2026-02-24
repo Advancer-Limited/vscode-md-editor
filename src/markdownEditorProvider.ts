@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getNonce } from './utils.js';
-import { WebviewToExtensionMessage } from './types.js';
+import { WebviewToExtensionMessage, GrammarMatch } from './types.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
 
 export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
@@ -8,6 +8,12 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
   /** Track the document for the currently active custom editor panel. */
   private activeDocument: vscode.TextDocument | undefined;
+
+  /** Track webview panels by document URI for grammar result forwarding. */
+  private webviewPanels = new Map<string, vscode.WebviewPanel>();
+
+  /** Track cursor offset per document for incremental grammar checking. */
+  private cursorOffsets = new Map<string, number>();
 
   private _onDidChangeActiveDocument = new vscode.EventEmitter<vscode.TextDocument | undefined>();
   public readonly onDidChangeActiveDocument = this._onDidChangeActiveDocument.event;
@@ -17,8 +23,26 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     private readonly fileIndexService: FileIndexService,
   ) {}
 
+  /** Send grammar results to the webview for the given document URI. */
+  public sendGrammarResults(uri: vscode.Uri, matches: GrammarMatch[]): void {
+    console.log(`[Grammar] sendGrammarResults: ${matches.length} matches for ${uri.toString()}`);
+    console.log(`[Grammar] Known panels: ${Array.from(this.webviewPanels.keys()).join(', ')}`);
+    const panel = this.webviewPanels.get(uri.toString());
+    if (panel) {
+      console.log('[Grammar] Found panel, posting message');
+      panel.webview.postMessage({ type: 'grammarResults', matches });
+    } else {
+      console.log('[Grammar] No panel found for URI');
+    }
+  }
+
   public getActiveDocument(): vscode.TextDocument | undefined {
     return this.activeDocument;
+  }
+
+  /** Get the last known cursor offset for a document. */
+  public getCursorOffset(uri: vscode.Uri): number | undefined {
+    return this.cursorOffsets.get(uri.toString());
   }
 
   public async resolveCustomTextEditor(
@@ -28,6 +52,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   ): Promise<void> {
     this.activeDocument = document;
     this._onDidChangeActiveDocument.fire(document);
+    this.webviewPanels.set(document.uri.toString(), webviewPanel);
 
     webviewPanel.webview.options = {
       enableScripts: true,
@@ -63,6 +88,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
           case 'edit': {
             isApplyingEdit = true;
+            if (message.cursorOffset !== undefined) {
+              this.cursorOffsets.set(document.uri.toString(), message.cursorOffset);
+            }
             const edit = new vscode.WorkspaceEdit();
             edit.replace(
               document.uri,
@@ -106,6 +134,18 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             }
             return;
           }
+
+          case 'applyGrammarFix': {
+            isApplyingEdit = true;
+            const startPos = document.positionAt(message.offset);
+            const endPos = document.positionAt(message.offset + message.length);
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(document.uri, new vscode.Range(startPos, endPos), message.replacement);
+            await vscode.workspace.applyEdit(edit);
+            isApplyingEdit = false;
+            updateWebview();
+            return;
+          }
         }
       }
     );
@@ -128,6 +168,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     });
 
     webviewPanel.onDidDispose(() => {
+      this.webviewPanels.delete(document.uri.toString());
       if (this.activeDocument === document) {
         this.activeDocument = undefined;
         this._onDidChangeActiveDocument.fire(undefined);
@@ -140,6 +181,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
   private getHtmlForWebview(webview: vscode.Webview): string {
     const nonce = getNonce();
+    const cacheBust = Date.now();
 
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'editor.css')
@@ -149,6 +191,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     );
     const markdownItUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'markdown-it.min.js')
+    );
+    const turndownUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'turndown.browser.umd.js')
     );
 
     return /* html */ `<!DOCTYPE html>
@@ -162,7 +207,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
              script-src 'nonce-${nonce}';
              font-src ${webview.cspSource};
              img-src ${webview.cspSource} https: data:;">
-  <link href="${styleUri}" rel="stylesheet">
+  <link href="${styleUri}?v=${cacheBust}" rel="stylesheet">
   <title>Markdown Editor</title>
 </head>
 <body>
@@ -188,12 +233,12 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     <button id="btn-check-grammar" title="Check Grammar" class="grammar-btn">&#10003; Grammar</button>
     <span class="toolbar-separator"></span>
     <div class="view-toggle">
-      <button id="btn-split" class="active" title="Split View">Split</button>
-      <button id="btn-editor-only" title="Editor Only">Editor</button>
-      <button id="btn-preview-only" title="Preview Only">Preview</button>
+      <button id="btn-preview-only" class="active" title="Edit (WYSIWYG)">Edit</button>
+      <button id="btn-split" title="Split View">Split</button>
+      <button id="btn-editor-only" title="Raw Markdown">Raw</button>
     </div>
   </div>
-  <div class="editor-container" id="editor-container">
+  <div class="editor-container preview-only" id="editor-container">
     <div class="editor-pane" id="editor-pane">
       <textarea id="markdown-input"
                 spellcheck="false"
@@ -202,15 +247,16 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </div>
     <div class="divider" id="divider"></div>
     <div class="preview-pane" id="preview-pane">
-      <div id="preview-content" class="markdown-body"></div>
+      <div id="preview-content" class="markdown-body" contenteditable="true" spellcheck="false"></div>
     </div>
   </div>
   <div class="status-bar" id="status-bar">
     <span id="status-line-info">Ln 1, Col 1</span>
     <span id="status-word-count">0 words</span>
   </div>
-  <script nonce="${nonce}" src="${markdownItUri}"></script>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
+  <script nonce="${nonce}" src="${markdownItUri}?v=${cacheBust}"></script>
+  <script nonce="${nonce}" src="${turndownUri}?v=${cacheBust}"></script>
+  <script nonce="${nonce}" src="${scriptUri}?v=${cacheBust}"></script>
 </body>
 </html>`;
   }

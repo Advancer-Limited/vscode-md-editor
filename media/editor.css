@@ -325,6 +325,12 @@ html, body {
   text-decoration: underline;
 }
 
+/* Remove default focus outline on contenteditable preview */
+#preview-content:focus,
+#preview-content:focus-visible {
+  outline: none;
+}
+
 /* =============================================
    Wikilink Autocomplete Overlay
    ============================================= */
@@ -376,4 +382,86 @@ html, body {
   text-align: center;
   opacity: 0.5;
   font-style: italic;
+}
+
+/* Link picker (reuses autocomplete styling) */
+#link-picker-overlay {
+  max-height: 300px;
+  min-width: 250px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.link-picker-search {
+  padding: 6px 8px;
+  border: none;
+  border-bottom: 1px solid var(--vscode-editorSuggestWidget-border, #454545);
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  font-size: 13px;
+  outline: none;
+}
+
+.link-picker-list {
+  overflow-y: auto;
+  max-height: 250px;
+}
+
+/* =============================================
+   Grammar Highlight Styles
+   ============================================= */
+.grammar-error {
+  text-decoration: underline wavy;
+  text-decoration-thickness: 2px;
+  cursor: pointer;
+  position: relative;
+}
+
+.grammar-error.severity-error {
+  text-decoration-color: #f44747;
+}
+
+.grammar-error.severity-warning {
+  text-decoration-color: #cca700;
+}
+
+.grammar-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: 350px;
+  background: var(--vscode-editorHoverWidget-background, #2d2d30);
+  border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+  border-radius: 4px;
+  padding: 8px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+}
+
+.grammar-tooltip-message {
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.grammar-tooltip-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.grammar-suggestion {
+  display: inline-block;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: 1px solid var(--vscode-button-border, #454545);
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.grammar-suggestion:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
 }

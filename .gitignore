@@ -3,8 +3,8 @@ dist/
 *.vsix
 .vscode-test/
 
-# Askance credentials (do not commit)
-.askance/credentials
+# Askance
+.askance/
 
 # OS files
 .DS_Store

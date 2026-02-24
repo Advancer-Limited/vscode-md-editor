@@ -1,204 +1,166 @@
 // @ts-check
 (function () {
-  // @ts-ignore - ForceGraph loaded globally from force-graph.min.js
-  const ForceGraphConstructor = window.ForceGraph;
   /** @type {ReturnType<typeof acquireVsCodeApi>} */
   const vscode = acquireVsCodeApi();
 
-  const container = document.getElementById('graph-container');
-  const btnMode = document.getElementById('btn-mode');
-  const depthSlider = /** @type {HTMLInputElement} */ (document.getElementById('depth-slider'));
-  const showOrphans = /** @type {HTMLInputElement} */ (document.getElementById('show-orphans'));
+  const fileList = document.getElementById('file-list');
   const searchInput = /** @type {HTMLInputElement} */ (document.getElementById('search-input'));
+  const btnShowGraph = document.getElementById('btn-show-graph');
 
-  let currentMode = 'local';
-  let highlightedNode = null;
-  let highlightedNeighbors = new Set();
+  // Track which nodes are expanded
+  const expandedNodes = new Set();
 
-  // Color palette for folders
-  const folderColors = {};
-  const palette = [
-    '#4a9eff', '#4ec9b0', '#ce9178', '#c586c0', '#dcdcaa',
-    '#9cdcfe', '#6a9955', '#d7ba7d', '#569cd6', '#b5cea8',
-  ];
-  let colorIdx = 0;
+  // ================================================
+  // Render file list
+  // ================================================
+  function renderFileList(nodes) {
+    if (!fileList) return;
 
-  function getFolderColor(folder) {
-    if (!folder) return '#888';
-    if (!folderColors[folder]) {
-      folderColors[folder] = palette[colorIdx % palette.length];
-      colorIdx++;
+    if (!nodes || nodes.length === 0) {
+      fileList.innerHTML = '<div class="empty-msg">No files found</div>';
+      return;
     }
-    return folderColors[folder];
-  }
 
-  // Build adjacency for highlight on hover
-  let adjacencyMap = new Map();
+    const fragment = document.createDocumentFragment();
 
-  function getNodeSize(connectionCount) {
-    return Math.max(2, Math.sqrt(connectionCount + 1) * 3);
-  }
+    for (const node of nodes) {
+      const hasLinks = node.links && node.links.length > 0;
+      const isExpanded = expandedNodes.has(node.relativePath);
 
-  function buildAdjacency(edges) {
-    adjacencyMap = new Map();
-    for (const edge of edges) {
-      const s = typeof edge.source === 'object' ? edge.source.id : edge.source;
-      const t = typeof edge.target === 'object' ? edge.target.id : edge.target;
-      if (!adjacencyMap.has(s)) adjacencyMap.set(s, new Set());
-      if (!adjacencyMap.has(t)) adjacencyMap.set(t, new Set());
-      adjacencyMap.get(s).add(t);
-      adjacencyMap.get(t).add(s);
-    }
-  }
+      // File node row
+      const row = document.createElement('div');
+      row.className = 'file-node' + (node.isActive ? ' active' : '');
+      row.dataset.path = node.relativePath;
 
-  // Initialize the graph
-  const graph = ForceGraphConstructor()(container)
-    .nodeId('id')
-    .nodeLabel(node => `${node.label}${node.folder ? ' (' + node.folder + ')' : ''}`)
-    .nodeVal(node => getNodeSize(node.connectionCount))
-    .nodeColor(node => {
-      if (node.isActive) return '#ffcc00';
-      if (highlightedNode) {
-        if (node === highlightedNode) return '#ffcc00';
-        if (highlightedNeighbors.has(node.id)) return '#4a9eff';
-        return 'rgba(100,100,100,0.2)';
+      // Expand toggle
+      const toggle = document.createElement('span');
+      toggle.className = 'node-toggle' + (isExpanded ? ' expanded' : '');
+      toggle.textContent = hasLinks ? (isExpanded ? '\u25BC' : '\u25B6') : '\u2022';
+      toggle.style.cursor = hasLinks ? 'pointer' : 'default';
+      row.appendChild(toggle);
+
+      // File icon
+      const icon = document.createElement('span');
+      icon.className = 'node-icon';
+      icon.textContent = '\uD83D\uDCC4';
+      row.appendChild(icon);
+
+      // Label
+      const label = document.createElement('span');
+      label.className = 'node-label';
+      label.textContent = node.label;
+      row.appendChild(label);
+
+      // Link count badge
+      if (hasLinks) {
+        const badge = document.createElement('span');
+        badge.className = 'node-badge';
+        badge.textContent = String(node.links.length);
+        row.appendChild(badge);
       }
-      if (node.isOrphan) return 'rgba(128,128,128,0.4)';
-      return getFolderColor(node.folder);
-    })
-    .nodeCanvasObjectMode(() => 'after')
-    .nodeCanvasObject((node, ctx, globalScale) => {
-      const label = node.label;
-      const fontSize = Math.max(10, 12 / globalScale);
-      if (fontSize / globalScale < 3) return; // Too small to read
 
-      ctx.font = `${fontSize}px Sans-Serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+      // Folder
+      if (node.folder) {
+        const folder = document.createElement('span');
+        folder.className = 'node-folder';
+        folder.textContent = node.folder;
+        row.appendChild(folder);
+      }
 
-      // Only show labels for active, hovered, or zoomed-in nodes
-      const showLabel = node.isActive ||
-        node === highlightedNode ||
-        highlightedNeighbors.has(node.id) ||
-        globalScale > 1.5;
+      fragment.appendChild(row);
 
-      if (!showLabel) return;
+      // Links sub-list (if expanded)
+      if (hasLinks && isExpanded) {
+        const linkList = document.createElement('div');
+        linkList.className = 'link-list';
 
-      const nodeRadius = getNodeSize(node.connectionCount);
-      ctx.fillStyle = node.isActive ? '#ffcc00' : 'rgba(212,212,212,0.85)';
-      ctx.fillText(label, node.x, node.y + nodeRadius + fontSize * 0.8);
-    })
-    .linkColor(link => {
-      if (highlightedNode) {
-        const s = typeof link.source === 'object' ? link.source.id : link.source;
-        const t = typeof link.target === 'object' ? link.target.id : link.target;
-        if (s === highlightedNode.id || t === highlightedNode.id) {
-          return 'rgba(74,158,255,0.8)';
+        for (const link of node.links) {
+          const linkRow = document.createElement('div');
+          linkRow.className = 'link-item';
+          linkRow.dataset.path = link.relativePath;
+
+          const arrow = document.createElement('span');
+          arrow.className = 'link-arrow ' + (link.direction === 'in' ? 'link-in' : 'link-out');
+          arrow.innerHTML = link.direction === 'in' ? '&#8592;' : '&#8594;';
+          linkRow.appendChild(arrow);
+
+          const linkLabel = document.createElement('span');
+          linkLabel.className = 'link-label';
+          linkLabel.textContent = link.label;
+          linkRow.appendChild(linkLabel);
+
+          linkList.appendChild(linkRow);
         }
-        return 'rgba(100,100,100,0.05)';
-      }
-      return `rgba(255,255,255,${0.08 + 0.12 * (link.frequency || 1)})`;
-    })
-    .linkWidth(link => Math.min(3, 0.5 + (link.frequency || 1) * 0.5))
-    .d3Force('charge')?.strength(-400);
 
-  graph.d3Force('link')?.distance(120);
-
-  // Interaction handlers
-  graph.onNodeClick((node) => {
-    vscode.postMessage({ type: 'openFile', relativePath: node.id });
-  });
-
-  graph.onNodeDblClick((node) => {
-    graph.centerAt(node.x, node.y, 500);
-    graph.zoom(2.5, 500);
-  });
-
-  graph.onNodeHover((node) => {
-    highlightedNode = node || null;
-    highlightedNeighbors = new Set();
-    if (node) {
-      const neighbors = adjacencyMap.get(node.id);
-      if (neighbors) {
-        highlightedNeighbors = neighbors;
+        fragment.appendChild(linkList);
       }
     }
-    container.style.cursor = node ? 'pointer' : 'default';
-  });
 
-  // Responsive sizing
-  function resize() {
-    const rect = container.getBoundingClientRect();
-    graph.width(rect.width).height(rect.height);
+    fileList.innerHTML = '';
+    fileList.appendChild(fragment);
   }
 
-  const resizeObserver = new ResizeObserver(resize);
-  resizeObserver.observe(container);
+  // ================================================
+  // Event delegation
+  // ================================================
+  fileList.addEventListener('click', (e) => {
+    const target = /** @type {HTMLElement} */ (e.target);
+
+    // Click on toggle arrow → expand/collapse
+    const toggle = target.closest('.node-toggle');
+    if (toggle) {
+      const row = toggle.closest('.file-node');
+      if (row) {
+        const path = row.dataset.path;
+        if (expandedNodes.has(path)) {
+          expandedNodes.delete(path);
+        } else {
+          expandedNodes.add(path);
+        }
+        // Re-request to trigger re-render with same data
+        vscode.postMessage({ type: 'ready' });
+      }
+      return;
+    }
+
+    // Click on file node label → open file
+    const fileNode = target.closest('.file-node');
+    if (fileNode && !target.closest('.node-toggle')) {
+      vscode.postMessage({ type: 'openFile', relativePath: fileNode.dataset.path });
+      return;
+    }
+
+    // Click on link item → open that linked file
+    const linkItem = target.closest('.link-item');
+    if (linkItem) {
+      vscode.postMessage({ type: 'openFile', relativePath: linkItem.dataset.path });
+      return;
+    }
+  });
 
   // ================================================
   // Controls
   // ================================================
-  function getFilters() {
-    return {
-      mode: currentMode,
-      localDepth: parseInt(depthSlider.value),
-      showOrphans: showOrphans.checked,
-      folderFilter: [],
-      tagFilter: [],
-      searchQuery: searchInput.value,
-    };
-  }
-
-  btnMode.addEventListener('click', () => {
-    currentMode = currentMode === 'local' ? 'global' : 'local';
-    btnMode.textContent = currentMode === 'local' ? 'Local' : 'Global';
-    depthSlider.disabled = currentMode === 'global';
-    vscode.postMessage({ type: 'filterChanged', filters: getFilters() });
-  });
-
-  depthSlider.addEventListener('input', () => {
-    vscode.postMessage({ type: 'filterChanged', filters: getFilters() });
-  });
-
-  showOrphans.addEventListener('change', () => {
-    vscode.postMessage({ type: 'filterChanged', filters: getFilters() });
+  btnShowGraph.addEventListener('click', () => {
+    vscode.postMessage({ type: 'openFullGraph' });
   });
 
   let searchTimer;
   searchInput.addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
-      vscode.postMessage({ type: 'filterChanged', filters: getFilters() });
-    }, 300);
+      vscode.postMessage({ type: 'searchChanged', query: searchInput.value });
+    }, 200);
   });
 
   // ================================================
-  // Message handling from extension
+  // Message handling
   // ================================================
   window.addEventListener('message', (event) => {
     const msg = event.data;
     switch (msg.type) {
-      case 'graphData': {
-        if (!Array.isArray(msg.nodes) || !Array.isArray(msg.edges)) break;
-        highlightedNode = null;
-        highlightedNeighbors = new Set();
-        buildAdjacency(msg.edges);
-        graph.graphData({
-          nodes: msg.nodes,
-          links: msg.edges,
-        });
-        // Center on active node if present
-        const activeNode = msg.nodes.find(n => n.isActive);
-        if (activeNode && msg.nodes.length > 1) {
-          setTimeout(() => {
-            graph.centerAt(activeNode.x, activeNode.y, 300);
-          }, 500);
-        }
-        break;
-      }
-      case 'activeFileChanged':
-        // Re-request graph data to recenter
-        vscode.postMessage({ type: 'requestRefresh' });
+      case 'fileList':
+        renderFileList(msg.nodes);
         break;
     }
   });
