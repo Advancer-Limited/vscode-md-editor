@@ -2,7 +2,7 @@
   "name": "vscode-md-editor",
   "displayName": "VS Code MD Editor",
   "description": "A rich Markdown editor with live preview, wikilinks, backlink panel, graph visualizer, and LanguageTool grammar checking",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "publisher": "advancer-limited",
   "icon": "media/icon.png",
