@@ -106,3 +106,20 @@
 - **graphViewProvider.ts**: Removed unused `disposables` array and empty `dispose()` method (webview disposables handled in `onDidDispose`)
 - **editor.css**: Removed unnecessary `!important` from `.grammar-btn`
 - Full build: `npm run compile` passes clean
+
+### Git Setup & Repository (2026-02-24)
+- Initialized git repo with `master` branch
+- Added remote: `https://github.com/Advancer-Limited/vscode-md-editor.git`
+- Updated `.gitignore` with node_modules, dist, .vsix, OS files
+- Initial commit with 33 files (6165 insertions), pushed to `origin/master`
+- Created `develop` branch from master, pushed to origin
+- Set branch protection on `master` and `develop`:
+  - Required PR reviews (no direct push)
+  - No force pushes, no deletions
+- Created `feature/mvp-features` branch from `origin/develop`
+- Updated `CLAUDE.md` with git branching workflow documentation
+- Created `LICENSE` (MIT License, Copyright Advancer Limited)
+- Created `README.md` with features, installation, usage, configuration, and contributing guide
+- Created `CONTRIBUTING.md` with detailed contributor instructions
+- Added `license`, `repository`, `homepage`, `bugs` fields to `package.json`
+- Build: `npm run compile` passes clean
