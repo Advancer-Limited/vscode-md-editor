@@ -6,6 +6,14 @@ dist/
 # Askance
 .askance/
 
+# Claude Code
+.claude/
+
+# Test files
+serve-test.js
+test-sample.md
+test-server.html
+
 # OS files
 .DS_Store
 Thumbs.db
