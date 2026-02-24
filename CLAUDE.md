@@ -14,6 +14,31 @@
 - Webview communication uses typed message protocol defined in `src/types.ts`.
 
 
+## Git Workflow
+
+This project uses a **master / develop / feature** branching model.
+
+### Branches
+
+- **master** — Production-ready code. Protected: requires PR, no direct push, no force push, no delete.
+- **develop** — Integration branch. Protected: requires PR, no direct push, no force push, no delete.
+- **feature/*** — Feature branches created from `develop`.
+- **fix/*** — Bug-fix branches created from `develop`.
+
+### Workflow
+
+1. **New work**: Create a branch from `develop` using `feature/<name>` or `fix/<name>`.
+2. **Develop**: Commit and push to the feature/fix branch.
+3. **Merge to develop**: Open a PR from `feature/<name>` → `develop`. Merge after review.
+4. **Release to master**: Open a PR from `develop` → `master`. Merge after review.
+
+### Rules
+
+- Never commit directly to `master` or `develop` — always use a PR.
+- Keep feature branches short-lived and focused on a single concern.
+- Delete feature/fix branches after merging.
+- Use descriptive PR titles and include a summary of changes.
+
 ## Askance — Tool Call Oversight
 
 This project uses [Askance](https://askance.app) for AI tool call interception and approval management.
