@@ -1,9 +1,0 @@
-{
-  "apiUrl": "https://api.askance.app",
-  "projectId": "fc337212-28aa-4eb2-b9cf-2dfe251a8c79",
-  "keepAlive": {
-    "enabled": true,
-    "duration": 3600,
-    "pollInterval": 30
-  }
-}

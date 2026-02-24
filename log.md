@@ -123,3 +123,153 @@
 - Created `CONTRIBUTING.md` with detailed contributor instructions
 - Added `license`, `repository`, `homepage`, `bugs` fields to `package.json`
 - Build: `npm run compile` passes clean
+
+### Phase 8: Default WYSIWYG Editor + Inline Grammar Highlights (2026-02-24)
+
+**Custom editor as default:**
+
+- Changed `priority` from `"option"` to `"default"` in `package.json` — .md files now open in the custom editor automatically
+
+**Inline grammar highlights:**
+
+- Added `GrammarMatch` interface and `grammarResults`/`applyGrammarFix` message types to `src/types.ts`
+- Added `onGrammarResults` EventEmitter to `src/diagnosticsProvider.ts` — fires alongside diagnostic collection with offset-mapped grammar matches
+- Wired grammar results from diagnostics → provider → webview in `src/extension.ts` and `src/markdownEditorProvider.ts`
+- Added `applyGrammarFix` handler in `markdownEditorProvider.ts` — applies WorkspaceEdit at the given offset
+- Implemented grammar highlight rendering in `media/editor.js`:
+  - `applyGrammarHighlights()` — walks preview DOM text nodes with TreeWalker, wraps matches in `<span class="grammar-error">`
+  - `showGrammarTooltip()` / `hideGrammarTooltip()` — positioned popup with message and clickable suggestion buttons
+  - Event delegation for hover/click on grammar error spans
+- Added grammar highlight CSS (wavy underlines, tooltip, suggestion buttons) in `media/editor.css`
+
+**WYSIWYG editable preview (default view):**
+
+- Installed `turndown` npm package, updated `scripts/copy-vendor.js` to vendor it
+- Added Turndown script tag in `markdownEditorProvider.ts` HTML template
+- Made `#preview-content` div `contenteditable="true" spellcheck="false"`
+- Initialized TurndownService with custom rules for wikilinks and grammar error spans
+- Contenteditable `input` handler syncs HTML→markdown via Turndown, debounced postMessage to extension
+- `isContentEditableUpdate` flag prevents re-render loop on contenteditable input
+- Changed default view to `preview-only` (WYSIWYG), renamed toggle buttons: Edit/Split/Raw
+- Updated all toolbar buttons to dispatch `document.execCommand()` in preview mode (bold, italic, strikethrough, headings, link, image, code, lists, quote, hr)
+- Added keyboard shortcuts (Ctrl+B/I/K) on previewContent for contenteditable mode
+- Updated wikilink click handler: Ctrl+Click navigates in edit mode, plain click places cursor
+- Updated status bar: shows word count from `previewContent.textContent` in preview mode
+- Full build: `npm run compile` passes clean
+
+### Bug Fixes (2026-02-24)
+
+- **Frontmatter rendering**: Added `stripFrontmatter()` in `media/editor.js` to strip YAML frontmatter (`---...---`) before markdown-it rendering. Frontmatter is stored and re-attached when contenteditable syncs back to markdown.
+- **Frontmatter in grammar check**: Added frontmatter skip in `stripMarkdownForChecking()` in `src/utils.ts` so YAML metadata isn't sent to LanguageTool.
+- **Grammar button feedback**: Made `checkGrammar` command async with `vscode.window.withProgress()` notification. Added user-visible warnings when LanguageTool is disabled, no document is active, or API is unreachable.
+- **Grammar error messages**: Improved error messages in `languageToolService.ts` for rate limits and connection failures.
+- Full build: `npm run compile` passes clean
+
+### Phase 10: Obsidian-Style Graph Experience (2026-02-24)
+
+**Replaced backlinks tree with unified graph sidebar + full graph panel.**
+
+**Types (`src/types.ts`):**
+- Added `RelationshipItem` interface (relativePath, label, direction, depth)
+- Added `relationshipData` to `ExtensionToGraphMessage`
+- Added `openFullGraph` to `GraphToExtensionMessage`
+- Added `ExtensionToFullGraphMessage` and `FullGraphToExtensionMessage` types
+
+**GraphDataService (`src/graph/graphDataService.ts`):**
+- Added `getRelationships(filePath, maxDepth)` — BFS from active file tracking direction (incoming/outgoing) and depth level
+
+**Sidebar graph (`graphViewProvider.ts`, `graph.js`, `graph.css`):**
+- Added "Expand" button to open full graph in main editor
+- Sends `relationshipData` alongside `graphData` on every refresh
+- Relationship list renders below mini graph, grouped by depth level
+- Each item shows direction arrow (← incoming, → outgoing) and opens file on click
+- CSS: flexbox split layout (50% graph / 50% relationship list), sticky depth headers
+
+**Full graph panel (`fullGraphPanel.ts`, `fullGraph.js`, `fullGraph.css`):**
+- `FullGraphPanel` — WebviewPanel singleton, creates/reveals on command
+- Obsidian-style collapsible controls overlay:
+  - Filters: search input, show orphans toggle
+  - Display: label visibility mode (auto/always/never), show arrows toggle
+  - Forces: repulsion strength slider, link distance slider, center force toggle
+- Enhanced interactions: click for tooltip, double-click to open file, drag to pin, right-click to unpin
+- Zoom controls: Fit, +, − buttons in bottom-right corner
+- Node tooltip shows name, folder, connections, tags with Open button
+- Active file highlighted with gold glow effect
+- Preserves pinned node positions across data refreshes
+
+**Extension wiring (`extension.ts`):**
+- Removed `BacklinkTreeProvider` import and registration
+- Added `FullGraphPanel` import
+- Registered `vscodeMdEditor.openFullGraph` command
+- Active file change notifies both sidebar and full graph panel
+
+**Package.json:**
+- Removed `vscodeMdEditor.backlinks` view
+- Added `vscodeMdEditor.openFullGraph` command
+
+**Deleted:**
+- `src/wikilink/backlinkTreeProvider.ts` (replaced by relationship list in sidebar)
+
+- Full build: `npm run compile` passes clean
+
+### Phase 10 Bug Fixes (2026-02-24)
+
+**Sidebar rewrite to flat file list:**
+- User reported "expand button does nothing" — added cache-busting (`?v=${Date.now()}`) to all script/CSS URIs
+- User reported "no nodes listed" — discovered force-graph method chain bug: `.d3Force('charge')?.strength()` returns the d3 force object, NOT the graph instance; broke into separate statements
+- User requested simplification: completely rewrote sidebar as pure DOM file list (no force-graph canvas)
+  - `graphViewProvider.ts` — sends `fileList` message with `SidebarFileNode[]`, no GraphFilters
+  - `graph.js` — event-delegated file node rendering with expandable link sub-lists
+  - `graph.css` — file list layout styles, active file highlight, link direction icons
+  - CSP simplified (no `unsafe-eval` since no force-graph in sidebar)
+
+**Full graph panel fixes:**
+- Fixed race condition: registered message handler BEFORE setting webview HTML (was losing `ready` message)
+- Added fallback `setTimeout` to send data 1000ms after creation
+- Added explicit dimension initialization via `requestAnimationFrame` after graph creation
+- Added `graph.width/height` call before setting graphData to ensure canvas has proper size
+- Added debug logging throughout for diagnosis
+
+**Wikilink rendering investigation:**
+- User reported wikilinks showing as raw `<a class="wikilink">` HTML in preview
+- Code review confirmed: `html: true` is set in markdown-it, `preprocessWikilinks` is correct
+- Added diagnostic console.log in `renderPreview()` to check if HTML is preserved vs escaped
+- Pending user test to check Developer Console output
+
+- Full build: `npm run compile` passes clean
+
+### Debug Logging Cleanup (2026-02-24)
+
+Removed excessive `console.log` debug statements from 5 files while preserving all `console.error` and `console.warn` statements:
+
+**`media/editor.js`** (6 statements removed):
+
+- Removed grammar results reception logging (match count, first match details)
+- Removed grammar highlight application logging (match count, text node count, per-match failure, applied count)
+
+**`src/diagnosticsProvider.ts`** (2 statements removed):
+
+- Removed paragraph check logging (char count, offset)
+- Removed match count per-paragraph logging
+
+**`src/graph/fullGraphPanel.ts`** (3 statements removed):
+
+- Removed graph data send logging (node/edge counts)
+- Removed message delivery logging and retry logging
+- Preserved `console.error` for sendGraphData errors
+
+**`src/languageToolService.ts`** (6 statements removed):
+
+- Removed chunk splitting logging (text length, chunk count)
+- Removed per-chunk send logging (chunk number, size, offset)
+- Removed total matches summary logging
+- Removed API response logging (match count, language)
+- Removed proxy detection logging
+- Removed connection logging (hostname, port)
+- Preserved `console.error` for chunk failures
+
+**`src/markdownEditorProvider.ts`** (4 statements removed):
+
+- Removed `sendGrammarResults` logging (match count, known panels, panel found/not found)
+
+- Full build: `npm run compile` passes clean

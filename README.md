@@ -4,12 +4,12 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 
 ## Features
 
-- **Split Editor** — Write markdown in a textarea with live preview side-by-side, or switch to editor-only or preview-only mode.
+- **WYSIWYG Editing** — Edit markdown in a rich preview with contenteditable, or switch to split view or raw markdown mode.
 - **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
-- **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax with autocomplete suggestions.
-- **Backlink Panel** — See all files that link to the currently active document, with context snippets.
-- **Link Graph** — Interactive force-directed graph showing connections between your markdown files. Toggle between local (focused on current file) and global views.
-- **LanguageTool Integration** — Grammar and spelling checking powered by LanguageTool, with inline diagnostics and quick-fix suggestions.
+- **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
+- **Markdown Links Sidebar** — File list showing all markdown files with their incoming/outgoing links, plus a "Show Graph" button.
+- **Interactive Link Graph** — Full-screen force-directed graph with Obsidian-style controls (filters, display options, force tuning), drag-to-pin, and zoom.
+- **LanguageTool Integration** — Grammar and spelling checking powered by LanguageTool, with inline highlights and quick-fix suggestions. Works with the free API or a Premium account.
 - **Rename Propagation** — Renaming a `.md` file automatically updates all wikilink references across your workspace.
 
 ## Installation
@@ -42,13 +42,24 @@ Then press `F5` in VS Code to launch the Extension Development Host.
 
 ## Configuration
 
+### LanguageTool Settings
+
+Grammar checking works out of the box with the free LanguageTool API (1500 character limit per request). For unlimited checking, sign up for [LanguageTool Premium](https://languagetool.org/premium) and add your credentials:
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `vscodeMdEditor.languageTool.enabled` | `true` | Enable LanguageTool grammar checking |
-| `vscodeMdEditor.languageTool.apiUrl` | `https://api.languagetoolplus.com/v2/check` | LanguageTool API endpoint |
+| `vscodeMdEditor.languageTool.apiUrl` | `https://api.languagetoolplus.com/v2/check` | API endpoint (change for self-hosted) |
 | `vscodeMdEditor.languageTool.apiKey` | `""` | Premium API key (leave empty for free tier) |
+| `vscodeMdEditor.languageTool.username` | `""` | Premium username/email (required with API key) |
 | `vscodeMdEditor.languageTool.language` | `"auto"` | Language code (e.g., `en-US`, `de-DE`) |
-| `vscodeMdEditor.languageTool.checkDelayMs` | `1500` | Delay before triggering grammar check after typing |
+| `vscodeMdEditor.languageTool.motherTongue` | `""` | Your native language code for better error detection |
+| `vscodeMdEditor.languageTool.checkDelayMs` | `1500` | Delay (ms) before triggering check after typing |
+
+### Graph Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `vscodeMdEditor.graph.defaultMode` | `"local"` | Default graph view: `local` or `global` |
 | `vscodeMdEditor.graph.localDepth` | `1` | BFS depth for local graph (1-3 hops) |
 

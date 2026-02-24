@@ -4,10 +4,10 @@ import { LanguageToolService } from './languageToolService.js';
 import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
 import { LanguageToolCodeActionProvider } from './codeActionsProvider.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
-import { BacklinkTreeProvider } from './wikilink/backlinkTreeProvider.js';
 import { handleWillRenameFiles } from './wikilink/renamePropagation.js';
 import { GraphDataService } from './graph/graphDataService.js';
 import { GraphViewProvider } from './graph/graphViewProvider.js';
+import { FullGraphPanel } from './graph/fullGraphPanel.js';
 
 export function activate(context: vscode.ExtensionContext): void {
   // 1. Create the file index service (shared foundation for wikilinks + graph)
@@ -29,21 +29,31 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // 2. Create the LanguageTool service
+  // 3. Create the LanguageTool service
   const languageToolService = new LanguageToolService();
 
-  // 3. Create the diagnostic collection
+  // 4. Create the diagnostic collection
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('languagetool');
   context.subscriptions.push(diagnosticCollection);
 
-  // 4. Create the diagnostics provider
+  // 5. Create the diagnostics provider
   const diagnosticsProvider = new LanguageToolDiagnosticsProvider(
     languageToolService,
     diagnosticCollection
   );
   context.subscriptions.push(diagnosticsProvider);
 
-  // 5. Register the code action provider for quick fixes
+  // Wire cursor offset for incremental grammar checking
+  diagnosticsProvider.setCursorOffsetProvider((uri) => provider.getCursorOffset(uri));
+
+  // Forward grammar results to the custom editor webview
+  context.subscriptions.push(
+    diagnosticsProvider.onGrammarResults(({ uri, matches }) => {
+      provider.sendGrammarResults(uri, matches);
+    })
+  );
+
+  // 6. Register the code action provider for quick fixes
   context.subscriptions.push(
     vscode.languages.registerCodeActionsProvider(
       { language: 'markdown', scheme: 'file' },
@@ -54,21 +64,42 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // 6. Register commands
+  // 7. Register commands
 
-  // "Check Grammar" command - works for both standard and custom editors
+  // "Check Grammar" command
   context.subscriptions.push(
-    vscode.commands.registerCommand('vscodeMdEditor.checkGrammar', () => {
-      // Try the standard text editor first
+    vscode.commands.registerCommand('vscodeMdEditor.checkGrammar', async () => {
       const textEditor = vscode.window.activeTextEditor;
+      let doc: vscode.TextDocument | undefined;
       if (textEditor && textEditor.document.languageId === 'markdown') {
-        diagnosticsProvider.runCheck(textEditor.document);
+        doc = textEditor.document;
+      } else {
+        doc = provider.getActiveDocument();
+      }
+
+      if (!doc) {
+        vscode.window.showWarningMessage('No markdown document is active.');
         return;
       }
-      // Fall back to the custom editor's active document
-      const activeDoc = provider.getActiveDocument();
-      if (activeDoc) {
-        diagnosticsProvider.runCheck(activeDoc);
+
+      if (!languageToolService.isEnabled()) {
+        vscode.window.showWarningMessage(
+          'LanguageTool is disabled. Enable it in Settings: vscodeMdEditor.languageTool.enabled'
+        );
+        return;
+      }
+
+      const count = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Checking grammar...' },
+        async () => {
+          return await diagnosticsProvider.runCheck(doc);
+        }
+      );
+
+      if (count > 0) {
+        vscode.window.showInformationMessage(`Grammar check: ${count} issue${count !== 1 ? 's' : ''} found.`);
+      } else {
+        vscode.window.showInformationMessage('Grammar check: No issues found.');
       }
     })
   );
@@ -112,35 +143,14 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // 7. Register the backlink panel
+  // 8. Helper: get active file URI/path
   const getActiveFileUri = (): vscode.Uri | undefined => {
-    // Try standard text editor first
     const textEditor = vscode.window.activeTextEditor;
     if (textEditor && textEditor.document.uri.fsPath.endsWith('.md')) {
       return textEditor.document.uri;
     }
-    // Fall back to custom editor's active document
     return provider.getActiveDocument()?.uri;
   };
-
-  const backlinkProvider = new BacklinkTreeProvider(fileIndexService, getActiveFileUri);
-  context.subscriptions.push(
-    vscode.window.createTreeView('vscodeMdEditor.backlinks', {
-      treeDataProvider: backlinkProvider,
-      showCollapseAll: true,
-    })
-  );
-
-  // Refresh backlinks when active editor changes
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(() => backlinkProvider.refresh())
-  );
-  context.subscriptions.push(
-    provider.onDidChangeActiveDocument(() => backlinkProvider.refresh())
-  );
-
-  // 8. Register the graph visualizer
-  const graphDataService = new GraphDataService(fileIndexService);
 
   const getActiveFilePath = (): string | undefined => {
     const uri = getActiveFileUri();
@@ -155,6 +165,9 @@ export function activate(context: vscode.ExtensionContext): void {
     relativePath = relativePath.replace(/\\/g, '/').replace(/^\//, '');
     return relativePath;
   };
+
+  // 9. Register the graph sidebar panel
+  const graphDataService = new GraphDataService(fileIndexService);
 
   const graphViewProvider = new GraphViewProvider(
     context,
@@ -172,10 +185,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Refresh graph when active file changes
   context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(() => graphViewProvider.notifyActiveFileChanged())
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      graphViewProvider.notifyActiveFileChanged();
+      FullGraphPanel.notifyActiveFileChanged(getActiveFilePath());
+    })
   );
   context.subscriptions.push(
-    provider.onDidChangeActiveDocument(() => graphViewProvider.notifyActiveFileChanged())
+    provider.onDidChangeActiveDocument(() => {
+      graphViewProvider.notifyActiveFileChanged();
+      FullGraphPanel.notifyActiveFileChanged(getActiveFilePath());
+    })
   );
 
   // Graph commands
@@ -190,14 +209,26 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // 9. Register rename propagation
+  // "Open Full Graph" command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('vscodeMdEditor.openFullGraph', () => {
+      FullGraphPanel.createOrShow(
+        context,
+        fileIndexService,
+        graphDataService,
+        getActiveFilePath,
+      );
+    })
+  );
+
+  // 10. Register rename propagation
   context.subscriptions.push(
     vscode.workspace.onWillRenameFiles((event) => {
       event.waitUntil(handleWillRenameFiles(event, fileIndexService));
     })
   );
 
-  // 9. Run an initial check on any already-open markdown documents
+  // 11. Run an initial check on any already-open markdown documents
   if (languageToolService.isEnabled()) {
     for (const doc of vscode.workspace.textDocuments) {
       if (doc.languageId === 'markdown') {

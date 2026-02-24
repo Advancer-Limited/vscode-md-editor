@@ -67,6 +67,12 @@ export function stripMarkdownForChecking(markdown: string): { text: string; offs
   let i = 0;
   const len = markdown.length;
 
+  // Skip YAML frontmatter (---...---)
+  const frontmatterMatch = markdown.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  if (frontmatterMatch) {
+    i = frontmatterMatch[0].length;
+  }
+
   while (i < len) {
     // Fenced code blocks: ```...```
     if (markdown[i] === '`' && markdown.slice(i, i + 3) === '```') {
