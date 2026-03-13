@@ -6,12 +6,12 @@ All notable changes to the VS Code MD Editor extension will be documented in thi
 
 ### Added
 
-- **Version Diff** — Compare markdown files against previous git commits using VS Code's built-in diff editor.
-  - "Compare with Previous Version" — diff against the most recent commit.
+- **Version Diff** — Compare markdown files against previous git commits in a rendered diff viewer.
+  - "Compare with Previous Version" — diff against the most recent commit (smart: HEAD if uncommitted changes, else HEAD~1).
   - "Compare with Commit..." — pick from a list of recent commits (QuickPick with hash, message, author, date).
   - "Compare with Saved" — diff working changes against HEAD.
   - Right-click context menu entries for `.md` files in the Explorer.
-  - Read-only raw text rendering for diff context (non-file URI schemes) to avoid broken WYSIWYG in diff panels.
+  - Custom webview panel renders both versions through markdown-it with green/red diff highlighting.
 
 ## [0.1.1] - 2026-02-24
 

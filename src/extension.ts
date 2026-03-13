@@ -278,77 +278,89 @@ export function activate(context: vscode.ExtensionContext): void {
   // Otherwise compare with the commit before HEAD to always show a meaningful diff.
   context.subscriptions.push(
     vscode.commands.registerCommand('vscodeMdEditor.diffWithPrevious', async (uri?: vscode.Uri) => {
-      const ctx = await resolveDiffContext(uri);
-      if (!ctx) return;
+      try {
+        const ctx = await resolveDiffContext(uri);
+        if (!ctx) return;
 
-      const history = await diffService.getFileHistory(ctx.repoRoot, ctx.relativePath, 2);
-      if (history.length === 0) {
-        vscode.window.showInformationMessage('No git history found for this file.');
-        return;
+        const history = await diffService.getFileHistory(ctx.repoRoot, ctx.relativePath, 2);
+        if (history.length === 0) {
+          vscode.window.showInformationMessage('No git history found for this file.');
+          return;
+        }
+
+        // Check if current content differs from the latest commit
+        const headContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, history[0].hash);
+        const normalize = (s: string) => s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
+        const hasUncommittedChanges = normalize(headContent) !== normalize(ctx.currentContent);
+
+        let commit: typeof history[0];
+        let oldContent: string;
+
+        if (hasUncommittedChanges) {
+          // Show uncommitted changes vs HEAD
+          commit = history[0];
+          oldContent = headContent;
+        } else if (history.length >= 2) {
+          // No uncommitted changes — show what the last commit changed
+          commit = history[1];
+          oldContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, history[1].hash);
+        } else {
+          vscode.window.showInformationMessage('No previous version to compare with.');
+          return;
+        }
+
+        MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (${commit.shortHash}) ↔ Current`);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Failed to compare: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      // Check if current content differs from the latest commit
-      const headContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, history[0].hash);
-      const normalize = (s: string) => s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
-      const hasUncommittedChanges = normalize(headContent) !== normalize(ctx.currentContent);
-
-      let commit: typeof history[0];
-      let oldContent: string;
-
-      if (hasUncommittedChanges) {
-        // Show uncommitted changes vs HEAD
-        commit = history[0];
-        oldContent = headContent;
-      } else if (history.length >= 2) {
-        // No uncommitted changes — show what the last commit changed
-        commit = history[1];
-        oldContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, history[1].hash);
-      } else {
-        vscode.window.showInformationMessage('No previous version to compare with.');
-        return;
-      }
-
-      MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (${commit.shortHash}) ↔ Current`);
     })
   );
 
   // "Compare with Commit..." — QuickPick to select a commit, then diff
   context.subscriptions.push(
     vscode.commands.registerCommand('vscodeMdEditor.diffWithCommit', async (uri?: vscode.Uri) => {
-      const ctx = await resolveDiffContext(uri);
-      if (!ctx) return;
+      try {
+        const ctx = await resolveDiffContext(uri);
+        if (!ctx) return;
 
-      const history = await diffService.getFileHistory(ctx.repoRoot, ctx.relativePath, 20);
-      if (history.length === 0) {
-        vscode.window.showInformationMessage('No git history found for this file.');
-        return;
+        const history = await diffService.getFileHistory(ctx.repoRoot, ctx.relativePath, 20);
+        if (history.length === 0) {
+          vscode.window.showInformationMessage('No git history found for this file.');
+          return;
+        }
+
+        const items = history.map(c => ({
+          label: `$(git-commit) ${c.shortHash}`,
+          description: c.message,
+          detail: `${c.authorName} — ${new Date(c.date).toLocaleDateString()}`,
+          commit: c,
+        }));
+
+        const picked = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select a commit to compare with',
+        });
+        if (!picked) return;
+
+        const oldContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, picked.commit.hash);
+        MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (${picked.commit.shortHash}) ↔ Current`);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Failed to compare: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      const items = history.map(c => ({
-        label: `$(git-commit) ${c.shortHash}`,
-        description: c.message,
-        detail: `${c.authorName} — ${new Date(c.date).toLocaleDateString()}`,
-        commit: c,
-      }));
-
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: 'Select a commit to compare with',
-      });
-      if (!picked) return;
-
-      const oldContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, picked.commit.hash);
-      MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (${picked.commit.shortHash}) ↔ Current`);
     })
   );
 
   // "Compare with Saved" — diff HEAD version against current working content
   context.subscriptions.push(
     vscode.commands.registerCommand('vscodeMdEditor.diffWithSaved', async () => {
-      const ctx = await resolveDiffContext();
-      if (!ctx) return;
+      try {
+        const ctx = await resolveDiffContext();
+        if (!ctx) return;
 
-      const oldContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, 'HEAD');
-      MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (HEAD) ↔ Working`);
+        const oldContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, 'HEAD');
+        MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (HEAD) ↔ Working`);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Failed to compare: ${err instanceof Error ? err.message : String(err)}`);
+      }
     })
   );
 

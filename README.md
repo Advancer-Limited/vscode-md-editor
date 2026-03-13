@@ -10,7 +10,7 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 - **Markdown Links Sidebar** — File list showing all markdown files with their incoming/outgoing links, plus a "Show Graph" button.
 - **Interactive Link Graph** — Full-screen force-directed graph with Obsidian-style controls (filters, display options, force tuning), drag-to-pin, and zoom.
 - **LanguageTool Integration** — Grammar and spelling checking powered by LanguageTool, with inline highlights and quick-fix suggestions. Works with the free API or a Premium account.
-- **Version Diff** — Compare your markdown file against previous git commits using VS Code's built-in diff editor. See added, removed, and changed lines side-by-side or inline.
+- **Version Diff** — Compare your markdown file against previous git commits in a rendered diff viewer with green/red change highlighting.
 - **Rename Propagation** — Renaming a `.md` file automatically updates all wikilink references across your workspace.
 
 ## Installation
@@ -51,7 +51,7 @@ Compare your markdown files against previous git commits:
   - **Compare with Saved** — Diff your working changes against the last committed version (HEAD).
 - **Right-click** any `.md` file in the Explorer for quick access to diff commands.
 
-The diff opens in VS Code's standard diff editor with green/red line highlighting, gutter markers, and side-by-side or inline toggle.
+The diff opens in a rendered webview panel with green highlighting for additions and red strikethrough for deletions.
 
 ## Commands
 
