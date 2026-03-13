@@ -2,7 +2,7 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2026-03-13
 
 ### Added
 
