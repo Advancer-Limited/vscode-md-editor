@@ -1,6 +1,6 @@
 # VS Code MD Editor
 
-A rich Markdown editor extension for Visual Studio Code with split preview, [[wikilinks]], backlink panel, force-directed link graph, and LanguageTool grammar checking.
+A rich Markdown editor extension for Visual Studio Code with split preview, [[wikilinks]], force-directed link graph, version diff, and LanguageTool grammar checking.
 
 ## Features
 
@@ -10,6 +10,7 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 - **Markdown Links Sidebar** — File list showing all markdown files with their incoming/outgoing links, plus a "Show Graph" button.
 - **Interactive Link Graph** — Full-screen force-directed graph with Obsidian-style controls (filters, display options, force tuning), drag-to-pin, and zoom.
 - **LanguageTool Integration** — Grammar and spelling checking powered by LanguageTool, with inline highlights and quick-fix suggestions. Works with the free API or a Premium account.
+- **Version Diff** — Compare your markdown file against previous git commits using VS Code's built-in diff editor. See added, removed, and changed lines side-by-side or inline.
 - **Rename Propagation** — Renaming a `.md` file automatically updates all wikilink references across your workspace.
 
 ## Installation
@@ -39,6 +40,30 @@ Then press `F5` in VS Code to launch the Extension Development Host.
 2. Use the toolbar to format text, or write markdown directly in the textarea.
 3. Type `[[` to get autocomplete suggestions for linking to other markdown files.
 4. Open the **Markdown Links** sidebar to see backlinks and the link graph.
+
+### Comparing Versions
+
+Compare your markdown files against previous git commits:
+
+- **Command Palette** (`Ctrl+Shift+P` / `Cmd+Shift+P`):
+  - **Compare with Previous Version** — Diff against the most recent commit that changed this file.
+  - **Compare with Commit...** — Pick from a list of recent commits with hash, message, author, and date.
+  - **Compare with Saved** — Diff your working changes against the last committed version (HEAD).
+- **Right-click** any `.md` file in the Explorer for quick access to diff commands.
+
+The diff opens in VS Code's standard diff editor with green/red line highlighting, gutter markers, and side-by-side or inline toggle.
+
+## Commands
+
+| Command | Description |
+| ------- | ----------- |
+| `Markdown Editor: Compare with Previous Version` | Diff against the last commit that changed this file |
+| `Markdown Editor: Compare with Commit...` | Pick a commit from file history and diff against it |
+| `Markdown Editor: Compare with Saved` | Diff working changes against HEAD |
+| `Markdown Editor: Check Grammar with LanguageTool` | Run grammar and spelling check |
+| `Markdown Editor: Open with VS Code MD Editor` | Open a `.md` file in the custom editor |
+| `Markdown Editor: Show Link Graph` | Focus the Markdown Links sidebar |
+| `Markdown Editor: Open Full Graph` | Open the full-screen force-directed link graph |
 
 ## Configuration
 

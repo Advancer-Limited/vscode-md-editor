@@ -1,7 +1,7 @@
 {
   "name": "vscode-md-editor",
   "displayName": "VS Code MD Editor",
-  "description": "A rich Markdown editor with live preview, wikilinks, backlink panel, graph visualizer, and LanguageTool grammar checking",
+  "description": "A rich Markdown editor with live preview, wikilinks, graph visualizer, version diff, and LanguageTool grammar checking",
   "version": "0.1.1",
   "license": "MIT",
   "publisher": "advancer-limited",
@@ -86,6 +86,21 @@
         "command": "vscodeMdEditor.openFullGraph",
         "title": "Open Full Graph",
         "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.diffWithPrevious",
+        "title": "Compare with Previous Version",
+        "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.diffWithCommit",
+        "title": "Compare with Commit...",
+        "category": "Markdown Editor"
+      },
+      {
+        "command": "vscodeMdEditor.diffWithSaved",
+        "title": "Compare with Saved",
+        "category": "Markdown Editor"
       }
     ],
     "configuration": {
@@ -152,6 +167,30 @@
           "command": "vscodeMdEditor.openWithEditor",
           "when": "resourceExtname == .md",
           "group": "navigation"
+        },
+        {
+          "command": "vscodeMdEditor.diffWithPrevious",
+          "when": "resourceExtname == .md",
+          "group": "3_compare"
+        },
+        {
+          "command": "vscodeMdEditor.diffWithCommit",
+          "when": "resourceExtname == .md",
+          "group": "3_compare"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vscodeMdEditor.diffWithPrevious",
+          "when": "resourceExtname == .md || editorLangId == markdown"
+        },
+        {
+          "command": "vscodeMdEditor.diffWithCommit",
+          "when": "resourceExtname == .md || editorLangId == markdown"
+        },
+        {
+          "command": "vscodeMdEditor.diffWithSaved",
+          "when": "resourceExtname == .md || editorLangId == markdown"
         }
       ]
     }

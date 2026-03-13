@@ -273,3 +273,50 @@ Removed excessive `console.log` debug statements from 5 files while preserving a
 - Removed `sendGrammarResults` logging (match count, known panels, panel found/not found)
 
 - Full build: `npm run compile` passes clean
+
+### Phase 11: Markdown Diff — Rendered Diff Viewer (2026-03-13)
+
+**Approach**: Custom webview panel renders both versions through markdown-it and highlights
+changes with diff styling (green for additions, red with strikethrough for deletions).
+Uses a line-level LCS diff algorithm with no external dependencies.
+
+**New files:**
+
+- `src/diff/diffService.ts` — Git CLI wrapper for file history and content retrieval:
+  - `getRepoRoot(fileUri)` — finds git repo root via `git rev-parse --show-toplevel`
+  - `getFileHistory(repoRoot, relativePath, maxCount)` — returns commits touching a file via `git log --follow`
+  - `getFileContentAtCommit(repoRoot, relativePath, commitHash)` — retrieves content via `git show <ref>:<path>`
+  - `getRelativePath(repoRoot, fileUri)` — normalizes paths (forward slashes, lowercase drive letter)
+
+- `src/diff/diffAlgorithm.ts` — Line-level LCS diff algorithm:
+  - `computeLineDiff(oldText, newText)` — returns `DiffHunk[]` (added/removed/unchanged)
+  - Normalizes `\r\n` → `\n` before comparing (critical for Windows + git compatibility)
+  - Groups consecutive same-type lines into hunks for cleaner rendering
+
+- `src/diff/markdownDiffPanel.ts` — Webview panel for rendered markdown diff:
+  - Static `show()` method creates panel with embedded diff data
+  - Passes hunks as HTML-escaped JSON in a hidden input element
+  - Loads markdown-it + diff.js/diff.css from media/
+
+- `media/diff.js` — Webview script for diff rendering:
+  - Parses embedded hunk data and renders each hunk through markdown-it
+  - Wraps hunks in styled divs with gutter markers (+/−)
+
+- `media/diff.css` — Diff styling using VS Code theme variables:
+  - Added lines: green background (`--vscode-diffEditor-insertedTextBackground`)
+  - Removed lines: red background + strikethrough (`--vscode-diffEditor-removedTextBackground`)
+  - Legend bar, gutter markers, and markdown content styles
+
+**Modified files:**
+
+- `package.json` — Added 3 diff commands and explorer context menu entries
+- `extension.ts` — Registered 3 diff commands with shared `resolveDiffContext` helper:
+  - `diffWithPrevious` — smart commit selection (HEAD if uncommitted changes, else HEAD~1)
+  - `diffWithCommit` — QuickPick of recent commits with hash, message, author, date
+  - `diffWithSaved` — HEAD vs current working content
+- `README.md` — Added Version Diff feature docs, Commands table, usage section
+- `CHANGELOG.md` — Created with version diff entry
+
+**Impact**: Zero changes to `markdownEditorProvider.ts` or any existing editor/wikilink/graph/grammar code. All diff code is in new isolated files.
+
+- Full build: `npm run compile` passes clean

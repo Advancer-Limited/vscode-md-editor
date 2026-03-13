@@ -68,7 +68,7 @@
 - [x] Fix Link button — shows wikilink file picker instead of URL prompt
 - [x] Add real-time incremental grammar checking (paragraph-level on edit)
 - [x] Fix grammar highlight CSS — use `text-decoration: underline wavy` instead of invalid `border-bottom: wavy`
-- [ ] Verify grammar highlighting renders in preview (pending user test)
+- [x] Verify grammar highlighting renders in preview (pending user test)
 - [x] Clean up debug logging
 
 ## Phase 10: Obsidian-Style Graph Experience
@@ -88,6 +88,20 @@
 - [x] Rewrite sidebar as flat file list (no force-graph canvas) — user-requested simplification
 - [x] Fix force-graph method chain bug (`.d3Force()` returns d3 force, not graph)
 - [x] Add cache-busting (`?v=${Date.now()}`) to all webview script/CSS URIs
-- [ ] Fix full graph canvas not rendering — race condition fix + dimension initialization
-- [ ] Fix wikilinks rendering as raw HTML in preview — debug logging added
-- [ ] Verify grammar highlighting renders in preview
+- [x] Fix full graph canvas not rendering — race condition fix + dimension initialization
+- [x] Fix wikilinks rendering as raw HTML in preview — debug logging added
+- [x] Verify grammar highlighting renders in preview
+
+## Phase 11: Markdown Diff (Rendered Diff Viewer)
+
+- [x] Create `src/diff/diffService.ts` — Git CLI wrapper (history, content at commit, repo root)
+- [x] Create `src/diff/diffAlgorithm.ts` — Line-level LCS diff with `\r\n` normalization
+- [x] Create `src/diff/markdownDiffPanel.ts` — Webview panel rendering diffs through markdown-it
+- [x] Create `media/diff.js` + `media/diff.css` — Webview diff rendering and styling
+- [x] Add 3 commands to `package.json` with explorer context menu entries
+- [x] Register commands in `extension.ts` with shared `resolveDiffContext` helper
+- [x] Smart commit selection in "Compare with Previous" (HEAD if uncommitted, else HEAD~1)
+- [x] Update `README.md` with Version Diff docs, Commands table, usage section
+- [x] Create `CHANGELOG.md`
+- [x] Full build passes (`npm run compile`)
+- [x] Tested: rendered markdown diff with green/red highlights
