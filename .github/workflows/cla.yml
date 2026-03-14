@@ -28,7 +28,7 @@ jobs:
           path-to-signatures: 'signatures/cla.json'
           path-to-document: 'https://github.com/Advancer-Limited/vscode-md-editor/blob/master/CLA.md'
           branch: 'cla-signatures'
-          allowlist: 'dependabot[bot],github-actions[bot]'
+          allowlist: 'wiredd74,dependabot[bot],github-actions[bot]'
           custom-notsigned-prcomment: |
             Thank you for your contribution! Before we can merge this PR, you need to agree to our [Contributor License Agreement](https://github.com/Advancer-Limited/vscode-md-editor/blob/master/CLA.md).
 
