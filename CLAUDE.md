@@ -59,6 +59,13 @@ Use `gh pr review <number> --comment --body "..."` to add general comments, or `
 - Delete feature/fix branches after merging.
 - Use descriptive PR titles and include a summary of changes.
 
+## Publishing
+
+- VS Code Marketplace publisher name: `advancer-limited`
+- Publish with: `npx @vscode/vsce publish -p <PAT>`
+- PAT is stored in Azure Key Vault `kv-askance-prod` as `vsce-marketplace-pat`
+- The PAT must be created from the Azure DevOps account linked to the `advancer-limited` publisher
+
 ## Askance — Tool Call Oversight
 
 This project uses [Askance](https://askance.app) for AI tool call interception and approval management.
