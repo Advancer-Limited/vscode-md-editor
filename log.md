@@ -320,3 +320,11 @@ Uses a line-level LCS diff algorithm with no external dependencies.
 **Impact**: Zero changes to `markdownEditorProvider.ts` or any existing editor/wikilink/graph/grammar code. All diff code is in new isolated files.
 
 - Full build: `npm run compile` passes clean
+
+## 2026-06-16 — Release 0.2.1 to VS Code Marketplace
+
+- Marketplace already had 0.2.0; master/develop contained unpublished fix #24 (cursor jump in WYSIWYG) still tagged 0.2.0.
+- Bumped version 0.2.0 → 0.2.1 (patch) on branch `fix/bump-0.2.1` off `develop`.
+- Modified: `package.json`, `package-lock.json` (version), `CHANGELOG.md` (0.2.1 entry).
+- Flow: PR fix/bump-0.2.1 → develop, then develop → master, then publish from master.
+- `npm run check-types` passes.
