@@ -105,3 +105,11 @@
 - [x] Create `CHANGELOG.md`
 - [x] Full build passes (`npm run compile`)
 - [x] Tested: rendered markdown diff with green/red highlights
+
+## Release 0.2.1
+
+- [x] Bump version to 0.2.1 (package.json, package-lock.json)
+- [x] Add CHANGELOG 0.2.1 entry
+- [ ] PR fix/bump-0.2.1 → develop, self-review, merge
+- [ ] PR develop → master, merge
+- [ ] Publish 0.2.1 from master to VS Code Marketplace
