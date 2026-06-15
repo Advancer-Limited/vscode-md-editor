@@ -85,6 +85,80 @@
     return editorContainer.classList.contains('preview-only');
   }
 
+  /**
+   * Save caret position inside a contenteditable element as a plain-text character offset.
+   * Returns null if the selection is not inside the element.
+   */
+  function saveCaretPosition(element) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    if (!element.contains(range.startContainer)) return null;
+    const pre = document.createRange();
+    pre.selectNodeContents(element);
+    pre.setEnd(range.startContainer, range.startOffset);
+    const start = pre.toString().length;
+    pre.setEnd(range.endContainer, range.endOffset);
+    return { start, end: pre.toString().length };
+  }
+
+  /**
+   * Restore a caret position (saved by saveCaretPosition) inside a contenteditable
+   * element after its innerHTML has been replaced.
+   */
+  function restoreCaretPosition(element, saved) {
+    if (!saved) return;
+    try {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      let startNode = null, startOff = 0;
+      let endNode = null, endOff = 0;
+      let node;
+      while ((node = walker.nextNode())) {
+        const len = node.textContent.length;
+        if (startNode === null && offset + len >= saved.start) {
+          startNode = node;
+          startOff = saved.start - offset;
+        }
+        if (offset + len >= saved.end) {
+          endNode = node;
+          endOff = saved.end - offset;
+          break;
+        }
+        offset += len;
+      }
+      if (!startNode) return;
+      const range = document.createRange();
+      range.setStart(startNode, Math.min(startOff, startNode.textContent.length));
+      range.setEnd(
+        endNode || startNode,
+        Math.min(endOff, (endNode || startNode).textContent.length)
+      );
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch (_) {
+      // Fail silently — better no restore than a crash
+    }
+  }
+
+  /**
+   * Get the caret character offset within a contenteditable element's text content.
+   * Returns 0 if the selection is not inside the element.
+   */
+  function getCaretTextOffset(element) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return 0;
+    const range = sel.getRangeAt(0);
+    if (!element.contains(range.startContainer)) return 0;
+    const pre = document.createRange();
+    pre.selectNodeContents(element);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return pre.toString().length;
+  }
+
   // ================================================
   // Message handling from extension host
   // ================================================
@@ -175,12 +249,18 @@
     // Sync to textarea (source of truth)
     textarea.value = markdown;
 
+    // Capture caret offset NOW (synchronously) before the async timeout fires.
+    // textarea.selectionStart is always 0 in WYSIWYG mode because the textarea
+    // is not focused — read the actual caret position from previewContent instead.
+    const previewCaretOffset = Math.min(
+      getCaretTextOffset(previewContent) + currentFrontmatter.length,
+      markdown.length
+    );
+
     // Debounced send to extension host
     clearTimeout(contentEditableDebounce);
     contentEditableDebounce = setTimeout(() => {
-      // Estimate cursor offset from the markdown text length up to current position
-      const cursorOffset = markdown.length > 0 ? Math.min(textarea.selectionStart || 0, markdown.length) : 0;
-      vscode.postMessage({ type: 'edit', text: markdown, cursorOffset });
+      vscode.postMessage({ type: 'edit', text: markdown, cursorOffset: previewCaretOffset });
       isContentEditableUpdate = false;
     }, 100);
 
@@ -305,14 +385,15 @@
   }
 
   function insertText(text) {
+    const start = textarea.selectionStart; // must be saved before value is replaced
     const end = textarea.selectionEnd;
     const lineEnd = textarea.value.indexOf('\n', end);
     const actualEnd = lineEnd === -1 ? textarea.value.length : lineEnd;
     textarea.value =
-      textarea.value.substring(0, textarea.selectionStart) +
+      textarea.value.substring(0, start) +
       text +
       textarea.value.substring(actualEnd);
-    textarea.selectionStart = textarea.selectionEnd = textarea.selectionStart + text.length;
+    textarea.selectionStart = textarea.selectionEnd = start + text.length;
     textarea.focus();
     textarea.dispatchEvent(new Event('input'));
   }
@@ -900,12 +981,19 @@
   }
 
   function renderPreview(text) {
+    // Save caret before rebuilding the DOM so it can be restored afterward.
+    const savedCaret = isPreviewMode() ? saveCaretPosition(previewContent) : null;
+
     const withoutFrontmatter = stripFrontmatter(text);
     const processed = preprocessWikilinks(withoutFrontmatter);
     const rendered = md.render(processed);
 
     previewContent.innerHTML = sanitizeHtml(rendered);
     applyGrammarHighlights();
+
+    if (savedCaret) {
+      restoreCaretPosition(previewContent, savedCaret);
+    }
   }
 
   // ================================================
