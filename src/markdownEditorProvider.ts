@@ -59,17 +59,25 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
 
-    // Track whether we're currently applying an edit from the webview
-    // to prevent the change event from echoing it back.
+    // Suppress echoing our own edits back to the webview.
+    // Two-layer guard: isApplyingEdit catches synchronous fires during applyEdit;
+    // lastAppliedText catches fires that arrive after the await resolves.
     let isApplyingEdit = false;
+    let lastAppliedText: string | null = null;
 
     const updateWebview = () => {
       if (isApplyingEdit) {
         return;
       }
+      const currentText = document.getText();
+      if (lastAppliedText !== null && currentText === lastAppliedText) {
+        lastAppliedText = null;
+        return;
+      }
+      lastAppliedText = null;
       webviewPanel.webview.postMessage({
         type: 'update',
-        text: document.getText(),
+        text: currentText,
       });
     };
 
@@ -83,6 +91,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
           case 'edit': {
             isApplyingEdit = true;
+            lastAppliedText = message.text;
             if (message.cursorOffset !== undefined) {
               this.cursorOffsets.set(document.uri.toString(), message.cursorOffset);
             }

@@ -33,9 +33,6 @@
   // Track whether the current content update originated from the extension host
   let isExternalUpdate = false;
 
-  // Track whether the current update originated from contenteditable input
-  let isContentEditableUpdate = false;
-
   // Stored frontmatter to preserve during contenteditable round-trips
   let currentFrontmatter = '';
 
@@ -85,6 +82,88 @@
     return editorContainer.classList.contains('preview-only');
   }
 
+  /**
+   * Save caret position inside a contenteditable element as a plain-text character offset.
+   * Returns null if the selection is not inside the element.
+   */
+  function saveCaretPosition(element) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    if (!element.contains(range.startContainer)) return null;
+    const pre = document.createRange();
+    pre.selectNodeContents(element);
+    pre.setEnd(range.startContainer, range.startOffset);
+    const start = pre.toString().length;
+    pre.setEnd(range.endContainer, range.endOffset);
+    return { start, end: pre.toString().length };
+  }
+
+  /**
+   * Restore a caret position (saved by saveCaretPosition) inside a contenteditable
+   * element after its innerHTML has been replaced.
+   */
+  function restoreCaretPosition(element, saved) {
+    if (!saved) return;
+    try {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      let startNode = null, startOff = 0;
+      let endNode = null, endOff = 0;
+      let lastNode = null;
+      let node;
+      while ((node = walker.nextNode())) {
+        lastNode = node;
+        const len = node.textContent.length;
+        if (startNode === null && offset + len >= saved.start) {
+          startNode = node;
+          startOff = saved.start - offset;
+        }
+        if (offset + len >= saved.end) {
+          endNode = node;
+          endOff = saved.end - offset;
+          break;
+        }
+        offset += len;
+      }
+      // Saved offset is past the end of the (now shorter) content — collapse the
+      // caret to the end of the last text node rather than dropping it to start.
+      if (!startNode) {
+        if (!lastNode) return;
+        startNode = lastNode;
+        startOff = lastNode.textContent.length;
+      }
+      const range = document.createRange();
+      range.setStart(startNode, Math.min(startOff, startNode.textContent.length));
+      range.setEnd(
+        endNode || startNode,
+        Math.min(endOff, (endNode || startNode).textContent.length)
+      );
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch (_) {
+      // Fail silently — better no restore than a crash
+    }
+  }
+
+  /**
+   * Get the caret character offset within a contenteditable element's text content.
+   * Returns 0 if the selection is not inside the element.
+   */
+  function getCaretTextOffset(element) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return 0;
+    const range = sel.getRangeAt(0);
+    if (!element.contains(range.startContainer)) return 0;
+    const pre = document.createRange();
+    pre.selectNodeContents(element);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return pre.toString().length;
+  }
+
   // ================================================
   // Message handling from extension host
   // ================================================
@@ -93,7 +172,15 @@
     switch (message.type) {
       case 'update': {
         const text = message.text;
-        if (textarea.value !== text) {
+        // If the incoming text already matches the textarea, this update is the
+        // echo of an edit we just made locally (the textarea is our source of
+        // truth, updated synchronously on every keystroke). Re-rendering on an
+        // echo would rebuild the preview DOM needlessly. Only re-render when the
+        // text genuinely differs — i.e. a real external change (other editor,
+        // git, grammar fix, etc.). This replaces the old isContentEditableUpdate
+        // flag, which could get stuck and silently drop external updates.
+        const isEcho = text === textarea.value;
+        if (!isEcho) {
           isExternalUpdate = true;
           const selStart = textarea.selectionStart;
           const selEnd = textarea.selectionEnd;
@@ -101,9 +188,6 @@
           textarea.selectionStart = Math.min(selStart, text.length);
           textarea.selectionEnd = Math.min(selEnd, text.length);
           isExternalUpdate = false;
-        }
-        // Don't re-render preview if change came from contenteditable
-        if (!isContentEditableUpdate) {
           renderPreview(text);
         }
         updateStatusBar();
@@ -164,24 +248,35 @@
   previewContent.addEventListener('input', () => {
     if (isExternalUpdate) return;
 
-    isContentEditableUpdate = true;
-
-    // Convert HTML back to markdown via Turndown
-    const bodyMarkdown = turndownService.turndown(previewContent.innerHTML);
-
-    // Re-attach frontmatter that was stripped during rendering
-    const markdown = currentFrontmatter + bodyMarkdown;
+    // Convert HTML back to markdown via Turndown. Guard against Turndown
+    // throwing on malformed DOM so a single bad keystroke can't wedge editing.
+    let markdown;
+    try {
+      const bodyMarkdown = turndownService.turndown(previewContent.innerHTML);
+      // Re-attach frontmatter that was stripped during rendering
+      markdown = currentFrontmatter + bodyMarkdown;
+    } catch (_) {
+      return;
+    }
 
     // Sync to textarea (source of truth)
     textarea.value = markdown;
 
+    // Capture caret offset NOW (synchronously) before the async timeout fires.
+    // This is an approximate offset into the markdown source: it is the caret's
+    // offset within the rendered preview text (plus the stripped frontmatter
+    // length). It is only used host-side to pick which paragraph to run the
+    // incremental grammar check on, so an approximation is acceptable.
+    // textarea.selectionStart can't be used — it's 0 while the textarea is unfocused.
+    const previewCaretOffset = Math.min(
+      getCaretTextOffset(previewContent) + currentFrontmatter.length,
+      markdown.length
+    );
+
     // Debounced send to extension host
     clearTimeout(contentEditableDebounce);
     contentEditableDebounce = setTimeout(() => {
-      // Estimate cursor offset from the markdown text length up to current position
-      const cursorOffset = markdown.length > 0 ? Math.min(textarea.selectionStart || 0, markdown.length) : 0;
-      vscode.postMessage({ type: 'edit', text: markdown, cursorOffset });
-      isContentEditableUpdate = false;
+      vscode.postMessage({ type: 'edit', text: markdown, cursorOffset: previewCaretOffset });
     }, 100);
 
     updateStatusBar();
@@ -189,6 +284,12 @@
 
   // Handle Tab key - insert tab instead of moving focus
   textarea.addEventListener('keydown', (e) => {
+    // When the wikilink autocomplete is open, let its own keydown handler own
+    // Tab/Enter/arrows — otherwise both handlers fire and conflict (e.g. Tab
+    // would insert a literal tab AND confirm the autocomplete selection).
+    if (autocomplete.isOpen) {
+      return;
+    }
     if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
       insertAtCursor('\t');
@@ -305,14 +406,15 @@
   }
 
   function insertText(text) {
+    const start = textarea.selectionStart; // must be saved before value is replaced
     const end = textarea.selectionEnd;
     const lineEnd = textarea.value.indexOf('\n', end);
     const actualEnd = lineEnd === -1 ? textarea.value.length : lineEnd;
     textarea.value =
-      textarea.value.substring(0, textarea.selectionStart) +
+      textarea.value.substring(0, start) +
       text +
       textarea.value.substring(actualEnd);
-    textarea.selectionStart = textarea.selectionEnd = textarea.selectionStart + text.length;
+    textarea.selectionStart = textarea.selectionEnd = start + text.length;
     textarea.focus();
     textarea.dispatchEvent(new Event('input'));
   }
@@ -900,12 +1002,19 @@
   }
 
   function renderPreview(text) {
+    // Save caret before rebuilding the DOM so it can be restored afterward.
+    const savedCaret = isPreviewMode() ? saveCaretPosition(previewContent) : null;
+
     const withoutFrontmatter = stripFrontmatter(text);
     const processed = preprocessWikilinks(withoutFrontmatter);
     const rendered = md.render(processed);
 
     previewContent.innerHTML = sanitizeHtml(rendered);
     applyGrammarHighlights();
+
+    if (savedCaret) {
+      restoreCaretPosition(previewContent, savedCaret);
+    }
   }
 
   // ================================================
@@ -922,8 +1031,6 @@
     while ((node = walker.nextNode())) {
       textNodes.push(node);
     }
-
-    let highlightCount = 0;
 
     // For each grammar match, try to find its text in the preview
     for (let mi = 0; mi < currentGrammarMatches.length; mi++) {
@@ -949,9 +1056,15 @@
         span.dataset.matchIndex = String(mi);
         span.title = match.message;
 
-        range.surroundContents(span);
+        // surroundContents throws if the range crosses element boundaries; the
+        // range here is within a single text node, but guard so a single bad
+        // match can't abort the whole highlight pass (and thus the render).
+        try {
+          range.surroundContents(span);
+        } catch (_) {
+          continue;
+        }
         found = true;
-        highlightCount++;
 
         // Update textNodes since we split the node
         const newWalker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT);
@@ -961,12 +1074,7 @@
           textNodes.push(n);
         }
       }
-
-      if (!found) {
-        // Match text not found in preview DOM
-      }
     }
-
   }
 
   function showGrammarTooltip(span, match) {
