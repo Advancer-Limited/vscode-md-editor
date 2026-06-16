@@ -112,4 +112,4 @@
 - [x] Add CHANGELOG 0.2.1 entry
 - [ ] PR fix/bump-0.2.1 → develop, self-review, merge
 - [ ] PR develop → master, merge
-- [ ] Publish 0.2.1 from master to VS Code Marketplace
+- [x] Publish 0.2.1 from master to VS Code Marketplace
