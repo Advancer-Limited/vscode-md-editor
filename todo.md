@@ -131,4 +131,4 @@
 - [x] Add CHANGELOG 0.2.3 entry
 - [x] PR fix/bump-0.2.3 → develop, self-review, merge
 - [x] PR develop → master, merge
-- [ ] Publish 0.2.3 from master to VS Code Marketplace
+- [x] Publish 0.2.3 from master to VS Code Marketplace
