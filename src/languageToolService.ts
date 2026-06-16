@@ -246,6 +246,7 @@ export class LanguageToolService {
           path: targetUrl.pathname + targetUrl.search,
           method: 'POST',
           createConnection: () => socket as any,
+          timeout: 15000,
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
@@ -267,6 +268,12 @@ export class LanguageToolService {
           });
         });
 
+        // Without this, a hung upstream after the tunnel is established would
+        // leave the promise pending forever.
+        req.on('timeout', () => {
+          req.destroy();
+          reject(new Error('LanguageTool request timed out'));
+        });
         req.on('error', reject);
         req.write(body);
         req.end();

@@ -2,6 +2,19 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [0.2.3] - 2026-06-17
+
+### Fixed
+
+- Grammar highlights: skip text already wrapped in a highlight so a repeated phrase advances to its next un-highlighted occurrence instead of re-marking the first.
+- LanguageTool: add a request timeout so a hung upstream after the tunnel is established no longer leaves the request pending forever.
+- Editor: replace the boolean edit guard with a depth counter so overlapping edits from fast typing don't clear the echo-suppression guard early.
+- Rename propagation: don't rewrite `[[wikilink]]` references when another file owns the stem's resolution; share a single whitespace-tolerant, regex-safe stem matcher.
+
+### Added
+
+- Unit tests for the wikilink stem matcher used by rename propagation.
+
 ## [0.2.2] - 2026-06-16
 
 ### Fixed

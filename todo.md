@@ -123,4 +123,12 @@
 - [x] extension: catch initialize() rejection
 - [x] diffAlgorithm: prefix/suffix trim
 - [x] Add Node test runner + table & diff tests
-- [ ] Follow-ups (deferred): editor cursor-sync race, rename edge cases, grammar highlight offset, LT proxy timeout
+- [x] Follow-ups: editor cursor-sync race, rename edge cases, grammar highlight offset, LT proxy timeout
+
+## Release 0.2.3
+
+- [x] Bump version to 0.2.3 (package.json, package-lock.json)
+- [x] Add CHANGELOG 0.2.3 entry
+- [x] PR fix/bump-0.2.3 → develop, self-review, merge
+- [x] PR develop → master, merge
+- [ ] Publish 0.2.3 from master to VS Code Marketplace

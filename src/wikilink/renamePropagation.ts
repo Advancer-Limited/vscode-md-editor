@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { FileIndexService } from './fileIndexService.js';
-import { getFileStem, escapeRegex } from '../utils.js';
+import { getFileStem } from '../utils.js';
+import { findWikilinkStemRanges } from './wikilinkParser.js';
 
 /**
  * Handle file rename events: update all [[wikilink]] references
@@ -25,6 +26,17 @@ export async function handleWillRenameFiles(
       continue; // Only moved, not renamed — no wikilink updates needed
     }
 
+    // If another file shares this stem and currently owns the [[oldStem]]
+    // resolution, those links point at THAT file — renaming this one must not
+    // rewrite them. Only proceed when the stem resolves to the renamed file.
+    const resolvedPath = fileIndexService.resolveWikilink(oldStem);
+    if (resolvedPath) {
+      const resolvedEntry = fileIndexService.getFileEntry(resolvedPath);
+      if (resolvedEntry && resolvedEntry.uri.toString() !== oldUri.toString()) {
+        continue;
+      }
+    }
+
     // Find all files that link to the old stem
     const backlinks = fileIndexService.getBacklinksFor(oldStem);
 
@@ -33,20 +45,14 @@ export async function handleWillRenameFiles(
         const doc = await vscode.workspace.openTextDocument(entry.uri);
         const text = doc.getText();
 
-        // Match [[oldStem]] and [[oldStem|display text]]
-        const regex = new RegExp(
-          `\\[\\[${escapeRegex(oldStem)}(\\|[^\\]]*)?\\]\\]`,
-          'gi',
-        );
-
-        let match: RegExpExecArray | null;
-        while ((match = regex.exec(text)) !== null) {
-          // Replace just the stem part (after [[ and before | or ]])
-          const stemStart = match.index + 2; // after [[
-          const stemEnd = stemStart + oldStem.length;
-          const start = doc.positionAt(stemStart);
-          const end = doc.positionAt(stemEnd);
-          edit.replace(entry.uri, new vscode.Range(start, end), newStem);
+        // Replace just the stem portion of each [[oldStem]] / [[oldStem|...]]
+        // occurrence (case-insensitive, whitespace-tolerant).
+        for (const { start, end } of findWikilinkStemRanges(text, oldStem)) {
+          edit.replace(
+            entry.uri,
+            new vscode.Range(doc.positionAt(start), doc.positionAt(end)),
+            newStem,
+          );
         }
       } catch (err) {
         console.warn(`[RenamePropagation] Failed to process ${entry.relativePath}:`, err);

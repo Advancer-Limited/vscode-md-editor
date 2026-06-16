@@ -365,3 +365,18 @@ Tests (new — Node built-in runner, zero new deps; `npm test`):
 Deferred (documented, not fixed — higher risk / edge, to avoid destabilizing pre-release): markdownEditorProvider `isApplyingEdit` boolean race (recently-fixed cursor-sync area); renamePropagation for spaced `[[ link ]]` and duplicate stems; grammar-highlight first-occurrence `indexOf`; LanguageTool proxy CONNECT timeout.
 
 All 16 tests pass; `npm run check-types` and `npm run compile` pass.
+
+## 2026-06-16 — Deferred review follow-ups (fix/review-followups)
+
+- **Cursor-sync race** (markdownEditorProvider.ts): replaced the boolean `isApplyingEdit` guard with a depth counter `applyingEdits` so overlapping edits from fast typing don't clear the guard early; wrapped both applyEdit calls in try/finally so a failed edit can't wedge the guard permanently.
+- **Rename edge cases** (wikilinkParser.ts + renamePropagation.ts): added pure, unit-tested `findWikilinkStemRanges` that matches `[[stem]]`/`[[stem|display]]` case-insensitively and tolerant of inner whitespace (`[[ Foo ]]`), selecting only the stem span. Rename now also skips files whose stem currently resolves to a *different* file (duplicate-stem safety). Inlined escapeRegex into wikilinkParser to keep it dependency-free (and testable under Node type stripping); removed the now-unused utils.escapeRegex.
+- **Grammar highlight offset** (editor.js): skip text already inside a `.grammar-error` span so repeated phrases advance to the next un-highlighted occurrence instead of re-marking the first.
+- **LanguageTool proxy timeout** (languageToolService.ts): added a 15s timeout + handler to the inner tunneled request so a hung upstream after CONNECT can't leave the promise pending forever.
+- Tests: added tests/renameMatch.test.mjs (8 cases). Full suite now 24 tests, all passing; check-types clean; build passes.
+
+## 2026-06-17 — Release 0.2.3 (develop → master + publish)
+
+- develop was 2 commits ahead of master (PR #33, the deferred review follow-ups above) but both were still tagged 0.2.2, which is already on the Marketplace.
+- Reviewed the develop↔master diff (grammar highlight dedup, LanguageTool timeout, edit depth-counter guard, rename-propagation hardening, new renameMatch tests) — clean. `check-types`, `npm test` (24 pass), and `npm run compile` all green.
+- Bumped 0.2.2 → 0.2.3 (patch) on branch `fix/bump-0.2.3` off develop: `package.json`, `package-lock.json`, `CHANGELOG.md` (0.2.3 entry).
+- Flow: PR fix/bump-0.2.3 → develop, then develop → master, then publish 0.2.3 from master.
