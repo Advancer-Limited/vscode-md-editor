@@ -373,3 +373,10 @@ All 16 tests pass; `npm run check-types` and `npm run compile` pass.
 - **Grammar highlight offset** (editor.js): skip text already inside a `.grammar-error` span so repeated phrases advance to the next un-highlighted occurrence instead of re-marking the first.
 - **LanguageTool proxy timeout** (languageToolService.ts): added a 15s timeout + handler to the inner tunneled request so a hung upstream after CONNECT can't leave the promise pending forever.
 - Tests: added tests/renameMatch.test.mjs (8 cases). Full suite now 24 tests, all passing; check-types clean; build passes.
+
+## 2026-06-17 — Release 0.2.3 (develop → master + publish)
+
+- develop was 2 commits ahead of master (PR #33, the deferred review follow-ups above) but both were still tagged 0.2.2, which is already on the Marketplace.
+- Reviewed the develop↔master diff (grammar highlight dedup, LanguageTool timeout, edit depth-counter guard, rename-propagation hardening, new renameMatch tests) — clean. `check-types`, `npm test` (24 pass), and `npm run compile` all green.
+- Bumped 0.2.2 → 0.2.3 (patch) on branch `fix/bump-0.2.3` off develop: `package.json`, `package-lock.json`, `CHANGELOG.md` (0.2.3 entry).
+- Flow: PR fix/bump-0.2.3 → develop, then develop → master, then publish 0.2.3 from master.
