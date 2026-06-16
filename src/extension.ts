@@ -15,7 +15,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // 1. Create the file index service (shared foundation for wikilinks + graph)
   const fileIndexService = new FileIndexService();
   context.subscriptions.push(fileIndexService);
-  fileIndexService.initialize();
+  fileIndexService.initialize().catch(err => {
+    console.error('[MarkdownEditor] FileIndexService initialization failed:', err);
+  });
 
   // 2. Register the custom markdown editor
   const provider = new MarkdownEditorProvider(context, fileIndexService);

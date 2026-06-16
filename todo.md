@@ -114,3 +114,13 @@
 - [ ] PR develop → master, merge
 - [x] Publish 0.2.1 from master to VS Code Marketplace
 - [x] Fix WYSIWYG table formatting loss (Turndown GFM table rules)
+
+## Code review pass (fix/review-fixes)
+
+- [x] getNonce → CSPRNG
+- [x] Extract + unit-test Turndown table rules; fix wikilink pipe in cells
+- [x] fileIndexService: per-URI debounce, watchers-before-scan, stem-safe removal
+- [x] extension: catch initialize() rejection
+- [x] diffAlgorithm: prefix/suffix trim
+- [x] Add Node test runner + table & diff tests
+- [ ] Follow-ups (deferred): editor cursor-sync race, rename edge cases, grammar highlight offset, LT proxy timeout

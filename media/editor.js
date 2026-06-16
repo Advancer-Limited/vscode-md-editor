@@ -77,96 +77,11 @@
     },
   });
 
-  // Custom rules: GFM tables. Turndown's core has NO table support — without
-  // these rules a <table> is flattened to plain concatenated cell text, so
-  // editing a table in WYSIWYG mode destroys its markdown formatting. This is a
-  // self-contained adaptation of turndown-plugin-gfm's table rules.
-
-  /** Render a single cell, prefixing the row's leading `|`. */
-  function tableCellMarkup(content, node) {
-    const index = Array.prototype.indexOf.call(node.parentNode.childNodes, node);
-    const prefix = index === 0 ? '| ' : ' ';
-    // Cells must be single-line, and literal pipes have to be escaped so they
-    // aren't read as column separators.
-    const cellText = content.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
-    return prefix + cellText + ' |';
-  }
-
-  /** A <tbody> with no preceding content-bearing <thead> acts as the header. */
-  function isFirstTbody(element) {
-    const previousSibling = element.previousSibling;
-    return (
-      element.nodeName === 'TBODY' &&
-      (!previousSibling ||
-        (previousSibling.nodeName === 'THEAD' && /^\s*$/i.test(previousSibling.textContent)))
-    );
-  }
-
-  /** Is this <tr> the table's heading row (the one followed by `---` separators)? */
-  function isHeadingRow(tr) {
-    if (!tr) return false;
-    const parent = tr.parentNode;
-    return (
-      parent.nodeName === 'THEAD' ||
-      (parent.firstChild === tr &&
-        (parent.nodeName === 'TABLE' || isFirstTbody(parent)) &&
-        Array.prototype.every.call(tr.childNodes, function (n) {
-          return n.nodeName === 'TH';
-        }))
-    );
-  }
-
-  turndownService.addRule('tableCell', {
-    filter: ['th', 'td'],
-    replacement: function (content, node) {
-      return tableCellMarkup(content, node);
-    },
-  });
-
-  /** Column alignment, from the `align` attribute or `text-align` style. */
-  function cellAlignment(node) {
-    const attr = node.getAttribute && node.getAttribute('align');
-    const style = (node.style && node.style.textAlign) || '';
-    return (attr || style || '').toLowerCase();
-  }
-
-  turndownService.addRule('tableRow', {
-    filter: 'tr',
-    replacement: function (content, node) {
-      let borderCells = '';
-      const alignMap = { left: ':---', right: '---:', center: ':---:' };
-      if (isHeadingRow(node)) {
-        for (let i = 0; i < node.childNodes.length; i++) {
-          const child = node.childNodes[i];
-          let border = '---';
-          const align = cellAlignment(child);
-          if (align) border = alignMap[align] || border;
-          borderCells += tableCellMarkup(border, child);
-        }
-      }
-      return '\n' + content + (borderCells ? '\n' + borderCells : '');
-    },
-  });
-
-  turndownService.addRule('tableSection', {
-    filter: ['thead', 'tbody', 'tfoot'],
-    replacement: function (content) {
-      return content;
-    },
-  });
-
-  // Only tables with a heading row can be expressed as GFM markdown; others
-  // are left to Turndown's default handling.
-  turndownService.addRule('table', {
-    filter: function (node) {
-      return node.nodeName === 'TABLE' && isHeadingRow(node.rows[0]);
-    },
-    replacement: function (content) {
-      // Collapse the blank line Turndown inserts between the header row and the
-      // separator so the table stays contiguous.
-      return '\n\n' + content.replace(/\n+/g, '\n') + '\n\n';
-    },
-  });
+  // GFM table rules (Turndown's core has no table support). Defined in the
+  // shared media/turndownTableRules.js module so the same logic can be unit
+  // tested. Loaded as a global by the preceding <script> tag.
+  // @ts-ignore - installTurndownTableRules is a global from turndownTableRules.js
+  installTurndownTableRules(turndownService);
 
   /** Check if the editor is in preview-only (WYSIWYG) mode */
   function isPreviewMode() {

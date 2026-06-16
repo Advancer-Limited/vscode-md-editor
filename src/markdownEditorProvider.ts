@@ -199,6 +199,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const turndownUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'turndown.browser.umd.js')
     );
+    const tableRulesUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'turndownTableRules.js')
+    );
 
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -260,6 +263,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   </div>
   <script nonce="${nonce}" src="${markdownItUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${turndownUri}?v=${cacheBust}"></script>
+  <script nonce="${nonce}" src="${tableRulesUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${scriptUri}?v=${cacheBust}"></script>
 </body>
 </html>`;
