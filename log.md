@@ -328,3 +328,40 @@ Uses a line-level LCS diff algorithm with no external dependencies.
 - Modified: `package.json`, `package-lock.json` (version), `CHANGELOG.md` (0.2.1 entry).
 - Flow: PR fix/bump-0.2.1 → develop, then develop → master, then publish from master.
 - `npm run check-types` passes.
+
+## 2026-06-16 — Published 0.2.1 + corrected vault docs
+
+- Published `advancer-limited.vscode-md-editor v0.2.1` to VS Code Marketplace from `master`.
+- Documented PAT location (`kv-askance-prod`) was wrong — that vault does not exist. Correct vault is `kv-advancer-prod` in the `Advancer` Azure subscription.
+- Created new PAT (All accessible orgs + Marketplace: Manage) and stored it as secret `vsce-marketplace-pat` in `kv-advancer-prod`.
+- Updated CLAUDE.md Publishing section with correct vault name and fetch command.
+
+## 2026-06-16 — Fix: WYSIWYG table formatting lost on edit
+
+- Bug: editing inside a table in WYSIWYG (contenteditable) mode destroyed the markdown table.
+- Root cause: `media/editor.js` runs Turndown (HTML→markdown) on every input, but Turndown's core has NO table support, so `<table>` was flattened to plain concatenated cell text and saved as the source.
+- Fix: added self-contained GFM table rules to the TurndownService (tableCell, tableRow, tableSection, table) — adaptation of turndown-plugin-gfm, no new dependency.
+  - Preserves header separator row, column alignment (reads both `align` attr and `text-align` style, since markdown-it emits inline styles), inline cell formatting, and escapes literal pipes.
+  - Only tables with a heading row are converted (others left to default handling).
+- Verified with a markdown→html→markdown round-trip test (basic, aligned, inline, escaped-pipe cases all pass); `npm run compile` passes.
+
+## 2026-06-16 — Code review pass + tests (fix/review-fixes)
+
+Ran a parallel code review (webview + extension host) and fixed the high-confidence, low-risk findings:
+
+- **src/utils.ts**: `getNonce` now uses `crypto.randomBytes` (CSPRNG) instead of `Math.random` — CSP nonces must be unpredictable.
+- **media/turndownTableRules.js** (new): extracted the GFM table rules into a shared, unit-testable UMD module. Fixed a real interaction bug: pipes inside `[[wikilinks]]` are no longer escaped to `\|` (the editor preprocesses wikilinks into `<a>` before the table parser, so the pipe must stay literal; escaping it broke the wikilink regex).
+- **media/editor.js**: now calls `installTurndownTableRules(turndownService)` from the shared module.
+- **src/markdownEditorProvider.ts**: loads `turndownTableRules.js` via a nonce'd `<script>` before editor.js.
+- **src/wikilink/fileIndexService.ts**: per-URI debounce timers (a single shared timer dropped pending updates when a second file was edited within 500ms); register watchers BEFORE the initial scan (files changed during scan were missed); stem→path mapping is only deleted on removal if it still points at the removed file (duplicate-stem safety).
+- **src/extension.ts**: `.catch()` on the fire-and-forget `initialize()`.
+- **src/diff/diffAlgorithm.ts**: trim common prefix/suffix before the O(m*n) LCS, bounding memory/time for small changes in large files.
+
+Tests (new — Node built-in runner, zero new deps; `npm test`):
+- `tests/turndownTable.test.js` — render→edit→serialize round-trip for tables (basic, alignment, inline formatting, escaped pipes, wikilink-with-alias pipe preservation, idempotency, regression guard that proves the rules are what fix the bug).
+- `tests/diffAlgorithm.test.mjs` — diff correctness + the prefix/suffix-trimming isolation on a 5000-line file.
+- `.vscodeignore` excludes `tests/`; `package.json` adds `"test": "node --test ..."`.
+
+Deferred (documented, not fixed — higher risk / edge, to avoid destabilizing pre-release): markdownEditorProvider `isApplyingEdit` boolean race (recently-fixed cursor-sync area); renamePropagation for spaced `[[ link ]]` and duplicate stems; grammar-highlight first-occurrence `indexOf`; LanguageTool proxy CONNECT timeout.
+
+All 16 tests pass; `npm run check-types` and `npm run compile` pass.

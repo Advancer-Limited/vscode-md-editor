@@ -77,6 +77,12 @@
     },
   });
 
+  // GFM table rules (Turndown's core has no table support). Defined in the
+  // shared media/turndownTableRules.js module so the same logic can be unit
+  // tested. Loaded as a global by the preceding <script> tag.
+  // @ts-ignore - installTurndownTableRules is a global from turndownTableRules.js
+  installTurndownTableRules(turndownService);
+
   /** Check if the editor is in preview-only (WYSIWYG) mode */
   function isPreviewMode() {
     return editorContainer.classList.contains('preview-only');

@@ -63,8 +63,9 @@ Use `gh pr review <number> --comment --body "..."` to add general comments, or `
 
 - VS Code Marketplace publisher name: `advancer-limited`
 - Publish with: `npx @vscode/vsce publish -p <PAT>`
-- PAT is stored in Azure Key Vault `kv-askance-prod` as `vsce-marketplace-pat`
-- The PAT must be created from the Azure DevOps account linked to the `advancer-limited` publisher
+- PAT is stored in Azure Key Vault `kv-advancer-prod` (Azure subscription `Advancer`) as `vsce-marketplace-pat`
+  - Fetch with: `az account set --subscription Advancer && az keyvault secret show --vault-name kv-advancer-prod --name vsce-marketplace-pat --query value -o tsv`
+- The PAT must be created from the Azure DevOps account linked to the `advancer-limited` publisher, with **All accessible organizations** + **Marketplace: Manage** scope
 
 ## Askance — Tool Call Oversight
 

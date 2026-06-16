@@ -33,7 +33,10 @@ export class FileIndexService implements vscode.Disposable {
   public readonly onDidUpdateIndex = this._onDidUpdateIndex.event;
 
   private disposables: vscode.Disposable[] = [];
-  private updateTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Per-document debounce timers, keyed by URI string. A single shared timer
+   * would drop a pending update for file A when file B is edited within the
+   * debounce window. */
+  private updateTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   constructor() {
     this.disposables.push(this._onDidUpdateIndex);
@@ -41,6 +44,11 @@ export class FileIndexService implements vscode.Disposable {
 
   /** Full workspace scan. Call once on activation. */
   public async initialize(): Promise<void> {
+    // Register watchers BEFORE the (potentially slow) initial scan so files
+    // created/saved/renamed while scanning are not missed. Re-indexing a file
+    // is idempotent, so any overlap with the scan is harmless.
+    this.registerWatchers();
+
     const uris = await vscode.workspace.findFiles('**/*.md', '**/node_modules/**');
 
     // Process in batches to avoid overwhelming the file system
@@ -50,7 +58,6 @@ export class FileIndexService implements vscode.Disposable {
       await Promise.all(batch.map(uri => this.indexFile(uri)));
     }
 
-    this.registerWatchers();
     this._onDidUpdateIndex.fire();
   }
 
@@ -121,15 +128,20 @@ export class FileIndexService implements vscode.Disposable {
           if (e.contentChanges.length === 0) {
             return;
           }
-          if (this.updateTimer) {
-            clearTimeout(this.updateTimer);
+          const key = e.document.uri.toString();
+          const existing = this.updateTimers.get(key);
+          if (existing) {
+            clearTimeout(existing);
           }
-          this.updateTimer = setTimeout(() => {
-            this.updateTimer = undefined;
-            this.indexFile(e.document.uri, e.document.getText()).then(() => {
-              this._onDidUpdateIndex.fire();
-            });
-          }, 500);
+          this.updateTimers.set(
+            key,
+            setTimeout(() => {
+              this.updateTimers.delete(key);
+              this.indexFile(e.document.uri, e.document.getText()).then(() => {
+                this._onDidUpdateIndex.fire();
+              });
+            }, 500),
+          );
         }
       })
     );
@@ -196,7 +208,12 @@ export class FileIndexService implements vscode.Disposable {
     const entry = this.fileIndex.get(relativePath);
     if (entry) {
       this.removeBacklinks(relativePath, entry.outgoingLinks);
-      this.stemToPath.delete(entry.stem.toLowerCase());
+      // Only drop the stem->path mapping if it still points at THIS file —
+      // another file sharing the same stem may currently own the mapping.
+      const stemKey = entry.stem.toLowerCase();
+      if (this.stemToPath.get(stemKey) === relativePath) {
+        this.stemToPath.delete(stemKey);
+      }
       this.fileIndex.delete(relativePath);
     }
   }
@@ -322,9 +339,10 @@ export class FileIndexService implements vscode.Disposable {
   }
 
   public dispose(): void {
-    if (this.updateTimer) {
-      clearTimeout(this.updateTimer);
+    for (const timer of this.updateTimers.values()) {
+      clearTimeout(timer);
     }
+    this.updateTimers.clear();
     for (const d of this.disposables) {
       d.dispose();
     }

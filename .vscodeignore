@@ -4,6 +4,7 @@
 .claude/**
 .askance/**
 src/**
+tests/**
 node_modules/**
 scripts/**
 tsconfig.json
