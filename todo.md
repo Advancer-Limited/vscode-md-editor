@@ -113,3 +113,4 @@
 - [ ] PR fix/bump-0.2.1 → develop, self-review, merge
 - [ ] PR develop → master, merge
 - [x] Publish 0.2.1 from master to VS Code Marketplace
+- [x] Fix WYSIWYG table formatting loss (Turndown GFM table rules)

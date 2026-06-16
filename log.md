@@ -335,3 +335,12 @@ Uses a line-level LCS diff algorithm with no external dependencies.
 - Documented PAT location (`kv-askance-prod`) was wrong — that vault does not exist. Correct vault is `kv-advancer-prod` in the `Advancer` Azure subscription.
 - Created new PAT (All accessible orgs + Marketplace: Manage) and stored it as secret `vsce-marketplace-pat` in `kv-advancer-prod`.
 - Updated CLAUDE.md Publishing section with correct vault name and fetch command.
+
+## 2026-06-16 — Fix: WYSIWYG table formatting lost on edit
+
+- Bug: editing inside a table in WYSIWYG (contenteditable) mode destroyed the markdown table.
+- Root cause: `media/editor.js` runs Turndown (HTML→markdown) on every input, but Turndown's core has NO table support, so `<table>` was flattened to plain concatenated cell text and saved as the source.
+- Fix: added self-contained GFM table rules to the TurndownService (tableCell, tableRow, tableSection, table) — adaptation of turndown-plugin-gfm, no new dependency.
+  - Preserves header separator row, column alignment (reads both `align` attr and `text-align` style, since markdown-it emits inline styles), inline cell formatting, and escapes literal pipes.
+  - Only tables with a heading row are converted (others left to default handling).
+- Verified with a markdown→html→markdown round-trip test (basic, aligned, inline, escaped-pipe cases all pass); `npm run compile` passes.
