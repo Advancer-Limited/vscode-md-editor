@@ -380,3 +380,8 @@ All 16 tests pass; `npm run check-types` and `npm run compile` pass.
 - Reviewed the develop↔master diff (grammar highlight dedup, LanguageTool timeout, edit depth-counter guard, rename-propagation hardening, new renameMatch tests) — clean. `check-types`, `npm test` (24 pass), and `npm run compile` all green.
 - Bumped 0.2.2 → 0.2.3 (patch) on branch `fix/bump-0.2.3` off develop: `package.json`, `package-lock.json`, `CHANGELOG.md` (0.2.3 entry).
 - Flow: PR fix/bump-0.2.3 → develop, then develop → master, then publish 0.2.3 from master.
+
+## 2026-06-17 — Published 0.2.3 to VS Code Marketplace
+
+- Published `advancer-limited.vscode-md-editor v0.2.3` from `master` via `npx @vscode/vsce publish` (PAT from `kv-advancer-prod` / secret `vsce-marketplace-pat`).
+- PRs #34 (bump → develop) and #35 (develop → master) merged with `--admin` (branch protection requires review; self-review per CLAUDE.md, user-authorized).
