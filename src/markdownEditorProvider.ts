@@ -60,13 +60,15 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
 
     // Suppress echoing our own edits back to the webview.
-    // Two-layer guard: isApplyingEdit catches synchronous fires during applyEdit;
-    // lastAppliedText catches fires that arrive after the await resolves.
-    let isApplyingEdit = false;
+    // Two-layer guard: applyingEdits (a depth counter, not a boolean) stays
+    // raised while ANY applyEdit is in flight — so overlapping edits from fast
+    // typing don't clear the guard early; lastAppliedText catches a change
+    // event that arrives after the last await resolves.
+    let applyingEdits = 0;
     let lastAppliedText: string | null = null;
 
     const updateWebview = () => {
-      if (isApplyingEdit) {
+      if (applyingEdits > 0) {
         return;
       }
       const currentText = document.getText();
@@ -90,7 +92,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             return;
 
           case 'edit': {
-            isApplyingEdit = true;
+            applyingEdits++;
             lastAppliedText = message.text;
             if (message.cursorOffset !== undefined) {
               this.cursorOffsets.set(document.uri.toString(), message.cursorOffset);
@@ -101,8 +103,11 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
               new vscode.Range(0, 0, document.lineCount, 0),
               message.text
             );
-            await vscode.workspace.applyEdit(edit);
-            isApplyingEdit = false;
+            try {
+              await vscode.workspace.applyEdit(edit);
+            } finally {
+              applyingEdits--;
+            }
             return;
           }
 
@@ -140,13 +145,17 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
           }
 
           case 'applyGrammarFix': {
-            isApplyingEdit = true;
+            applyingEdits++;
             const startPos = document.positionAt(message.offset);
             const endPos = document.positionAt(message.offset + message.length);
             const edit = new vscode.WorkspaceEdit();
             edit.replace(document.uri, new vscode.Range(startPos, endPos), message.replacement);
-            await vscode.workspace.applyEdit(edit);
-            isApplyingEdit = false;
+            try {
+              await vscode.workspace.applyEdit(edit);
+            } finally {
+              applyingEdits--;
+            }
+            // Intentionally push the corrected text back to the webview.
             updateWebview();
             return;
           }

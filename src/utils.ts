@@ -45,13 +45,6 @@ export function getFileStem(filePath: string): string {
 }
 
 /**
- * Escape special regex characters in a string.
- */
-export function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
  * Strip Markdown syntax to produce plain text for LanguageTool.
  * Returns the stripped text and an offset map from stripped positions to original positions.
  */

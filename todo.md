@@ -123,4 +123,4 @@
 - [x] extension: catch initialize() rejection
 - [x] diffAlgorithm: prefix/suffix trim
 - [x] Add Node test runner + table & diff tests
-- [ ] Follow-ups (deferred): editor cursor-sync race, rename edge cases, grammar highlight offset, LT proxy timeout
+- [x] Follow-ups: editor cursor-sync race, rename edge cases, grammar highlight offset, LT proxy timeout
