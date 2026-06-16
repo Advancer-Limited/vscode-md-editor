@@ -2,6 +2,20 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [0.2.2] - 2026-06-16
+
+### Fixed
+
+- Preserve table formatting when editing tables in WYSIWYG mode (#29).
+- Keep `[[wikilink|alias]]` syntax intact when used inside a table cell.
+- Use a cryptographically secure nonce for the webview Content Security Policy.
+- File index: debounce per-document so rapid edits across files aren't dropped; index files changed during the initial workspace scan.
+- Bound memory/time of the version-diff algorithm on large files.
+
+### Added
+
+- Unit test suite (`npm test`) covering the table round-trip and diff algorithm.
+
 ## [0.2.1] - 2026-06-16
 
 ### Fixed
