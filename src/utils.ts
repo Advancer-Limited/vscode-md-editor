@@ -1,13 +1,12 @@
+import { randomBytes } from 'crypto';
+
 /**
  * Generate a random nonce for Content Security Policy in webviews.
+ * Uses a cryptographically secure RNG, as the CSP spec requires — a
+ * predictable nonce (e.g. Math.random) would weaken the policy.
  */
 export function getNonce(): string {
-  let text = '';
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < 64; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
+  return randomBytes(48).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 64);
 }
 
 /**
