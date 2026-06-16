@@ -328,3 +328,10 @@ Uses a line-level LCS diff algorithm with no external dependencies.
 - Modified: `package.json`, `package-lock.json` (version), `CHANGELOG.md` (0.2.1 entry).
 - Flow: PR fix/bump-0.2.1 → develop, then develop → master, then publish from master.
 - `npm run check-types` passes.
+
+## 2026-06-16 — Published 0.2.1 + corrected vault docs
+
+- Published `advancer-limited.vscode-md-editor v0.2.1` to VS Code Marketplace from `master`.
+- Documented PAT location (`kv-askance-prod`) was wrong — that vault does not exist. Correct vault is `kv-advancer-prod` in the `Advancer` Azure subscription.
+- Created new PAT (All accessible orgs + Marketplace: Manage) and stored it as secret `vsce-marketplace-pat` in `kv-advancer-prod`.
+- Updated CLAUDE.md Publishing section with correct vault name and fetch command.
