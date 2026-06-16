@@ -1026,6 +1026,18 @@
   // ================================================
   // Grammar highlight rendering
   // ================================================
+  /** True if the text node is already inside a grammar-error highlight span. */
+  function isInsideHighlight(node) {
+    let el = node.parentElement;
+    while (el && el !== previewContent) {
+      if (el.classList && el.classList.contains('grammar-error')) {
+        return true;
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+
   function applyGrammarHighlights() {
     if (currentGrammarMatches.length === 0) return;
 
@@ -1048,6 +1060,9 @@
       let found = false;
       for (let ni = 0; ni < textNodes.length && !found; ni++) {
         const textNode = textNodes[ni];
+        // Skip text already wrapped in a highlight so repeated phrases advance
+        // to the next un-highlighted occurrence rather than re-marking the first.
+        if (isInsideHighlight(textNode)) continue;
         const content = textNode.textContent;
         const idx = content.indexOf(searchText);
         if (idx === -1) continue;

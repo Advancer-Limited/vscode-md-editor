@@ -3,6 +3,11 @@
  * Pure functions with no VS Code dependency.
  */
 
+/** Escape regex-special characters in a literal string. */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** A single parsed wikilink occurrence within a file. */
 export interface WikilinkOccurrence {
   /** Raw text inside [[...]] */
@@ -23,6 +28,30 @@ export interface WikilinkOccurrence {
 
 /** Matches [[target]] and [[target|display text]] */
 export const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|([^\]]*?))?\]\]/g;
+
+/**
+ * Find the character ranges of the *stem* portion within [[stem]] and
+ * [[stem|display]] occurrences. Matches `stem` case-insensitively and tolerates
+ * whitespace inside the brackets (e.g. `[[ Stem ]]`), returning the [start, end)
+ * offsets of just the stem so it can be replaced in place during a rename.
+ * A multi-word target (e.g. `[[Stem Two]]`) is NOT matched when renaming `Stem`.
+ */
+export function findWikilinkStemRanges(
+  text: string,
+  stem: string,
+): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  if (!stem) {
+    return ranges;
+  }
+  const regex = new RegExp(`(\\[\\[\\s*)(${escapeRegex(stem)})(\\s*(?:\\|[^\\]]*)?\\]\\])`, 'gi');
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const start = match.index + match[1].length;
+    ranges.push({ start, end: start + match[2].length });
+  }
+  return ranges;
+}
 
 /**
  * Compute fenced code block and inline code ranges in the text.
