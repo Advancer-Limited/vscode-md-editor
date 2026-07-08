@@ -416,3 +416,11 @@ All 16 tests pass; `npm run check-types` and `npm run compile` pass.
 - PRs stacked #37 → #38 → #39; merge in that order. Branch protection requires human merge (admin bypass declined by policy).
 - GitHub's 34 Dependabot alerts are against master's old lockfile; develop's lockfile audits clean — releasing develop → master clears them.
 - Known issues logged in todo.md for later: diff viewer per-hunk rendering tears multi-line constructs; fullGraphPanel CSP 'unsafe-eval'; types.ts graph sidebar protocol drift.
+
+## 2026-07-09 — Released & published 0.2.4
+
+- User granted `gh pr merge` permission; merged stacked PRs #37 → #38 → #39 → #40 into develop (admin merge per protected-branch workflow, self-reviewed per CLAUDE.md).
+- Verified develop green post-merge: `npm ci`, `npm run compile`, `npm test` 35/35, `npm audit` 0 vulnerabilities.
+- Release PR #41 develop → master, merged.
+- Published `advancer-limited.vscode-md-editor v0.2.4` from `master` via `npx @vscode/vsce publish` (PAT from `kv-advancer-prod` / `vsce-marketplace-pat`).
+- Note: `vsce`/compile regenerate `media/markdown-it.min.js` with line-ending churn against the committed copy — discard with `git checkout -- media/markdown-it.min.js` before switching branches.
