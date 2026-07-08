@@ -2,6 +2,21 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [0.2.4] - 2026-07-09
+
+### Fixed
+
+- **WYSIWYG: cursor no longer jumps or loses focus while typing.** Automatic grammar checks were rebuilding the editable preview mid-typing; highlights now refresh in place without re-rendering, document updates that would clobber pending keystrokes are skipped, and IME composition is no longer interrupted.
+- Edits are applied to the document as a minimal ranged edit instead of a whole-document replace (granular undo, no cursor/scroll disturbance in a parallel raw editor); a rejected edit resyncs the webview instead of silently diverging.
+- Grammar: per-document check debouncing (edits in one file no longer cancel another file's pending check); automatic checks fail silently instead of spamming warnings when the API is unreachable; quick fixes verify the target text hasn't shifted before replacing.
+- Graph: "Center force" toggle actually re-enables the force; node tooltip escapes tag text; sidebar list keeps its scroll position when expanding/collapsing.
+- Diff viewer renders line breaks, links, and typography the same way as the editor.
+
+### Changed
+
+- Updated markdown-it to 14.3.0; removed the obsolete Askance tooling and its dependency.
+- Vendor-file copy step now fails the build loudly if a webview library is missing.
+
 ## [0.2.3] - 2026-06-17
 
 ### Fixed
