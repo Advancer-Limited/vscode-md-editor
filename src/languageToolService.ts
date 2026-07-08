@@ -41,8 +41,13 @@ export class LanguageToolService {
   /**
    * Send text to the LanguageTool API for checking.
    * Automatically chunks text to stay within the free API's character limit.
+   *
+   * With `silent: true`, chunk failures are logged but never surface a
+   * notification — required for the automatic incremental checks that run
+   * every checkDelayMs while the user types, which would otherwise spam
+   * warning popups continuously whenever the API is unreachable.
    */
-  public async check(text: string): Promise<LanguageToolMatch[]> {
+  public async check(text: string, options?: { silent?: boolean }): Promise<LanguageToolMatch[]> {
     if (!this.config.enabled || text.trim().length === 0) {
       return [];
     }
@@ -65,7 +70,9 @@ export class LanguageToolService {
         allMatches.push(...matches);
       } catch (error: unknown) {
         console.error(`[Grammar] Chunk ${i + 1} failed:`, error);
-        this.handleCheckError(error);
+        if (!options?.silent) {
+          this.handleCheckError(error);
+        }
         // Continue with remaining chunks even if one fails
       }
 

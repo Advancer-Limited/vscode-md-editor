@@ -1,42 +1,44 @@
 const fs = require('fs');
 const path = require('path');
 
-const src = path.join(__dirname, '..', 'node_modules', 'markdown-it', 'dist', 'markdown-it.min.js');
 const destDir = path.join(__dirname, '..', 'media');
-const dest = path.join(destDir, 'markdown-it.min.js');
 
 if (!fs.existsSync(destDir)) {
   fs.mkdirSync(destDir, { recursive: true });
 }
 
-if (fs.existsSync(src)) {
-  fs.copyFileSync(src, dest);
-  console.log('Copied markdown-it.min.js to media/');
-} else {
-  console.warn('WARNING: markdown-it.min.js not found at', src);
-  console.warn('Run npm install first.');
+// Vendored webview libraries: copied from node_modules into media/ because
+// webviews load them directly (they are not bundled by esbuild).
+const vendorFiles = [
+  {
+    src: path.join(__dirname, '..', 'node_modules', 'markdown-it', 'dist', 'markdown-it.min.js'),
+    dest: path.join(destDir, 'markdown-it.min.js'),
+  },
+  {
+    src: path.join(__dirname, '..', 'node_modules', 'turndown', 'lib', 'turndown.browser.umd.js'),
+    dest: path.join(destDir, 'turndown.browser.umd.js'),
+  },
+  {
+    src: path.join(__dirname, '..', 'node_modules', 'force-graph', 'dist', 'force-graph.min.js'),
+    dest: path.join(destDir, 'force-graph.min.js'),
+  },
+];
+
+let missing = false;
+
+for (const { src, dest } of vendorFiles) {
+  if (fs.existsSync(src)) {
+    fs.copyFileSync(src, dest);
+    console.log(`Copied ${path.basename(dest)} to media/`);
+  } else {
+    console.error(`ERROR: ${path.basename(dest)} not found at ${src}`);
+    console.error('Run npm install first.');
+    missing = true;
+  }
 }
 
-// Copy turndown
-const tdSrc = path.join(__dirname, '..', 'node_modules', 'turndown', 'lib', 'turndown.browser.umd.js');
-const tdDest = path.join(destDir, 'turndown.browser.umd.js');
-
-if (fs.existsSync(tdSrc)) {
-  fs.copyFileSync(tdSrc, tdDest);
-  console.log('Copied turndown.browser.umd.js to media/');
-} else {
-  console.warn('WARNING: turndown.browser.umd.js not found at', tdSrc);
-  console.warn('Run npm install first.');
-}
-
-// Copy force-graph
-const fgSrc = path.join(__dirname, '..', 'node_modules', 'force-graph', 'dist', 'force-graph.min.js');
-const fgDest = path.join(destDir, 'force-graph.min.js');
-
-if (fs.existsSync(fgSrc)) {
-  fs.copyFileSync(fgSrc, fgDest);
-  console.log('Copied force-graph.min.js to media/');
-} else {
-  console.warn('WARNING: force-graph.min.js not found at', fgSrc);
-  console.warn('Run npm install first.');
+// Fail the build loudly rather than silently packaging a broken extension
+// with missing webview libraries.
+if (missing) {
+  process.exitCode = 1;
 }

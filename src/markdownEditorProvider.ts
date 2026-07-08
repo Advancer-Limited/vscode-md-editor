@@ -164,9 +164,22 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
           }
 
           case 'applyGrammarFix': {
-            applyingEdits++;
             const startPos = document.positionAt(message.offset);
             const endPos = document.positionAt(message.offset + message.length);
+            // Grammar match offsets were computed against the text at check
+            // time. If the document has changed since (edits earlier in the
+            // file shift offsets), applying blindly would replace the wrong
+            // text — verify the range still contains what the check matched.
+            if (
+              message.expectedText !== undefined &&
+              document.getText(new vscode.Range(startPos, endPos)) !== message.expectedText
+            ) {
+              vscode.window.showInformationMessage(
+                'The text has changed since the grammar check — run the check again to apply fixes.'
+              );
+              return;
+            }
+            applyingEdits++;
             const edit = new vscode.WorkspaceEdit();
             edit.replace(document.uri, new vscode.Range(startPos, endPos), message.replacement);
             try {
@@ -201,6 +214,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     webviewPanel.onDidDispose(() => {
       this.webviewPanels.delete(document.uri.toString());
+      this.cursorOffsets.delete(document.uri.toString());
       if (this.activeDocument === document) {
         this.activeDocument = undefined;
         this._onDidChangeActiveDocument.fire(undefined);

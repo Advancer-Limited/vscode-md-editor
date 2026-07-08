@@ -25,7 +25,13 @@ export class LanguageToolDiagnosticsProvider implements vscode.Disposable {
   private diagnosticCollection: vscode.DiagnosticCollection;
   private languageToolService: LanguageToolService;
   private disposables: vscode.Disposable[] = [];
-  private checkTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * Debounce timer per document URI. A single shared timer would let an edit
+   * in document B cancel document A's pending check, leaving A's diagnostics
+   * permanently stale (same pattern as FileIndexService's per-URI debounce).
+   */
+  private checkTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** Accumulated grammar matches per document (for incremental merging). */
   private storedMatches = new Map<string, GrammarMatch[]>();
@@ -80,14 +86,16 @@ export class LanguageToolDiagnosticsProvider implements vscode.Disposable {
       return;
     }
 
-    if (this.checkTimer) {
-      clearTimeout(this.checkTimer);
+    const key = document.uri.toString();
+    const existing = this.checkTimers.get(key);
+    if (existing) {
+      clearTimeout(existing);
     }
 
-    this.checkTimer = setTimeout(() => {
-      this.checkTimer = undefined;
+    this.checkTimers.set(key, setTimeout(() => {
+      this.checkTimers.delete(key);
       this.runIncrementalCheck(document);
-    }, this.languageToolService.getCheckDelay());
+    }, this.languageToolService.getCheckDelay()));
   }
 
   /**
@@ -149,7 +157,10 @@ export class LanguageToolDiagnosticsProvider implements vscode.Disposable {
 
     let matches: LanguageToolMatch[];
     try {
-      matches = await this.languageToolService.check(strippedParagraph);
+      // silent: chunk-level failures inside check() must not pop notifications
+      // for auto-checks (check() swallows them internally, so the catch below
+      // alone doesn't prevent the popups).
+      matches = await this.languageToolService.check(strippedParagraph, { silent: true });
     } catch {
       return; // Silently fail for auto-checks
     }
@@ -306,8 +317,9 @@ export class LanguageToolDiagnosticsProvider implements vscode.Disposable {
     this.disposables.forEach((d) => d.dispose());
     this._onGrammarResults.dispose();
     this.diagnosticCollection.clear();
-    if (this.checkTimer) {
-      clearTimeout(this.checkTimer);
+    for (const timer of this.checkTimers.values()) {
+      clearTimeout(timer);
     }
+    this.checkTimers.clear();
   }
 }
