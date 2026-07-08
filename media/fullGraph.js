@@ -168,6 +168,11 @@
   graph.d3Force('charge')?.strength(-300);
   graph.d3Force('link')?.distance(100);
 
+  // Capture force-graph's built-in center force so the "Center force" toggle
+  // can restore it. (window.d3 is not available in this webview — only
+  // force-graph.min.js is loaded — so it can't be recreated from scratch.)
+  const initialCenterForce = graph.d3Force('center') || null;
+
   // Custom force: pull orphan nodes toward the center so they don't drift far away
   function orphanGravity(alpha) {
     const nodes = graph.graphData().nodes;
@@ -214,7 +219,7 @@
   // Tooltip
   function showNodeTooltip(node) {
     const connections = adjacencyMap.get(node.id)?.size || 0;
-    const tags = node.tags && node.tags.length > 0 ? node.tags.join(', ') : 'none';
+    const tags = escapeHtml(node.tags && node.tags.length > 0 ? node.tags.join(', ') : 'none');
     tooltip.innerHTML = `
       <div class="tooltip-title">${escapeHtml(node.label)}</div>
       <div class="tooltip-detail">${escapeHtml(node.folder || 'root')}</div>
@@ -306,7 +311,7 @@
   chargeSlider.addEventListener('input', () => { graph.d3Force('charge')?.strength(parseInt(chargeSlider.value)); graph.d3ReheatSimulation(); });
   distanceSlider.addEventListener('input', () => { graph.d3Force('link')?.distance(parseInt(distanceSlider.value)); graph.d3ReheatSimulation(); });
   centerForce.addEventListener('change', () => {
-    graph.d3Force('center', centerForce.checked ? (window.d3?.forceCenter?.() || null) : null);
+    graph.d3Force('center', centerForce.checked ? initialCenterForce : null);
     graph.d3ReheatSimulation();
   });
   btnFit.addEventListener('click', () => graph.zoomToFit(400, 40));

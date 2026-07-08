@@ -33,6 +33,17 @@
   // Track whether the current content update originated from the extension host
   let isExternalUpdate = false;
 
+  // True while an IME composition is in progress in the contenteditable
+  // preview. Serializing/re-rendering mid-composition breaks the IME session
+  // and teleports the caret, so all sync work is deferred to compositionend.
+  let isComposing = false;
+
+  // The markdown most recently posted to the extension host, plus whether a
+  // debounced local edit is still waiting to be posted. Together these let the
+  // update handler recognize late echoes and stale snapshots (see 'update').
+  let lastSentEditText = null;
+  let localEditPending = false;
+
   // Stored frontmatter to preserve during contenteditable round-trips
   let currentFrontmatter = '';
 
@@ -185,7 +196,16 @@
         // text genuinely differs — i.e. a real external change (other editor,
         // git, grammar fix, etc.). This replaces the old isContentEditableUpdate
         // flag, which could get stuck and silently drop external updates.
-        const isEcho = text === textarea.value;
+        const isEcho = text === textarea.value || text === lastSentEditText;
+        if (!isEcho && localEditPending) {
+          // A newer local edit is still debounce-pending (or in flight to the
+          // host). Rendering this older snapshot would clobber the user's
+          // latest keystrokes and yank the caret. Skip it — the pending edit
+          // will replace the document momentarily (last-writer-wins), and any
+          // genuine external change will arrive again after that settles.
+          updateStatusBar();
+          break;
+        }
         if (!isEcho) {
           isExternalUpdate = true;
           const selStart = textarea.selectionStart;
@@ -219,8 +239,14 @@
           gBtn.disabled = false;
         }
         statusWordCount.textContent = currentGrammarMatches.length + ' grammar issue(s) found';
-        // Re-render preview to apply highlights
-        renderPreview(textarea.value);
+        // Refresh highlights in place. A full renderPreview() here rebuilt the
+        // contenteditable's innerHTML — and because auto grammar checks land
+        // asynchronously (often just as the user resumes typing), that rebuild
+        // randomly moved the caret whenever the markdown→HTML round-trip wasn't
+        // text-identical (smart quotes, `...`→…, a "- " line becoming a list).
+        // Unwrapping and re-wrapping highlight spans never changes text content,
+        // so the caret can be restored to the exact same offset.
+        refreshGrammarHighlights();
         break;
       }
     }
@@ -240,8 +266,11 @@
     renderPreview(text);
     updateStatusBar();
 
+    localEditPending = true;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
+      localEditPending = false;
+      lastSentEditText = text;
       vscode.postMessage({ type: 'edit', text: text, cursorOffset: textarea.selectionStart });
     }, 50);
   });
@@ -251,9 +280,7 @@
   // ================================================
   let contentEditableDebounce;
 
-  previewContent.addEventListener('input', () => {
-    if (isExternalUpdate) return;
-
+  function syncContentEditable() {
     // Convert HTML back to markdown via Turndown. Guard against Turndown
     // throwing on malformed DOM so a single bad keystroke can't wedge editing.
     let markdown;
@@ -280,12 +307,29 @@
     );
 
     // Debounced send to extension host
+    localEditPending = true;
     clearTimeout(contentEditableDebounce);
     contentEditableDebounce = setTimeout(() => {
+      localEditPending = false;
+      lastSentEditText = markdown;
       vscode.postMessage({ type: 'edit', text: markdown, cursorOffset: previewCaretOffset });
     }, 100);
 
     updateStatusBar();
+  }
+
+  previewContent.addEventListener('input', () => {
+    if (isExternalUpdate || isComposing) return;
+    syncContentEditable();
+  });
+
+  // IME composition: defer all markdown sync until the composition commits.
+  previewContent.addEventListener('compositionstart', () => {
+    isComposing = true;
+  });
+  previewContent.addEventListener('compositionend', () => {
+    isComposing = false;
+    syncContentEditable();
   });
 
   // Handle Tab key - insert tab instead of moving focus
@@ -1098,6 +1142,37 @@
     }
   }
 
+  /** Unwrap all existing grammar-error spans, leaving text content untouched. */
+  function clearGrammarHighlights() {
+    for (const span of previewContent.querySelectorAll('span.grammar-error')) {
+      const parent = span.parentNode;
+      if (!parent) continue;
+      while (span.firstChild) {
+        parent.insertBefore(span.firstChild, span);
+      }
+      parent.removeChild(span);
+    }
+    // Merge the text nodes the unwrapping left behind so highlight matching
+    // (which searches within single text nodes) sees contiguous text again.
+    previewContent.normalize();
+  }
+
+  /**
+   * Re-apply grammar highlights to the live DOM without re-rendering markdown.
+   * Wrapping/unwrapping spans never changes the element's text content, so the
+   * caret offset round-trips exactly — no cursor movement, unlike a full
+   * renderPreview() which rebuilds innerHTML from (possibly normalized) markdown.
+   */
+  function refreshGrammarHighlights() {
+    const savedCaret = isPreviewMode() ? saveCaretPosition(previewContent) : null;
+    hideGrammarTooltip();
+    clearGrammarHighlights();
+    applyGrammarHighlights();
+    if (savedCaret) {
+      restoreCaretPosition(previewContent, savedCaret);
+    }
+  }
+
   function showGrammarTooltip(span, match) {
     hideGrammarTooltip();
 
@@ -1123,6 +1198,9 @@
             offset: match.originalOffset,
             length: match.originalLength,
             replacement: replacement,
+            // Lets the host verify the offsets still point at this text —
+            // edits since the check shift offsets and would corrupt the doc.
+            expectedText: match.matchedText,
           });
           hideGrammarTooltip();
         });

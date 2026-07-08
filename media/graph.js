@@ -16,6 +16,12 @@
   function renderFileList(nodes) {
     if (!fileList) return;
 
+    // The whole list is torn down and rebuilt on every update (including
+    // expand/collapse round-trips) — preserve the scroll position so the
+    // view doesn't jump back to the top.
+    const savedScrollTop = fileList.scrollTop;
+    const savedDocScrollTop = document.scrollingElement ? document.scrollingElement.scrollTop : 0;
+
     if (!nodes || nodes.length === 0) {
       fileList.innerHTML = '<div class="empty-msg">No files found</div>';
       return;
@@ -98,6 +104,10 @@
 
     fileList.innerHTML = '';
     fileList.appendChild(fragment);
+    fileList.scrollTop = savedScrollTop;
+    if (document.scrollingElement) {
+      document.scrollingElement.scrollTop = savedDocScrollTop;
+    }
   }
 
   // ================================================
