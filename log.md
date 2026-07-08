@@ -385,3 +385,34 @@ All 16 tests pass; `npm run check-types` and `npm run compile` pass.
 
 - Published `advancer-limited.vscode-md-editor v0.2.3` from `master` via `npx @vscode/vsce publish` (PAT from `kv-advancer-prod` / secret `vsce-marketplace-pat`).
 - PRs #34 (bump → develop) and #35 (develop → master) merged with `--admin` (branch protection requires review; self-review per CLAUDE.md, user-authorized).
+
+## 2026-07-09 — Full review pass: cursor fix, review follow-ups, Askance removal, dep upgrades
+
+### Investigation: WYSIWYG cursor jump (user-reported, persistent)
+- Root cause: automatic incremental grammar checks (diagnosticsProvider, 1.5s debounce after each edit) complete asynchronously; the webview `grammarResults` handler called `renderPreview(textarea.value)`, rebuilding the contenteditable innerHTML mid-typing and restoring the caret by approximate plain-text offset. Any non-identity markdown→HTML round-trip (typographer `...`→`…`, smart quotes, `- ` becoming a list) shifted the offset → cursor jump; selection momentarily outside the preview → restore skipped → caret/focus loss.
+- Secondary: stale non-echo `update` messages re-rendered older text over fresher keystrokes while a debounced local edit was pending.
+
+### PR #37 — fix/wysiwyg-cursor-stability
+- media/editor.js: grammarResults now refreshes highlights in place (clearGrammarHighlights unwraps spans + normalize, applyGrammarHighlights re-wraps — text content unchanged, caret restore exact); stale-update guard (localEditPending + lastSentEditText); IME composition guard (compositionstart/end, sync deferred to compositionend).
+- src/markdownEditorProvider.ts: edits applied as minimal ranged edit via new computeMinimalEdit (utils.ts) instead of whole-document replace; rejected applyEdit resyncs webview.
+- tests/computeMinimalEdit.test.mjs: 11 new cases. Suite 35/35.
+
+### PR #38 — fix/review-followups-2 (multi-agent code review findings)
+- diagnosticsProvider.ts: per-document debounce timer Map (shared timer let doc B cancel doc A's pending check → permanently stale diagnostics).
+- languageToolService.ts: check() `silent` option — auto-checks no longer spam warning popups every 1.5s when API unreachable.
+- markdownEditorProvider.ts + types.ts + editor.js: applyGrammarFix sends/verifies expectedText (stale offsets could corrupt unrelated text); cursorOffsets deleted on panel dispose.
+- extension.ts: startup runCheck rejections caught.
+- fullGraph.js: tooltip tags now escaped (was only unescaped innerHTML field); Center-force toggle fixed (window.d3 doesn't exist — capture built-in center force).
+- graph.js: scroll position preserved across list re-renders.
+- diff.js: markdown-it options aligned with editor (breaks/linkify/typographer; html deliberately off — no sanitizer here).
+- scripts/copy-vendor.js: refactored to a list, exits non-zero on missing vendor file.
+
+### PR #39 — chore/remove-askance-and-dep-bumps
+- Removed Askance everywhere (user: obsolete): CLAUDE.md section, .mcp.json deleted, @askance/cli devDep dropped (no longer resolvable on npm registry), .gitignore/.vscodeignore entries.
+- markdown-it 14.2.0→14.3.0 (media/markdown-it.min.js re-vendored), @types/markdown-it ^14.1.2, @types/node ^20.19.0, typescript ^5.9.0. npm audit: 0 vulnerabilities.
+- Deferred deliberately: TS 6/7 (TS 7.0 shipped 2026-07-08, too fresh), @types/node 26.x (should track VS Code Electron's Node), @types/vscode stays ^1.85.0 (matches engines floor).
+
+### Notes
+- PRs stacked #37 → #38 → #39; merge in that order. Branch protection requires human merge (admin bypass declined by policy).
+- GitHub's 34 Dependabot alerts are against master's old lockfile; develop's lockfile audits clean — releasing develop → master clears them.
+- Known issues logged in todo.md for later: diff viewer per-hunk rendering tears multi-line constructs; fullGraphPanel CSP 'unsafe-eval'; types.ts graph sidebar protocol drift.
