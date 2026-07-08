@@ -1198,6 +1198,9 @@
             offset: match.originalOffset,
             length: match.originalLength,
             replacement: replacement,
+            // Lets the host verify the offsets still point at this text —
+            // edits since the check shift offsets and would corrupt the doc.
+            expectedText: match.matchedText,
           });
           hideGrammarTooltip();
         });

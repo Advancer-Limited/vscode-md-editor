@@ -86,7 +86,7 @@ export type WebviewToExtensionMessage =
   | { type: 'requestGrammarCheck' }
   | { type: 'requestWikilinkSuggestions'; prefix: string }
   | { type: 'openWikilink'; target: string }
-  | { type: 'applyGrammarFix'; offset: number; length: number; replacement: string };
+  | { type: 'applyGrammarFix'; offset: number; length: number; replacement: string; expectedText?: string };
 
 export interface WikilinkSuggestion {
   stem: string;

@@ -2,7 +2,16 @@
 (function () {
   'use strict';
 
-  var md = window.markdownit();
+  // Match the live editor's markdown-it configuration (media/editor.js) so the
+  // diff view renders line breaks, links, and typography the same way the user
+  // sees them in the editor — otherwise the diff can misrepresent content.
+  // html stays OFF: unlike editor.js this view has no sanitizeHtml() pass, so
+  // enabling raw HTML here would inject file content straight into innerHTML.
+  var md = window.markdownit({
+    linkify: true,
+    typographer: true,
+    breaks: true,
+  });
   var diffContent = document.getElementById('diff-content');
   var dataEl = document.getElementById('diff-data');
 

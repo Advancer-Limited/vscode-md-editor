@@ -370,7 +370,12 @@ export function activate(context: vscode.ExtensionContext): void {
   if (languageToolService.isEnabled()) {
     for (const doc of vscode.workspace.textDocuments) {
       if (doc.languageId === 'markdown') {
-        diagnosticsProvider.runCheck(doc);
+        // Fire-and-forget, but never let it become an unhandled rejection —
+        // e.g. positionAt throws if the document is closed while the network
+        // round-trip is still in flight.
+        diagnosticsProvider.runCheck(doc).catch((err) => {
+          console.error('[MarkdownEditor] Startup grammar check failed:', err);
+        });
       }
     }
   }
