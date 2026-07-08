@@ -3,9 +3,6 @@ dist/
 *.vsix
 .vscode-test/
 
-# Askance
-.askance/
-
 # Claude Code
 .claude/
 
