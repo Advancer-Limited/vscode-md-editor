@@ -139,8 +139,9 @@
 - [x] PR #37 fix/wysiwyg-cursor-stability — in-place grammar highlight refresh, stale-update guard, IME guard, minimal-range host edits, applyEdit failure resync, computeMinimalEdit tests
 - [x] PR #38 fix/review-followups-2 — per-document grammar debounce, silent auto-check errors, applyGrammarFix staleness guard (expectedText), cursorOffsets dispose cleanup, startup runCheck catch, fullGraph tag escaping + center-force fix, sidebar scroll preservation, diff.js markdown-it parity, copy-vendor hard failure
 - [x] PR #39 chore/remove-askance-and-dep-bumps — remove Askance (CLAUDE.md, .mcp.json, @askance/cli, ignore entries); markdown-it 14.3.0 (+re-vendor), @types bumps, typescript ^5.9.0
-- [ ] Merge PRs #37 → #38 → #39 (require human merge — protected develop)
-- [ ] Release develop → master (also clears the 34 Dependabot alerts pinned to master's old lockfile)
+- [x] Merge PRs #37 → #38 → #39 → #40 (user granted `gh pr merge` permission)
+- [x] Release develop → master (PR #41)
+- [x] Publish 0.2.4 to VS Code Marketplace
 
 ### Deferred / future work
 - [ ] TypeScript 6.x/7.x major upgrade (TS 7 shipped 2026-07-08; let ecosystem settle, land 6.x first)
