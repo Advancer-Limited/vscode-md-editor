@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getNonce } from './utils.js';
+import { getNonce, computeMinimalEdit } from './utils.js';
 import { WebviewToExtensionMessage, GrammarMatch } from './types.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
 
@@ -92,21 +92,40 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             return;
 
           case 'edit': {
-            applyingEdits++;
-            lastAppliedText = message.text;
             if (message.cursorOffset !== undefined) {
               this.cursorOffsets.set(document.uri.toString(), message.cursorOffset);
             }
+            const currentText = document.getText();
+            if (currentText === message.text) {
+              return;
+            }
+            applyingEdits++;
+            lastAppliedText = message.text;
+            // Apply the smallest ranged edit rather than replacing the whole
+            // document: this keeps undo granular and doesn't disturb cursor or
+            // scroll state in a parallel raw text editor of the same document.
+            const minimal = computeMinimalEdit(currentText, message.text);
             const edit = new vscode.WorkspaceEdit();
             edit.replace(
               document.uri,
-              new vscode.Range(0, 0, document.lineCount, 0),
-              message.text
+              new vscode.Range(
+                document.positionAt(minimal.start),
+                document.positionAt(minimal.end)
+              ),
+              minimal.text
             );
+            let applied = false;
             try {
-              await vscode.workspace.applyEdit(edit);
+              applied = await vscode.workspace.applyEdit(edit);
             } finally {
               applyingEdits--;
+            }
+            if (!applied) {
+              // The edit was rejected (e.g. a concurrent modification). The
+              // webview now shows text that never reached the document — push
+              // the real document state back so the two can't silently diverge.
+              lastAppliedText = null;
+              updateWebview();
             }
             return;
           }
