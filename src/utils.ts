@@ -45,6 +45,38 @@ export function getFileStem(filePath: string): string {
 }
 
 /**
+ * Compute the minimal single-range replacement that turns oldText into newText
+ * by trimming the common prefix and suffix. Returns character offsets into
+ * oldText: replace [start, end) with `text`.
+ *
+ * Used to apply webview edits as a small ranged edit instead of a whole-document
+ * replace — preserving cursor/selection state in any parallel text editor and
+ * keeping the undo stack granular.
+ */
+export function computeMinimalEdit(
+  oldText: string,
+  newText: string
+): { start: number; end: number; text: string } {
+  let start = 0;
+  const maxStart = Math.min(oldText.length, newText.length);
+  while (start < maxStart && oldText.charCodeAt(start) === newText.charCodeAt(start)) {
+    start++;
+  }
+  let oldEnd = oldText.length;
+  let newEnd = newText.length;
+  // The suffix must not overlap the already-matched prefix.
+  while (
+    oldEnd > start &&
+    newEnd > start &&
+    oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)
+  ) {
+    oldEnd--;
+    newEnd--;
+  }
+  return { start, end: oldEnd, text: newText.slice(start, newEnd) };
+}
+
+/**
  * Strip Markdown syntax to produce plain text for LanguageTool.
  * Returns the stripped text and an offset map from stripped positions to original positions.
  */
