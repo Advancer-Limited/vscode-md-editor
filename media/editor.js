@@ -8,6 +8,39 @@
     breaks: true,
   });
 
+  // GFM task-list checkboxes (`- [ ] text` / `- [x] text`), useful for e.g.
+  // GitHub spec-kit tasks.md checklists. A core-ruler token pass rather than
+  // markdown-it's own list-item handling: it needs no source-position
+  // mapping (which preprocessWikilinks's placeholder-collapsed fenced blocks
+  // would make unreliable), and toggling is handled entirely DOM-side and
+  // round-tripped back through Turndown, same as every other WYSIWYG edit.
+  md.core.ruler.after('inline', 'task-lists', (state) => {
+    const tokens = state.tokens;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].type !== 'inline') continue;
+      // Expected ancestry: list_item_open > paragraph_open > inline.
+      if (i < 2 || tokens[i - 1].type !== 'paragraph_open' || tokens[i - 2].type !== 'list_item_open') continue;
+      const first = tokens[i].children && tokens[i].children[0];
+      if (!first || first.type !== 'text') continue;
+      const match = first.content.match(/^\[( |x|X)\] /);
+      if (!match) continue;
+      const checked = match[1].toLowerCase() === 'x';
+      first.content = first.content.slice(match[0].length);
+      const checkbox = new state.Token('html_inline', '', 0);
+      // No trailing space in the raw tag: the CSS margin-right on
+      // input[type="checkbox"] (editor.css) supplies the visual gap in the
+      // rendered preview. A literal space here would become a real DOM text
+      // node right after the checkbox — Turndown's whitespace-collapse pass
+      // deliberately preserves text immediately following a void element (so
+      // intentional spacing around inline elements like <img> survives),
+      // which combined with the taskCheckbox Turndown rule's own trailing
+      // space in '[x] '/'[ ] ' would double up into "[x]  text".
+      checkbox.content = '<input type="checkbox" class="task-checkbox"' + (checked ? ' checked=""' : '') + '>';
+      tokens[i].children.unshift(checkbox);
+      tokens[i - 2].attrJoin('class', 'task-list-item');
+    }
+  });
+
   /** @type {ReturnType<typeof acquireVsCodeApi>} */
   const vscode = acquireVsCodeApi();
 
@@ -94,6 +127,41 @@
     },
   });
 
+  // Custom rule: serialize a task-list checkbox back to its `[ ]`/`[x]`
+  // source syntax. Turndown drops unrecognized void elements by default, so
+  // <input> needs an explicit rule; the existing `li` handling already
+  // supplies the `- ` marker and indentation. Reads the `checked` attribute
+  // (not the `.checked` DOM property) because Turndown serializes
+  // previewContent.innerHTML as a string first — only attributes survive
+  // that round trip — so the click handler below must keep the attribute in
+  // sync whenever it toggles the box.
+  turndownService.addRule('taskCheckbox', {
+    filter: function (node) {
+      return node.nodeName === 'INPUT' && node.getAttribute('type') === 'checkbox';
+    },
+    replacement: function (_content, node) {
+      return node.hasAttribute('checked') ? '[x] ' : '[ ] ';
+    },
+  });
+
+  // Custom rule: serialize a rendered mermaid diagram block back to its
+  // fenced source. The block is contenteditable="false" (atomic — the user
+  // can't edit its contents, only delete the whole thing), so `content`
+  // (Turndown's serialization of its children, i.e. the rendered SVG) is
+  // never used; the original source is round-tripped verbatim from the
+  // data attribute instead. Returned as a plain string (not built via
+  // Turndown's escaping helpers) so the diagram source passes through
+  // byte-for-byte, matching how the wikilink rule above handles its target.
+  turndownService.addRule('mermaidBlock', {
+    filter: function (node) {
+      return node.nodeName === 'DIV' && node.classList.contains('mermaid-block');
+    },
+    replacement: function (_content, node) {
+      const source = node.getAttribute('data-mermaid-source') || '';
+      return '\n\n```mermaid\n' + source + '\n```\n\n';
+    },
+  });
+
   // GFM table rules (Turndown's core has no table support). Defined in the
   // shared media/turndownTableRules.js module so the same logic can be unit
   // tested. Loaded as a global by the preceding <script> tag.
@@ -103,6 +171,19 @@
   /** Check if the editor is in preview-only (WYSIWYG) mode */
   function isPreviewMode() {
     return editorContainer.classList.contains('preview-only');
+  }
+
+  /**
+   * TreeWalker NodeFilter that skips (rejects, does not descend into) any
+   * `.mermaid-block` subtree. A rendered diagram's SVG contains real text
+   * nodes (its labels) that must never be treated as document prose — by
+   * caret offset math, by grammar-match text search, or by anything else
+   * that walks the preview's text content.
+   */
+  function rejectMermaidBlocks(node) {
+    return node.nodeType === 1 && node.classList && node.classList.contains('mermaid-block')
+      ? NodeFilter.FILTER_REJECT
+      : NodeFilter.FILTER_ACCEPT;
   }
 
   /**
@@ -145,6 +226,17 @@
     if (!block.parentNode) return null; // container isn't actually inside element
     const blockIndex = Array.prototype.indexOf.call(element.childNodes, block);
     if (blockIndex === -1) return null;
+    if (block.nodeType === 1 && block.classList && block.classList.contains('mermaid-block')) {
+      // Atomic (contenteditable="false") block rendered from a ```mermaid
+      // fence — its SVG contains real text nodes (diagram labels) that must
+      // never be counted as document prose. The caret can't land inside it
+      // via user interaction, so treat it as zero-length. (A mermaid fence
+      // nested inside a list item, rather than as its own top-level block,
+      // isn't covered by this check — rare enough not to be worth the extra
+      // subtree-exclusion bookkeeping; worst case is a one-render caret drift
+      // in that block, corrected on the next unrelated edit.)
+      return { blockIndex, offset: 0 };
+    }
     const pre = document.createRange();
     pre.selectNodeContents(block);
     try {
@@ -196,7 +288,13 @@
     if (block.nodeType === Node.TEXT_NODE) {
       return { node: block, offset: Math.min(saved.offset, block.textContent.length) };
     }
-    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    if (block.classList && block.classList.contains('mermaid-block')) {
+      // contenteditable="false" — the caret can't land inside its rendered
+      // SVG, so anchor immediately before it (a child-index position on
+      // `element` itself) instead of walking into diagram label text.
+      return { node: element, offset: blockIndex };
+    }
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, rejectMermaidBlocks);
     let acc = 0;
     let node;
     let last = null;
@@ -263,6 +361,12 @@
           break;
         }
         if (!isEcho) {
+          // The matches we're holding were anchored against the previous
+          // text; re-searching them against genuinely different content
+          // (external edit, git, etc.) at their old offsets/matchedText
+          // would highlight the wrong spots. Drop them — the host will
+          // re-check and send fresh results after this change settles.
+          currentGrammarMatches = [];
           isExternalUpdate = true;
           const selStart = textarea.selectionStart;
           const selEnd = textarea.selectionEnd;
@@ -1078,9 +1182,12 @@
       return '<a class="wikilink" data-target="' + escapeHtml(target.trim()) + '">' + escapeHtml(label.trim()) + '</a>';
     });
 
-    // Restore code blocks
+    // Restore code blocks. Passed as a replacer function, not a string — a
+    // string replacement interprets $&/$`/$'/$$/$1 as special patterns, so a
+    // code block containing e.g. a shell `$(...)` or regex backreference
+    // would silently corrupt neighboring text.
     for (const { placeholder, original } of codeBlockPlaceholders) {
-      processed = processed.replace(placeholder, original);
+      processed = processed.replace(placeholder, () => original);
     }
 
     return processed;
@@ -1101,22 +1208,151 @@
     return text;
   }
 
+  // Attributes that can carry a navigable/executable URI and so need scheme
+  // checking, beyond the on* handler-attribute check below.
+  const URI_ATTRS = new Set(['href', 'src', 'xlink:href', 'formaction', 'poster']);
+  const DANGEROUS_SCHEMES = ['javascript:', 'vbscript:', 'data:text/html'];
+
+  /**
+   * Strip ASCII control/whitespace characters (code points 0-32, e.g. tab,
+   * newline) from a string. Browsers strip these from URL schemes before
+   * matching — "java(tab)script:" still navigates — so a scheme check must
+   * too, or it can be bypassed by embedding one inside the scheme name.
+   */
+  function stripControlChars(str) {
+    let out = '';
+    for (let i = 0; i < str.length; i++) {
+      if (str.charCodeAt(i) > 32) out += str[i];
+    }
+    return out;
+  }
+
   /** Sanitize HTML output — strip script tags, event handlers, and dangerous elements */
   function sanitizeHtml(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    // Remove dangerous elements
-    for (const el of doc.querySelectorAll('script, iframe, object, embed, form, meta, link[rel="import"]')) {
+    // Remove dangerous elements. <base> is included because it can silently
+    // redirect every relative URL/attribute on the page.
+    for (const el of doc.querySelectorAll('script, iframe, object, embed, form, meta, link[rel="import"], base')) {
       el.remove();
     }
-    // Remove all on* event handler attributes from every element
     for (const el of doc.querySelectorAll('*')) {
       for (const attr of [...el.attributes]) {
-        if (attr.name.startsWith('on') || (attr.name === 'href' && attr.value.trimStart().startsWith('javascript:'))) {
+        if (attr.name.startsWith('on')) {
           el.removeAttribute(attr.name);
+          continue;
+        }
+        if (URI_ATTRS.has(attr.name.toLowerCase())) {
+          const normalized = stripControlChars(attr.value).toLowerCase();
+          if (DANGEROUS_SCHEMES.some((scheme) => normalized.startsWith(scheme))) {
+            el.removeAttribute(attr.name);
+          }
         }
       }
     }
     return doc.body.innerHTML;
+  }
+
+  // ================================================
+  // Mermaid diagram rendering (read-only in the WYSIWYG/split preview —
+  // editing a diagram means switching to Raw/Split and editing its fenced
+  // source directly; the rendered block itself is contenteditable="false").
+  // ================================================
+  let mermaidReady = false;
+  // Rendered SVG cache keyed by a hash of the diagram source. Lets an
+  // unrelated re-render (grammar-fix push, external update, view toggle)
+  // reuse a diagram's SVG synchronously instead of re-invoking mermaid.
+  const mermaidSvgCache = new Map();
+  let mermaidRenderSeq = 0;
+
+  function ensureMermaid() {
+    if (mermaidReady) return true;
+    // @ts-ignore - mermaid loaded globally from mermaid.min.js
+    if (typeof mermaid === 'undefined') return false;
+    // @ts-ignore
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: document.body.classList.contains('vscode-light') ? 'default' : 'dark',
+    });
+    mermaidReady = true;
+    return true;
+  }
+
+  /** Cheap non-cryptographic string hash (djb2), used only as a cache key. */
+  function hashSource(str) {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) {
+      h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+    }
+    return h.toString(36);
+  }
+
+  /**
+   * Replace markdown-it's rendered ```mermaid fences (`<pre><code
+   * class="language-mermaid">`) with atomic, contenteditable="false" blocks
+   * that hold the diagram source in a data attribute (for the Turndown
+   * round-trip) and either a cached SVG (synchronous) or a placeholder that
+   * fills in once mermaid.render() resolves (async — mermaid has no sync
+   * render API).
+   */
+  function upgradeMermaidBlocks(root) {
+    const codeBlocks = root.querySelectorAll('pre > code.language-mermaid');
+    if (codeBlocks.length === 0) return;
+    for (const code of codeBlocks) {
+      const pre = code.parentElement;
+      // markdown-it appends a trailing newline to fence content.
+      const source = code.textContent.replace(/\n$/, '');
+      const div = document.createElement('div');
+      div.className = 'mermaid-block';
+      div.setAttribute('contenteditable', 'false');
+      div.setAttribute('data-mermaid-source', source);
+      pre.replaceWith(div);
+
+      const cached = mermaidSvgCache.get(hashSource(source));
+      if (cached) {
+        div.innerHTML = cached;
+        continue;
+      }
+      div.innerHTML = '<div class="mermaid-pending">Rendering diagram…</div>';
+      renderMermaidInto(div, source);
+    }
+  }
+
+  async function renderMermaidInto(div, source) {
+    if (!ensureMermaid()) {
+      div.innerHTML = '<div class="mermaid-error">Mermaid failed to load</div>';
+      return;
+    }
+    const key = hashSource(source);
+    const diagramId = 'mmd-diagram-' + (++mermaidRenderSeq);
+    try {
+      // @ts-ignore - mermaid global
+      const { svg } = await mermaid.render(diagramId, source);
+      mermaidSvgCache.set(key, svg);
+      // The block may have been removed (re-render elsewhere) or reassigned
+      // to a different diagram (fast typing in split mode) while awaiting.
+      if (div.isConnected && div.getAttribute('data-mermaid-source') === source) {
+        div.innerHTML = svg;
+      }
+      if (mermaidSvgCache.size > 100) {
+        // Sources churn while editing raw mermaid in split mode — bound
+        // memory rather than caching every keystroke's variant forever.
+        mermaidSvgCache.delete(mermaidSvgCache.keys().next().value);
+      }
+    } catch (err) {
+      // mermaid can leave a scratch element behind under the diagram's id on
+      // a failed parse/render.
+      document.getElementById('d' + diagramId)?.remove();
+      if (!div.isConnected || div.getAttribute('data-mermaid-source') !== source) return;
+      if (div.querySelector('svg')) {
+        // Keep the last good render visible rather than replacing it with an
+        // error while the user is still mid-edit of the diagram source.
+        div.classList.add('mermaid-stale');
+      } else {
+        div.innerHTML = '<div class="mermaid-error">Invalid diagram: ' +
+          escapeHtml(String((err && err.message) || err)) + '</div>';
+      }
+    }
   }
 
   function renderPreview(text) {
@@ -1128,6 +1364,11 @@
     const rendered = md.render(processed);
 
     previewContent.innerHTML = sanitizeHtml(rendered);
+    // Must run before caret restore below: it replaces DOM nodes (mermaid
+    // fences -> atomic blocks), and the block-anchored caret bookmark is
+    // resolved against child *indices*, which upgradeMermaidBlocks does not
+    // change (replaceWith keeps the same position) but a later swap would.
+    upgradeMermaidBlocks(previewContent);
     applyGrammarHighlights();
 
     if (savedCaret) {
@@ -1150,12 +1391,25 @@
     return false;
   }
 
+  /** Count non-overlapping occurrences of `needle` in `haystack` before `beforeIndex`. */
+  function countOccurrencesBefore(haystack, needle, beforeIndex) {
+    if (!needle) return 0;
+    let count = 0;
+    let idx = haystack.indexOf(needle);
+    while (idx !== -1 && idx < beforeIndex) {
+      count++;
+      idx = haystack.indexOf(needle, idx + 1);
+    }
+    return count;
+  }
+
   function applyGrammarHighlights() {
     if (currentGrammarMatches.length === 0) return;
 
     // Build a plain text representation of the preview with offset mapping
-    // to locate grammar errors in the rendered DOM
-    const walker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT);
+    // to locate grammar errors in the rendered DOM. Diagram label text
+    // inside mermaid blocks is excluded — it isn't document prose.
+    const walker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT, rejectMermaidBlocks);
     const textNodes = [];
     let node;
     while ((node = walker.nextNode())) {
@@ -1168,7 +1422,15 @@
       const searchText = match.matchedText;
       if (!searchText) continue;
 
+      // The matched text can repeat elsewhere in the document. Use the
+      // match's offset in the markdown source to work out which occurrence
+      // it actually refers to, rather than always grabbing the first
+      // not-yet-highlighted one — otherwise the wavy underline can land on a
+      // different occurrence than the one a clicked suggestion fixes.
+      const targetOccurrence = countOccurrencesBefore(textarea.value, searchText, match.originalOffset);
+
       // Search through text nodes for the matched text
+      let occurrence = 0;
       let found = false;
       for (let ni = 0; ni < textNodes.length && !found; ni++) {
         const textNode = textNodes[ni];
@@ -1176,7 +1438,11 @@
         // to the next un-highlighted occurrence rather than re-marking the first.
         if (isInsideHighlight(textNode)) continue;
         const content = textNode.textContent;
-        const idx = content.indexOf(searchText);
+        let idx = content.indexOf(searchText);
+        while (idx !== -1 && occurrence < targetOccurrence) {
+          occurrence++;
+          idx = content.indexOf(searchText, idx + 1);
+        }
         if (idx === -1) continue;
 
         // Split the text node and wrap the match in a span
@@ -1200,7 +1466,7 @@
         found = true;
 
         // Update textNodes since we split the node
-        const newWalker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT);
+        const newWalker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT, rejectMermaidBlocks);
         textNodes.length = 0;
         let n;
         while ((n = newWalker.nextNode())) {
@@ -1278,6 +1544,24 @@
         btn.textContent = replacement;
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
+          // Apply the fix in the DOM immediately, rather than relying solely
+          // on the host round trip (host applies the edit and pushes an
+          // 'update' back). If a different local edit is already in flight
+          // when that push arrives, the 'update' handler correctly treats it
+          // as a possibly-stale snapshot and skips it — silently dropping
+          // this fix. Doing it here means it's already part of whatever the
+          // next sync (below) sends, regardless of that race.
+          if (isPreviewMode() && span.isConnected) {
+            const parent = span.parentNode;
+            if (parent) {
+              parent.replaceChild(document.createTextNode(replacement), span);
+              parent.normalize();
+              syncContentEditable();
+            }
+          }
+          // Still tell the host: it verifies the offsets against its own
+          // document.getText() (a safety net independent of the DOM-based
+          // fix above) and keeps its diagnostics collection in sync.
           vscode.postMessage({
             type: 'applyGrammarFix',
             offset: match.originalOffset,
@@ -1346,6 +1630,24 @@
     if (grammarTooltip && !grammarTooltip.contains(e.target) && !e.target.closest('.grammar-error')) {
       hideGrammarTooltip();
     }
+  });
+
+  // Task-list checkbox click handler in preview. Checkboxes inside a
+  // contenteditable region aren't reliably interactive by default in
+  // Chromium (a click there tends to just move the caret) — handle toggling
+  // explicitly instead of relying on native <input> behavior.
+  previewContent.addEventListener('click', (e) => {
+    const checkbox = e.target.closest && e.target.closest('input.task-checkbox');
+    if (!checkbox) return;
+    e.preventDefault();
+    const nowChecked = !checkbox.hasAttribute('checked');
+    if (nowChecked) {
+      checkbox.setAttribute('checked', '');
+    } else {
+      checkbox.removeAttribute('checked');
+    }
+    checkbox.checked = nowChecked; // keep the visual box in sync with the attribute
+    syncContentEditable(); // a click doesn't fire 'input' — sync manually
   });
 
   // Wikilink click handler in preview

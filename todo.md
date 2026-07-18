@@ -146,6 +146,19 @@
 ### Deferred / future work
 - [ ] TypeScript 6.x/7.x major upgrade (TS 7 shipped 2026-07-08; let ecosystem settle, land 6.x first)
 - [ ] Align @types/node major with the Node version bundled in current VS Code Electron
-- [ ] Diff viewer renders each hunk through markdown-it independently — multi-line constructs (fenced code, tables) that straddle hunk boundaries render as plain text; needs a hunk-grouping or whole-document render approach
+- [x] Diff viewer renders each hunk through markdown-it independently — multi-line constructs (fenced code, tables) that straddle hunk boundaries render as plain text; needs a hunk-grouping or whole-document render approach — fixed 2026-07-18, PR #46 (`segmentLines()` collapses a fence into one atomic diff unit)
 - [ ] fullGraphPanel CSP includes 'unsafe-eval' — confirm force-graph actually needs it, drop if not
 - [ ] src/types.ts graph sidebar message types drifted from actual graphViewProvider.ts SidebarMessage protocol — reconcile
+
+## 2026-07-18 review pass (PRs #43–#46)
+
+- [x] Root-cause the WYSIWYG cursor jump for real this time (two prior attempts, PR #24 and PR #37, were both merged but insufficient — see log.md for why)
+- [x] PR #43 fix/wysiwyg-cursor-jump — block-anchored caret bookmarks (replaces the global-plain-text-offset scheme from PR #24), empty-guard + IME guard on grammar-highlight refresh, editAck message to close an in-flight-edit race, CRLF whole-document-rewrite fix, stale-lastSentEditText fix
+- [x] PR #44 feature/mermaid-and-checkboxes (stacked on #43) — mermaid diagrams render as live SVG in WYSIWYG/split preview (read-only, atomic block, cached by source hash, lossless Turndown round-trip); GFM task-list checkboxes with click-to-toggle; code-review fixes: preprocessWikilinks `$`-pattern corruption, grammar-match wrong-occurrence highlighting, grammar-fix-suggestion lost-to-race bug, sanitizeHtml scheme-check hardening, stale grammar matches on external update
+- [x] PR #45 feature/mmd-editor — dedicated forced-split CustomTextEditorProvider for `*.mmd`/`*.mermaid` files (independent of the markdown editor)
+- [x] PR #46 feature/diff-fence-atomicity — atomic fenced-code-block diff hunks (`segmentLines()`), "Compare with Saved" now diffs the actual on-disk file instead of HEAD, full `.markdown` extension parity across wikilinks/graph/diff (was `.md`-only in several places despite the editor claiming both)
+
+### Deferred / future work (new)
+- [ ] Mermaid diagram rendering in the diff view itself (a changed diagram currently shows as plain fenced-code hunks, not rendered SVG) — needs the shared mermaid vendor files from #44/#45 merged first
+- [ ] `.mmd` file diff support (side-by-side rendered old/new diagram) — diff commands aren't yet gated for `.mmd` in package.json menus
+- [ ] #44 and #45 both independently vendor `mermaid` as a dependency (built in parallel off develop) — trivial duplicate-addition conflict expected in package.json/package-lock.json when both merge
