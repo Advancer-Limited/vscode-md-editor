@@ -8,11 +8,44 @@ export interface DiffHunk {
   content: string;
 }
 
+/**
+ * Split text into diff units: one entry per line, EXCEPT fenced code blocks
+ * (``` or ~~~), which are collapsed into a single multi-line entry so a diff
+ * can never split a fence's opening/closing markers into separate hunks.
+ */
+export function segmentLines(text: string): string[] {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const out: string[] = [];
+  let i = 0;
+  const openRe = /^(\s{0,3})(`{3,}|~{3,})(.*)$/;
+  while (i < lines.length) {
+    const m = lines[i].match(openRe);
+    if (!m) { out.push(lines[i++]); continue; }
+    const fenceChar = m[2][0];
+    const fenceLen = m[2].length;
+    const block = [lines[i++]];
+    while (i < lines.length) {
+      block.push(lines[i]);
+      const c = lines[i].match(/^\s{0,3}(`{3,}|~{3,})\s*$/);
+      i++;
+      if (c && c[1][0] === fenceChar && c[1].length >= fenceLen) break;
+      // no matching closer found before EOF: loop runs out naturally, matching
+      // markdown-it's own treatment of an unterminated fence (runs to end of doc)
+    }
+    out.push(block.join('\n'));
+  }
+  return out;
+}
+
 export function computeLineDiff(oldText: string, newText: string): DiffHunk[] {
-  // Normalize line endings — git returns \n, but files on Windows may use \r\n.
-  // Without this, every line appears changed due to trailing \r mismatch.
-  const oldLines = oldText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  const newLines = newText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  // Segment into diff units — one per line, except fenced code blocks which
+  // are collapsed into a single atomic entry (see segmentLines) so a diff can
+  // never split a fence's opening/closing markers across separate hunks.
+  // segmentLines also normalizes line endings (git returns \n, but files on
+  // Windows may use \r\n — without normalizing, every line would appear
+  // changed due to trailing \r mismatch).
+  const oldLines = segmentLines(oldText);
+  const newLines = segmentLines(newText);
 
   // Trim the common prefix and suffix before running the O(m*n) LCS. For the
   // typical case (a small change inside a large file) this collapses the DP to

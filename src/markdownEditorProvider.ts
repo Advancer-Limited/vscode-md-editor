@@ -96,15 +96,23 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
               this.cursorOffsets.set(document.uri.toString(), message.cursorOffset);
             }
             const currentText = document.getText();
-            if (currentText === message.text) {
+            // message.text always uses \n line endings (it comes from an HTML
+            // textarea / Turndown output in the webview). On a CRLF document,
+            // comparing/diffing against that raw text makes computeMinimalEdit
+            // see the entire body as changed on every single keystroke — expand
+            // it back to the document's actual EOL style first.
+            const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+            const incomingText = eol === '\n' ? message.text : message.text.replace(/\r?\n/g, eol);
+            if (currentText === incomingText) {
+              webviewPanel.webview.postMessage({ type: 'editAck' });
               return;
             }
             applyingEdits++;
-            lastAppliedText = message.text;
+            lastAppliedText = incomingText;
             // Apply the smallest ranged edit rather than replacing the whole
             // document: this keeps undo granular and doesn't disturb cursor or
             // scroll state in a parallel raw text editor of the same document.
-            const minimal = computeMinimalEdit(currentText, message.text);
+            const minimal = computeMinimalEdit(currentText, incomingText);
             const edit = new vscode.WorkspaceEdit();
             edit.replace(
               document.uri,
@@ -120,6 +128,10 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             } finally {
               applyingEdits--;
             }
+            // Ack before any corrective updateWebview() below, so the webview
+            // doesn't mistake the correction for a stale/in-flight echo and
+            // skip rendering it (see editsInFlight handling in editor.js).
+            webviewPanel.webview.postMessage({ type: 'editAck' });
             if (!applied) {
               // The edit was rejected (e.g. a concurrent modification). The
               // webview now shows text that never reached the document — push
@@ -244,6 +256,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const tableRulesUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'turndownTableRules.js')
     );
+    const mermaidUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'mermaid.min.js')
+    );
 
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -306,6 +321,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   <script nonce="${nonce}" src="${markdownItUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${turndownUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${tableRulesUri}?v=${cacheBust}"></script>
+  <script nonce="${nonce}" src="${mermaidUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${scriptUri}?v=${cacheBust}"></script>
 </body>
 </html>`;

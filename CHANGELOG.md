@@ -2,6 +2,27 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [0.3.0] - 2026-07-18
+
+### Added
+
+- **Mermaid diagrams** — `\`\`\`mermaid` fences render as live diagrams in the WYSIWYG/split preview (read-only there — edit the source in Raw/Split mode). Rendered SVG is cached so unrelated re-renders don't re-invoke Mermaid, and invalid syntax shows an inline error while keeping the last valid render.
+- **`.mmd`/`.mermaid` editor** — opening a Mermaid source file directly now uses a dedicated forced-split editor (source + live preview), independent of the markdown editor.
+- **Task checklists** — GFM `- [ ] task` / `- [x] task` render as clickable checkboxes in the preview and toggle back to `[ ]`/`[x]` in the markdown source.
+- Diff view and the markdown editor now fully support `.markdown` (not just `.md`) — wikilinks, the file index/graph, and diff commands all recognize it.
+
+### Fixed
+
+- **WYSIWYG cursor jump, for real this time.** The caret position was tracked as a single character offset across the whole preview, which is ambiguous exactly at block boundaries (e.g. right after pressing Enter into a new empty paragraph) — the most common case where earlier fixes (0.2.1, 0.2.4) had already reduced *how often* a caret restore ran, but not the underlying offset math. Replaced with a block-anchored position that removes the ambiguity structurally.
+- A debounced webview edit still in flight to the extension host could be silently overwritten by a stale update racing it.
+- CRLF-line-ending files had their entire body rewritten on the very first keystroke.
+- **"Compare with Saved" was actually comparing against the last commit (HEAD), not the saved file** — now correctly diffs against what's on disk.
+- The diff viewer no longer splits a fenced code block (including a Mermaid diagram) across separate hunks when only an interior line changed — a changed block now always renders as one complete removed block plus one complete added block.
+- A code block containing a shell-style `$(...)` or similar could corrupt neighboring preview text due to a `String.replace()` special-pattern interpretation bug.
+- Grammar-check highlighting could mark (and apply a suggested fix to) the wrong occurrence of a repeated phrase.
+- A clicked grammar-fix suggestion could be silently lost if another edit was in flight at the same moment.
+- Hardened the preview's HTML sanitizer against case variation and embedded control characters in `javascript:`-style URLs, and extended the check beyond `href` to `src`/`xlink:href`/`formaction`/`poster`.
+
 ## [0.2.4] - 2026-07-09
 
 ### Fixed

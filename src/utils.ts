@@ -36,6 +36,16 @@ export function debounce(fn: (...args: any[]) => any, delayMs: number): (...args
 }
 
 /**
+ * Case-insensitively test whether a path (or URI fsPath) has a markdown
+ * extension — `.md` or `.markdown`. The extension's customEditors selector
+ * (package.json) claims both extensions, so anything gating markdown-only
+ * behavior (wikilinks, the file index, graph, diff) must recognize both too.
+ */
+export function isMarkdownFile(filePath: string): boolean {
+  return /\.(md|markdown)$/i.test(filePath);
+}
+
+/**
  * Get the filename stem (without extension) from a path.
  */
 export function getFileStem(filePath: string): string {

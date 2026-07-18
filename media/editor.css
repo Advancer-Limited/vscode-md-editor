@@ -242,6 +242,37 @@ html, body {
   padding: 0;
 }
 
+.markdown-body .mermaid-block {
+  margin: 1em 0;
+  text-align: center;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.markdown-body .mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-body .mermaid-block.mermaid-stale {
+  opacity: 0.55;
+}
+
+.mermaid-pending {
+  opacity: 0.6;
+  font-style: italic;
+  padding: 8px;
+}
+
+.mermaid-error {
+  color: var(--vscode-errorForeground, #f44747);
+  border: 1px dashed currentColor;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 0.9em;
+  text-align: left;
+}
+
 .markdown-body blockquote {
   border-left: 3px solid var(--focus-border);
   padding-left: 16px;
@@ -309,6 +340,15 @@ html, body {
 /* Checkbox support for task lists */
 .markdown-body input[type="checkbox"] {
   margin-right: 6px;
+}
+
+.markdown-body li.task-list-item {
+  list-style: none;
+  margin-left: -1.5em;
+}
+
+.markdown-body .task-checkbox {
+  cursor: pointer;
 }
 
 /* =============================================
