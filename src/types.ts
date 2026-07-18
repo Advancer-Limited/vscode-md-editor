@@ -158,6 +158,20 @@ export type FullGraphToExtensionMessage =
   | { type: 'requestRefresh' };
 
 // ========================================
+// Mermaid Diagram Editor Types
+// ========================================
+
+/** Messages from extension host -> mermaid editor webview */
+export type MermaidEditorToWebviewMessage =
+  | { type: 'update'; text: string }
+  | { type: 'editAck' };
+
+/** Messages from mermaid editor webview -> extension host */
+export type MermaidWebviewToExtensionMessage =
+  | { type: 'ready' }
+  | { type: 'edit'; text: string };
+
+// ========================================
 // Extension Configuration
 // ========================================
 
