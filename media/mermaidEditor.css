@@ -1,0 +1,113 @@
+/* =============================================
+   Root variables - adapt to VS Code theme
+   (mirrors media/editor.css's variable names)
+   ============================================= */
+:root {
+  --editor-bg: var(--vscode-editor-background, #1e1e1e);
+  --editor-fg: var(--vscode-editor-foreground, #d4d4d4);
+  --border-color: var(--vscode-panel-border, #444);
+  --focus-border: var(--vscode-focusBorder, #007fd4);
+  --font-family: var(--vscode-editor-font-family, 'Consolas', 'Courier New', monospace);
+  --font-size: var(--vscode-editor-font-size, 14px);
+  --preview-font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--editor-bg);
+  color: var(--editor-fg);
+  font-family: var(--preview-font-family);
+}
+
+/* =============================================
+   Container — always split, no view-toggle modes
+   ============================================= */
+.mmd-container {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* =============================================
+   Editor Pane
+   ============================================= */
+.mmd-editor-pane {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.mmd-editor-pane textarea {
+  width: 100%;
+  height: 100%;
+  background: var(--editor-bg);
+  color: var(--editor-fg);
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 16px;
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  line-height: 1.6;
+  tab-size: 4;
+  -moz-tab-size: 4;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.mmd-editor-pane textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground, #888);
+}
+
+/* =============================================
+   Divider (draggable)
+   ============================================= */
+.mmd-divider {
+  width: 4px;
+  background: var(--border-color);
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.mmd-divider:hover, .mmd-divider.dragging {
+  background: var(--focus-border);
+}
+
+/* =============================================
+   Preview Pane
+   ============================================= */
+.mmd-preview-pane {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  min-width: 0;
+}
+
+.mmd-preview-pane svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* =============================================
+   Error banner
+   ============================================= */
+.mmd-error {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  background: var(--vscode-inputValidation-errorBackground, rgba(190, 17, 0, 0.15));
+  color: var(--vscode-errorForeground, #f48771);
+  font-family: var(--font-family);
+  font-size: 12px;
+  white-space: pre-wrap;
+  border-radius: 3px;
+}

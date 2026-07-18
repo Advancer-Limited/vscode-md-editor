@@ -22,6 +22,10 @@ const vendorFiles = [
     src: path.join(__dirname, '..', 'node_modules', 'force-graph', 'dist', 'force-graph.min.js'),
     dest: path.join(destDir, 'force-graph.min.js'),
   },
+  {
+    src: path.join(__dirname, '..', 'node_modules', 'mermaid', 'dist', 'mermaid.min.js'),
+    dest: path.join(destDir, 'mermaid.min.js'),
+  },
 ];
 
 let missing = false;
