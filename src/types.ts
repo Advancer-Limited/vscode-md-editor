@@ -77,7 +77,11 @@ export type ExtensionToWebviewMessage =
   | { type: 'update'; text: string }
   | { type: 'setTheme'; theme: 'light' | 'dark' | 'auto' }
   | { type: 'wikilinkSuggestions'; suggestions: WikilinkSuggestion[] }
-  | { type: 'grammarResults'; matches: GrammarMatch[] };
+  | { type: 'grammarResults'; matches: GrammarMatch[] }
+  // Acknowledges a webview 'edit' message has been fully processed (applied
+  // or rejected) by the host, so the webview knows when it's safe to stop
+  // treating incoming 'update' messages as potentially stale.
+  | { type: 'editAck' };
 
 /** Messages from editor webview -> extension host */
 export type WebviewToExtensionMessage =

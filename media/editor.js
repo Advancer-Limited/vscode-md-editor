@@ -44,6 +44,12 @@
   let lastSentEditText = null;
   let localEditPending = false;
 
+  // Count of 'edit' messages posted to the host that haven't been
+  // acknowledged (via 'editAck') yet. While > 0, an incoming 'update' may be
+  // a stale snapshot racing an edit still in flight to the host — see
+  // 'update' handling below.
+  let editsInFlight = 0;
+
   // Stored frontmatter to preserve during contenteditable round-trips
   let currentFrontmatter = '';
 
@@ -100,7 +106,14 @@
   }
 
   /**
-   * Save caret position inside a contenteditable element as a plain-text character offset.
+   * Save caret position inside a contenteditable element as a block index
+   * (which top-level child of `element` the caret is in) plus a character
+   * offset within that block's own text. Anchoring within a single block —
+   * rather than a single global character offset over the whole preview —
+   * means content changes in *other* blocks (e.g. typographer/list-marker
+   * normalization elsewhere, or an async render landing in another block)
+   * can never shift this caret, and there is no ambiguity between "end of
+   * block A" and "start of block B" collapsing onto the wrong block.
    * Returns null if the selection is not inside the element.
    */
   function saveCaretPosition(element) {
@@ -108,12 +121,38 @@
     if (!sel || sel.rangeCount === 0) return null;
     const range = sel.getRangeAt(0);
     if (!element.contains(range.startContainer)) return null;
+    const start = locateInBlock(element, range.startContainer, range.startOffset);
+    if (!start) return null;
+    const end = locateInBlock(element, range.endContainer, range.endOffset) || start;
+    return { start, end };
+  }
+
+  /**
+   * Find which top-level child ("block") of `element` contains `container`,
+   * and the character offset within that block's own text content.
+   */
+  function locateInBlock(element, container, containerOffset) {
+    if (container === element) {
+      // Selection anchored directly on the container (e.g. clicking into
+      // empty space below the last block) — containerOffset is a child index.
+      const blockIndex = Math.max(0, Math.min(containerOffset, element.childNodes.length - 1));
+      return { blockIndex, offset: 0 };
+    }
+    let block = container;
+    while (block.parentNode && block.parentNode !== element) {
+      block = block.parentNode;
+    }
+    if (!block.parentNode) return null; // container isn't actually inside element
+    const blockIndex = Array.prototype.indexOf.call(element.childNodes, block);
+    if (blockIndex === -1) return null;
     const pre = document.createRange();
-    pre.selectNodeContents(element);
-    pre.setEnd(range.startContainer, range.startOffset);
-    const start = pre.toString().length;
-    pre.setEnd(range.endContainer, range.endOffset);
-    return { start, end: pre.toString().length };
+    pre.selectNodeContents(block);
+    try {
+      pre.setEnd(container, containerOffset);
+    } catch (_) {
+      return { blockIndex, offset: 0 };
+    }
+    return { blockIndex, offset: pre.toString().length };
   }
 
   /**
@@ -123,39 +162,12 @@
   function restoreCaretPosition(element, saved) {
     if (!saved) return;
     try {
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      let offset = 0;
-      let startNode = null, startOff = 0;
-      let endNode = null, endOff = 0;
-      let lastNode = null;
-      let node;
-      while ((node = walker.nextNode())) {
-        lastNode = node;
-        const len = node.textContent.length;
-        if (startNode === null && offset + len >= saved.start) {
-          startNode = node;
-          startOff = saved.start - offset;
-        }
-        if (offset + len >= saved.end) {
-          endNode = node;
-          endOff = saved.end - offset;
-          break;
-        }
-        offset += len;
-      }
-      // Saved offset is past the end of the (now shorter) content — collapse the
-      // caret to the end of the last text node rather than dropping it to start.
-      if (!startNode) {
-        if (!lastNode) return;
-        startNode = lastNode;
-        startOff = lastNode.textContent.length;
-      }
+      const s = resolveBlockPosition(element, saved.start);
+      if (!s) return;
+      const e = saved.end ? resolveBlockPosition(element, saved.end) : s;
       const range = document.createRange();
-      range.setStart(startNode, Math.min(startOff, startNode.textContent.length));
-      range.setEnd(
-        endNode || startNode,
-        Math.min(endOff, (endNode || startNode).textContent.length)
-      );
+      range.setStart(s.node, s.offset);
+      range.setEnd((e || s).node, (e || s).offset);
       const sel = window.getSelection();
       if (sel) {
         sel.removeAllRanges();
@@ -164,6 +176,42 @@
     } catch (_) {
       // Fail silently — better no restore than a crash
     }
+  }
+
+  /**
+   * Resolve a { blockIndex, offset } bookmark to a concrete DOM node + offset.
+   * The block index is clamped to the current child count (blocks may have
+   * been added/removed elsewhere in the document). Within the block, walks
+   * text nodes to find the saved offset, clamping to the block's end if it's
+   * now shorter (e.g. markdown-it/typographer normalization removed a
+   * character) and anchoring directly on the block element if it has no text
+   * nodes at all (e.g. an empty `<p><br></p>` from pressing Enter — there is
+   * no text node to walk to, but setStart(emptyBlock, 0) is a valid caret
+   * position inside it).
+   */
+  function resolveBlockPosition(element, saved) {
+    if (element.childNodes.length === 0) return null;
+    const blockIndex = Math.min(saved.blockIndex, element.childNodes.length - 1);
+    const block = element.childNodes[blockIndex];
+    if (block.nodeType === Node.TEXT_NODE) {
+      return { node: block, offset: Math.min(saved.offset, block.textContent.length) };
+    }
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let acc = 0;
+    let node;
+    let last = null;
+    while ((node = walker.nextNode())) {
+      const len = node.textContent.length;
+      if (saved.offset <= acc + len) {
+        return { node, offset: saved.offset - acc };
+      }
+      acc += len;
+      last = node;
+    }
+    if (!last) {
+      return { node: block, offset: 0 };
+    }
+    return { node: last, offset: last.textContent.length };
   }
 
   /**
@@ -197,12 +245,20 @@
         // git, grammar fix, etc.). This replaces the old isContentEditableUpdate
         // flag, which could get stuck and silently drop external updates.
         const isEcho = text === textarea.value || text === lastSentEditText;
-        if (!isEcho && localEditPending) {
-          // A newer local edit is still debounce-pending (or in flight to the
-          // host). Rendering this older snapshot would clobber the user's
-          // latest keystrokes and yank the caret. Skip it — the pending edit
-          // will replace the document momentarily (last-writer-wins), and any
-          // genuine external change will arrive again after that settles.
+        if (isEcho) {
+          // Consume it — otherwise a later genuine external change that
+          // happens to match this exact text (e.g. `git checkout` reverting
+          // to precisely what was last typed) would be misclassified as
+          // another echo and silently dropped instead of rendered.
+          lastSentEditText = null;
+        }
+        if (!isEcho && (localEditPending || editsInFlight > 0)) {
+          // A newer local edit is still debounce-pending, or already posted to
+          // the host but not yet acknowledged. Rendering this older snapshot
+          // would clobber the user's latest keystrokes and yank the caret. Skip
+          // it — the pending/in-flight edit will replace the document
+          // momentarily (last-writer-wins), and any genuine external change
+          // will arrive again after that settles.
           updateStatusBar();
           break;
         }
@@ -217,6 +273,10 @@
           renderPreview(text);
         }
         updateStatusBar();
+        break;
+      }
+      case 'editAck': {
+        editsInFlight = Math.max(0, editsInFlight - 1);
         break;
       }
       case 'wikilinkSuggestions': {
@@ -271,6 +331,7 @@
     debounceTimer = setTimeout(() => {
       localEditPending = false;
       lastSentEditText = text;
+      editsInFlight++;
       vscode.postMessage({ type: 'edit', text: text, cursorOffset: textarea.selectionStart });
     }, 50);
   });
@@ -312,6 +373,7 @@
     contentEditableDebounce = setTimeout(() => {
       localEditPending = false;
       lastSentEditText = markdown;
+      editsInFlight++;
       vscode.postMessage({ type: 'edit', text: markdown, cursorOffset: previewCaretOffset });
     }, 100);
 
@@ -330,6 +392,10 @@
   previewContent.addEventListener('compositionend', () => {
     isComposing = false;
     syncContentEditable();
+    if (grammarRefreshPending) {
+      grammarRefreshPending = false;
+      refreshGrammarHighlights();
+    }
   });
 
   // Handle Tab key - insert tab instead of moving focus
@@ -523,6 +589,8 @@
         const bodyMarkdown = turndownService.turndown(previewContent.innerHTML);
         const markdown = currentFrontmatter + bodyMarkdown;
         textarea.value = markdown;
+        lastSentEditText = markdown;
+        editsInFlight++;
         vscode.postMessage({ type: 'edit', text: markdown });
       } else {
         const start = textarea.selectionStart;
@@ -1157,6 +1225,10 @@
     previewContent.normalize();
   }
 
+  // True while a refreshGrammarHighlights() call was deferred because an IME
+  // composition was in progress; replayed once the composition commits.
+  let grammarRefreshPending = false;
+
   /**
    * Re-apply grammar highlights to the live DOM without re-rendering markdown.
    * Wrapping/unwrapping spans never changes the element's text content, so the
@@ -1164,6 +1236,19 @@
    * renderPreview() which rebuilds innerHTML from (possibly normalized) markdown.
    */
   function refreshGrammarHighlights() {
+    if (isComposing) {
+      // Unwrapping/rewrapping spans calls normalize() and surroundContents(),
+      // which mutate text nodes out from under an in-progress IME composition
+      // and would corrupt it (and teleport the caret). Defer to compositionend.
+      grammarRefreshPending = true;
+      return;
+    }
+    if (currentGrammarMatches.length === 0 && !previewContent.querySelector('span.grammar-error')) {
+      // Nothing to add and nothing to clear. This is the common case — most
+      // incremental checks come back clean — and previously still paid for a
+      // full caret save/restore cycle on every one of them while the user types.
+      return;
+    }
     const savedCaret = isPreviewMode() ? saveCaretPosition(previewContent) : null;
     hideGrammarTooltip();
     clearGrammarHighlights();
