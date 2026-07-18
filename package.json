@@ -54,6 +54,19 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.mermaid",
+        "displayName": "Mermaid Diagram Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.mmd"
+          },
+          {
+            "filenamePattern": "*.mermaid"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "commands": [

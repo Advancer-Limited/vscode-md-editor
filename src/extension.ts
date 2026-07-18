@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { MarkdownEditorProvider } from './markdownEditorProvider.js';
+import { MermaidEditorProvider } from './mermaidEditorProvider.js';
 import { LanguageToolService } from './languageToolService.js';
 import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
 import { LanguageToolCodeActionProvider } from './codeActionsProvider.js';
@@ -26,6 +27,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerCustomEditorProvider(
       MarkdownEditorProvider.viewType,
       provider,
+      {
+        webviewOptions: { retainContextWhenHidden: true },
+        supportsMultipleEditorsPerDocument: false,
+      }
+    )
+  );
+
+  // 2b. Register the Mermaid diagram editor (self-contained, independent of
+  // the markdown editor above).
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      MermaidEditorProvider.viewType,
+      new MermaidEditorProvider(context),
       {
         webviewOptions: { retainContextWhenHidden: true },
         supportsMultipleEditorsPerDocument: false,
