@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { parseWikilinks, resolveWikilinkTarget, parseTags, WikilinkOccurrence } from './wikilinkParser.js';
-import { getFileStem } from '../utils.js';
+import { getFileStem, isMarkdownFile } from '../utils.js';
 
 /** Metadata for a single .md file in the index. */
 export interface FileEntry {
@@ -49,7 +49,7 @@ export class FileIndexService implements vscode.Disposable {
     // is idempotent, so any overlap with the scan is harmless.
     this.registerWatchers();
 
-    const uris = await vscode.workspace.findFiles('**/*.md', '**/node_modules/**');
+    const uris = await vscode.workspace.findFiles('**/*.{md,markdown}', '**/node_modules/**');
 
     // Process in batches to avoid overwhelming the file system
     const batchSize = 50;
@@ -65,7 +65,7 @@ export class FileIndexService implements vscode.Disposable {
     // Incremental update on save
     this.disposables.push(
       vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.languageId === 'markdown' || doc.uri.fsPath.endsWith('.md')) {
+        if (doc.languageId === 'markdown' || isMarkdownFile(doc.uri.fsPath)) {
           this.indexFile(doc.uri, doc.getText()).then(() => {
             this._onDidUpdateIndex.fire();
           });
@@ -76,7 +76,7 @@ export class FileIndexService implements vscode.Disposable {
     // File creation
     this.disposables.push(
       vscode.workspace.onDidCreateFiles(e => {
-        const mdFiles = e.files.filter(f => f.fsPath.endsWith('.md'));
+        const mdFiles = e.files.filter(f => isMarkdownFile(f.fsPath));
         if (mdFiles.length > 0) {
           Promise.all(mdFiles.map(uri => this.indexFile(uri))).then(() => {
             this._onDidUpdateIndex.fire();
@@ -90,7 +90,7 @@ export class FileIndexService implements vscode.Disposable {
       vscode.workspace.onDidDeleteFiles(e => {
         let changed = false;
         for (const uri of e.files) {
-          if (uri.fsPath.endsWith('.md')) {
+          if (isMarkdownFile(uri.fsPath)) {
             this.removeFromIndex(uri);
             changed = true;
           }
@@ -106,9 +106,9 @@ export class FileIndexService implements vscode.Disposable {
       vscode.workspace.onDidRenameFiles(e => {
         const indexPromises: Promise<void>[] = [];
         for (const { oldUri, newUri } of e.files) {
-          if (oldUri.fsPath.endsWith('.md') || newUri.fsPath.endsWith('.md')) {
+          if (isMarkdownFile(oldUri.fsPath) || isMarkdownFile(newUri.fsPath)) {
             this.removeFromIndex(oldUri);
-            if (newUri.fsPath.endsWith('.md')) {
+            if (isMarkdownFile(newUri.fsPath)) {
               indexPromises.push(this.indexFile(newUri));
             }
           }
@@ -124,7 +124,7 @@ export class FileIndexService implements vscode.Disposable {
     // Debounced update on text change (for live backlink updates before save)
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument(e => {
-        if (e.document.languageId === 'markdown' || e.document.uri.fsPath.endsWith('.md')) {
+        if (e.document.languageId === 'markdown' || isMarkdownFile(e.document.uri.fsPath)) {
           if (e.contentChanges.length === 0) {
             return;
           }
