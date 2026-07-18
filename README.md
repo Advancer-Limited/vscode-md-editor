@@ -1,17 +1,19 @@
 # VS Code MD Editor
 
-A rich Markdown editor extension for Visual Studio Code with split preview, [[wikilinks]], force-directed link graph, version diff, and LanguageTool grammar checking.
+A rich Markdown editor extension for Visual Studio Code with split preview, [[wikilinks]], Mermaid diagrams, task checklists, a force-directed link graph, version diff, and LanguageTool grammar checking.
 
 ## Features
 
 - **WYSIWYG Editing** — Edit markdown in a rich preview with contenteditable, or switch to split view or raw markdown mode.
+- **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode); a dedicated split-view editor also opens `.mmd`/`.mermaid` files directly, with live rendering and an inline error banner for invalid syntax.
+- **Task Checklists** — GFM `- [ ] task` / `- [x] task` checkboxes render as clickable checkboxes in the preview and toggle directly in the markdown source. Handy for spec-driven workflows (e.g. GitHub Spec Kit `tasks.md` files).
 - **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
 - **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
 - **Markdown Links Sidebar** — File list showing all markdown files with their incoming/outgoing links, plus a "Show Graph" button.
 - **Interactive Link Graph** — Full-screen force-directed graph with Obsidian-style controls (filters, display options, force tuning), drag-to-pin, and zoom.
 - **LanguageTool Integration** — Grammar and spelling checking powered by LanguageTool, with inline highlights and quick-fix suggestions. Works with the free API or a Premium account.
-- **Version Diff** — Compare your markdown file against previous git commits in a rendered diff viewer with green/red change highlighting.
-- **Rename Propagation** — Renaming a `.md` file automatically updates all wikilink references across your workspace.
+- **Version Diff** — Compare your markdown file against previous git commits in a rendered diff viewer with green/red change highlighting. Fenced code blocks (including Mermaid diagrams) always diff as a whole block, never split mid-fence.
+- **Rename Propagation** — Renaming a `.md`/`.markdown` file automatically updates all wikilink references across your workspace.
 
 ## Installation
 
@@ -41,6 +43,16 @@ Then press `F5` in VS Code to launch the Extension Development Host.
 3. Type `[[` to get autocomplete suggestions for linking to other markdown files.
 4. Open the **Markdown Links** sidebar to see backlinks and the link graph.
 
+### Mermaid Diagrams
+
+Write a `\`\`\`mermaid` fenced code block and it renders as a live diagram wherever the preview is visible (WYSIWYG or Split). The rendered diagram is read-only — click into Raw or Split mode to edit its source, and the preview updates as you type. Invalid syntax shows an inline error without losing the last valid render.
+
+Opening a `.mmd` or `.mermaid` file directly uses a dedicated split-view editor (source on the left, live diagram on the right) instead of the full markdown editor.
+
+### Task Checklists
+
+`- [ ] some task` and `- [x] done task` lines render as checkboxes in the preview. Click a checkbox to toggle it — the change is written straight back to the markdown source as `[ ]`/`[x]`.
+
 ### Comparing Versions
 
 Compare your markdown files against previous git commits:
@@ -48,10 +60,10 @@ Compare your markdown files against previous git commits:
 - **Command Palette** (`Ctrl+Shift+P` / `Cmd+Shift+P`):
   - **Compare with Previous Version** — Diff against the most recent commit that changed this file.
   - **Compare with Commit...** — Pick from a list of recent commits with hash, message, author, and date.
-  - **Compare with Saved** — Diff your working changes against the last committed version (HEAD).
-- **Right-click** any `.md` file in the Explorer for quick access to diff commands.
+  - **Compare with Saved** — Diff your unsaved working changes against the file as it currently is on disk.
+- **Right-click** any `.md`/`.markdown` file in the Explorer for quick access to diff commands.
 
-The diff opens in a rendered webview panel with green highlighting for additions and red strikethrough for deletions.
+The diff opens in a rendered webview panel with green highlighting for additions and red strikethrough for deletions. Fenced code blocks (including Mermaid diagrams) always diff as a single atomic block, never split across separate hunks.
 
 ## Commands
 
@@ -59,7 +71,7 @@ The diff opens in a rendered webview panel with green highlighting for additions
 | ------- | ----------- |
 | `Markdown Editor: Compare with Previous Version` | Diff against the last commit that changed this file |
 | `Markdown Editor: Compare with Commit...` | Pick a commit from file history and diff against it |
-| `Markdown Editor: Compare with Saved` | Diff working changes against HEAD |
+| `Markdown Editor: Compare with Saved` | Diff working changes against the on-disk saved file |
 | `Markdown Editor: Check Grammar with LanguageTool` | Run grammar and spelling check |
 | `Markdown Editor: Open with VS Code MD Editor` | Open a `.md` file in the custom editor |
 | `Markdown Editor: Show Link Graph` | Focus the Markdown Links sidebar |
