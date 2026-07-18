@@ -151,17 +151,15 @@ export function parseWikilinks(text: string): WikilinkOccurrence[] {
 
 /**
  * Resolve a wikilink target to a workspace-relative path.
- * Case-insensitive lookup. Strips .md extension if the user typed it.
+ * Case-insensitive lookup. Strips a .md or .markdown extension if the user typed it.
  */
 export function resolveWikilinkTarget(
   target: string,
   stemToPath: Map<string, string>
 ): string | undefined {
   let normalized = target.trim().toLowerCase();
-  // Strip .md extension if present
-  if (normalized.endsWith('.md')) {
-    normalized = normalized.slice(0, -3);
-  }
+  // Strip .md/.markdown extension if present
+  normalized = normalized.replace(/\.(md|markdown)$/, '');
   return stemToPath.get(normalized);
 }
 

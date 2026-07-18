@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { MarkdownEditorProvider } from './markdownEditorProvider.js';
+import { isMarkdownFile } from './utils.js';
 import { LanguageToolService } from './languageToolService.js';
 import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
 import { LanguageToolCodeActionProvider } from './codeActionsProvider.js';
@@ -150,7 +151,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // 8. Helper: get active file URI/path
   const getActiveFileUri = (): vscode.Uri | undefined => {
     const textEditor = vscode.window.activeTextEditor;
-    if (textEditor && textEditor.document.uri.fsPath.endsWith('.md')) {
+    if (textEditor && isMarkdownFile(textEditor.document.uri.fsPath)) {
       return textEditor.document.uri;
     }
     return provider.getActiveDocument()?.uri;
@@ -351,15 +352,20 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // "Compare with Saved" — diff HEAD version against current working content
+  // "Compare with Saved" — diff the on-disk saved file against current
+  // (possibly unsaved) working content. This is deliberately NOT a git
+  // comparison: a file can have committed changes plus further saved-but-
+  // uncommitted edits, and "Compare with Saved" means "vs what's on disk
+  // right now," not "vs the last commit" (that's diffWithPrevious/diffWithCommit).
   context.subscriptions.push(
     vscode.commands.registerCommand('vscodeMdEditor.diffWithSaved', async () => {
       try {
         const ctx = await resolveDiffContext();
         if (!ctx) return;
 
-        const oldContent = await diffService.getFileContentAtCommit(ctx.repoRoot, ctx.relativePath, 'HEAD');
-        MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (HEAD) ↔ Working`);
+        const bytes = await vscode.workspace.fs.readFile(ctx.fileUri);
+        const oldContent = Buffer.from(bytes).toString('utf-8');
+        MarkdownDiffPanel.show(context, oldContent, ctx.currentContent, `${ctx.filename} (Saved) ↔ Working`);
       } catch (err) {
         vscode.window.showErrorMessage(`Failed to compare: ${err instanceof Error ? err.message : String(err)}`);
       }

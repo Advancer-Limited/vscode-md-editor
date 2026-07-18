@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { FileIndexService } from './fileIndexService.js';
-import { getFileStem } from '../utils.js';
+import { getFileStem, isMarkdownFile } from '../utils.js';
 import { findWikilinkStemRanges } from './wikilinkParser.js';
 
 /**
@@ -15,7 +15,7 @@ export async function handleWillRenameFiles(
   const edit = new vscode.WorkspaceEdit();
 
   for (const { oldUri, newUri } of event.files) {
-    if (!oldUri.fsPath.endsWith('.md')) {
+    if (!isMarkdownFile(oldUri.fsPath)) {
       continue;
     }
 
