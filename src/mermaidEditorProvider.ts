@@ -302,6 +302,9 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
     const syntaxUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'mermaidSyntax.js')
     );
+    const completionsUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'mermaidCompletions.js')
+    );
 
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -320,6 +323,11 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
 <body>
   <div class="mmd-container" id="mmd-container">
     <div class="mmd-editor-pane" id="mmd-editor-pane">
+      <div class="mmd-toolbar mmd-source-toolbar" id="mmd-source-toolbar">
+        <button id="mmd-template" title="Insert a starter diagram">Template</button>
+        <span class="mmd-toolbar-separator"></span>
+        <div class="mmd-snippets" id="mmd-snippets"></div>
+      </div>
       <div class="mmd-editor-stack" id="mmd-editor-stack">
         <pre class="mmd-highlight" id="mmd-highlight" aria-hidden="true"><code id="mmd-highlight-code"></code></pre>
         <textarea id="mmd-input"
@@ -350,6 +358,7 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
   </div>
   <script nonce="${nonce}" src="${mermaidUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${syntaxUri}?v=${cacheBust}"></script>
+  <script nonce="${nonce}" src="${completionsUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${scriptUri}?v=${cacheBust}"></script>
 </body>
 </html>`;

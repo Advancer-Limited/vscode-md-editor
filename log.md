@@ -502,3 +502,22 @@ Before touching anything, captured a 14-check behavioral suite against the *exis
 
 ### Verification
 66 unit tests, 14 behavioral regression, 23 new-feature Playwright, 7 review-fix Playwright — all passing; `check-types` and `compile` clean.
+
+## 2026-07-19 — Mermaid authoring assistance (toolbox + completions)
+
+Follow-on to the mermaid editor overhaul. Same method: pure logic extracted to a UMD module for the Node test runner, DOM work in the webview, and the existing Playwright suites re-run as a regression gate before anything else.
+
+### What was built
+- `media/mermaidCompletions.js` — diagram templates, the context-aware snippet palette, the node-id scanner and the completion engine. No DOM access, so it is unit tested directly (28 tests).
+- **Template gallery** (8 starter diagrams) — the highest value-per-effort item: it solves "I can never remember mermaid syntax" outright. Replacing a non-empty document asks for confirmation first.
+- **Snippet palette**, rebuilt only when the detected diagram type changes (avoids DOM churn on every keystroke).
+- **Completion overlay** — VS Code's CompletionItemProvider does not apply to a textarea in a webview, so this is a custom overlay modelled on the markdown editor's `[[wikilink]]` autocomplete. Offers node ids after an arrow (the standout: a typo'd node id doesn't error in mermaid, it silently creates an orphan), plus diagram types, directions, keywords and arrows.
+- All insertion goes through `document.execCommand('insertText')` so the browser's native undo stack survives and a real `input` event fires — which is what drives the existing highlight refresh, render debounce and document sync. Assigning `textarea.value` directly would break undo AND fire no event, silently desyncing the document. There is a manual splice + synthetic event fallback in case execCommand is ever removed.
+
+### Bugs caught during verification
+1. **Completion list closed the instant it opened.** The `scroll` handler hid it, and typing itself scrolls the textarea to keep the caret visible. Fixed by repositioning on scroll instead of hiding — which is the better behavior anyway.
+2. **Overlay swallowed toolbar clicks** (caught by the *existing* feature suite, not the new one — the regression gate earning its keep). The overlay clamped to the window edge, so a long line pushed it over the preview pane where it covered the toolbar. Now clamped to the source pane, plus an outside-mousedown dismiss.
+3. **Layout broken — caught only by looking at a screenshot, with all 61 automated checks passing.** `.mmd-editor-pane` is `display: flex` with default row direction, so the new source toolbar became a row-sibling and squeezed the text into a one-character-wide strip. Fixed with `flex-direction: column` (+ `min-height: 0` on the stack instead of `height: 100%`, which would now overflow by the toolbar's height). A good reminder that behavioral tests keyed on element IDs say nothing about whether the thing is usable.
+
+### Verification
+94 unit tests (66 existing + 28 new); 61 Playwright checks (14 behavioral regression, 23 feature, 7 review-fix, 17 new toolbox/completions); check-types and compile clean.
