@@ -521,3 +521,28 @@ Follow-on to the mermaid editor overhaul. Same method: pure logic extracted to a
 
 ### Verification
 94 unit tests (66 existing + 28 new); 61 Playwright checks (14 behavioral regression, 23 feature, 7 review-fix, 17 new toolbox/completions); check-types and compile clean.
+
+## 2026-07-19 — glTF 3D viewer
+
+Designed by a Fable subagent, built by a Sonnet subagent in an isolated worktree, then independently verified and reviewed here.
+
+### Key design decisions (from the spec)
+- **`.gltf` only for v1.** `.glb` is binary — a `CustomTextEditorProvider` would show mojibake and corrupt it on save. Supporting it needs a separate `CustomReadonlyEditorProvider`; the whole viewer half is reusable when we do.
+- **three.js cannot be file-copied like mermaid.** It removed its UMD builds at r160/r161 and ships ESM only; `examples/jsm` (GLTFLoader, OrbitControls) has been ESM-only since r148. Solved with a *second, parallel* esbuild context producing an IIFE global (`media/three-bundle.js`, 778KB), leaving the extension-host build untouched. MIT licensed — commercially safe.
+- **Live re-render, not an Update button** — with a `JSON.parse` validity gate (the document is usually invalid mid-typing, so invalid states cost nothing), a semantic-identity skip so reformatting is free, and a 2MB size gate above which auto-render is disabled. An Update button always exists as a force path.
+- **Camera preservation is structural, not save/restore.** Renderer/scene/camera/OrbitControls are created once per webview lifetime; a reload only swaps the model subtree. The viewport therefore survives every reload by construction — the same insight as the mermaid editor's transform surviving `innerHTML` replacement.
+- **`connect-src` had to be added to the CSP** — GLTFLoader's FileLoader/ImageBitmapLoader use `fetch` for `.bin` buffers and textures. Easy to miss; would only fail on real multi-file models.
+
+### Build agent's deviations, all accepted
+- Passes the already-`JSON.parse`d object into `GLTFLoader.parse()` rather than the raw string: `parse()` does its own unguarded `JSON.parse` on a string, which throws *synchronously* and bypasses `onError`. Genuinely better than the spec.
+- Dedicated `THREE.LoadingManager` rather than the shared default, for isolation.
+- Added `loadCount` to the debug hook so tests can detect completion deterministically instead of via fixed timeouts.
+
+### Review finding fixed
+`lastRenderedJson` was recorded *before* the async load succeeded, so a glTF that parsed as JSON but failed to load would poison the identity cache: returning to that exact text later hit the skip path, which clears the error banner while the stale previous model is still displayed — a broken document silently presenting as fine. Now recorded only on success.
+
+### Verification note worth keeping
+My first camera-preservation test reported a failure that was **my test's bug, not the code's**: OrbitControls has damping enabled, so the camera keeps easing for a second or two after a drag, and I measured mid-settle. A controlled comparison (drift with reload vs drift over the same interval without one) gave 0.000000 vs 0.000022 — proving preservation exactly. The build agent had actually warned about this in its report. Lesson: when a test disagrees with a design claim, measure the control before believing either.
+
+### Verification
+107 unit tests (94 + 13 new); 6 glTF Playwright checks (render, camera preservation, GPU-leak accounting over 8 reloads, invalid-JSON keep-last-good); the mermaid behavioral suite re-run against the merged branch (14/14, no cross-feature regression); check-types and compile clean.

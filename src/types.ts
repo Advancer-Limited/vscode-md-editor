@@ -201,6 +201,22 @@ export type MermaidWebviewToExtensionMessage =
   | { type: 'print'; svg: string };
 
 // ========================================
+// glTF 3D Editor Types
+// ========================================
+
+/** Messages from extension host -> glTF editor webview */
+export type GltfEditorToWebviewMessage =
+  | { type: 'update'; text: string }
+  | { type: 'editAck' };
+
+/** Messages from glTF editor webview -> extension host */
+export type GltfWebviewToExtensionMessage =
+  | { type: 'ready' }
+  | { type: 'edit'; text: string }
+  /** Toolbar brand button — show the About dialog. */
+  | { type: 'showAbout' };
+
+// ========================================
 // Extension Configuration
 // ========================================
 
