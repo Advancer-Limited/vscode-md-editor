@@ -182,3 +182,11 @@
 - [ ] Evaluate D2 (`@terrastruct/d2`, MPL-2.0) as a second diagram renderer for architecture diagrams — needs `wasm-unsafe-eval` + `worker-src blob:` CSP additions, ~8MB bundle
 - [ ] AVOID PlantUML: core is GPL. An MIT-flavoured `@plantuml/core` build exists but is very new and its MIT-ness depends on the maintainer gating GPL paths each release — unacceptable risk given the intent to keep commercial options open
 - [ ] Clickable/editable mermaid diagrams in the markdown WYSIWYG view (currently read-only by design — Turndown round-trip would mangle an editable SVG)
+
+## 2026-07-19 Mermaid authoring assistance (PR #51)
+
+- [x] `media/mermaidCompletions.js` — templates, context-aware snippet palette, node-id scanner, completion engine (UMD, unit-testable) + 28 committed tests
+- [x] Template gallery: 8 starter diagrams (flowchart, sequence, class, state, ER, gantt, pie, mindmap) with placeholder selection
+- [x] Context-aware snippet palette that follows the detected diagram type
+- [x] IntelliSense-style completion overlay: node ids after arrows (the headline feature — a typo'd id silently creates an orphan node in mermaid), diagram types, directions, keywords, arrows
+- [x] Regression gate: all 44 pre-existing Playwright checks + 66 unit tests still pass

@@ -276,6 +276,15 @@
       exportPng(message.theme === 'light' ? 'light' : 'dark');
       return;
     }
+    if (message.type === 'templateReplaceConfirmed') {
+      const body = pendingTemplateBody;
+      pendingTemplateBody = null;
+      if (!body || !message.confirmed) return;
+      textarea.focus();
+      textarea.select(); // replace the whole document
+      insertSnippet(body);
+      return;
+    }
     if (message.type === 'update') {
       const text = normalizeEol(message.text);
       const isEcho = text === textarea.value || text === lastSentEditText;
@@ -300,6 +309,8 @@
       // overlay must be refreshed explicitly here.
       updateHighlight(text);
       highlightPre.scrollTop = textarea.scrollTop;
+      refreshSnippetPalette();
+      autocomplete.hide(); // the document changed underneath any open list
       renderDiagram(text);
     }
   });
@@ -311,6 +322,8 @@
     const text = textarea.value;
 
     updateHighlight(text);
+    refreshSnippetPalette();
+    refreshCompletions();
 
     clearTimeout(renderDebounce);
     renderDebounce = setTimeout(() => renderDiagram(text), 300);
@@ -727,6 +740,347 @@
   });
 
   // ================================================
+  // Authoring assistance: toolbox palette + completions
+  // ================================================
+  // @ts-ignore - MermaidCompletions loaded globally from mermaidCompletions.js
+  const completions = typeof MermaidCompletions !== 'undefined' ? MermaidCompletions : null;
+
+  const snippetsBar = document.getElementById('mmd-snippets');
+  const btnTemplate = document.getElementById('mmd-template');
+
+  /**
+   * Insert text at the caret, replacing any selection.
+   *
+   * Uses execCommand('insertText') so the browser keeps its native undo
+   * stack and fires a real `input` event — which is what drives the existing
+   * highlight refresh, render debounce and document-sync path. Assigning
+   * textarea.value directly would break undo AND fire no event, silently
+   * desyncing the document.
+   *
+   * @param {string} text
+   * @param {number} [selectStart] offset within `text` to select from
+   * @param {number} [selectEnd]
+   * @param {number} [replaceFrom] absolute offset to replace from (for completions)
+   */
+  function insertAtCaret(text, selectStart, selectEnd, replaceFrom) {
+    textarea.focus();
+    if (typeof replaceFrom === 'number' && replaceFrom < textarea.selectionStart) {
+      textarea.setSelectionRange(replaceFrom, textarea.selectionEnd);
+    }
+    const base = Math.min(textarea.selectionStart, textarea.selectionEnd);
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, text);
+    } catch (_) {
+      inserted = false;
+    }
+    if (!inserted) {
+      // execCommand is deprecated and could stop working; fall back to a
+      // manual splice plus a synthetic input event so sync still happens.
+      const start = base;
+      const end = Math.max(textarea.selectionStart, textarea.selectionEnd);
+      textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+      textarea.selectionStart = textarea.selectionEnd = start + text.length;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (typeof selectStart === 'number' && typeof selectEnd === 'number') {
+      textarea.setSelectionRange(base + selectStart, base + selectEnd);
+    }
+  }
+
+  /** Insert a snippet/template body, honouring its ${placeholder} and indent. */
+  function insertSnippet(body) {
+    if (!completions) return;
+    const caret = textarea.selectionStart;
+    const value = textarea.value;
+    let text = body;
+
+    // A multi-line snippet dropped mid-line would produce broken syntax —
+    // start it on its own line, indented to match the current one.
+    if (body.indexOf('\n') !== -1) {
+      const indent = completions.currentIndent(value, caret);
+      const atLineStart = caret === 0 || value[caret - 1] === '\n';
+      text = (atLineStart ? '' : '\n') + body.split('\n').join('\n' + indent);
+      // Trim the indent the join added to the trailing empty line.
+      text = text.replace(/\n[ \t]+$/, '\n');
+    }
+
+    const applied = completions.applyPlaceholders(text);
+    insertAtCaret(applied.text, applied.selectStart, applied.selectEnd);
+  }
+
+  /** Rebuild the snippet palette for the current diagram type. */
+  let renderedSnippetType = null;
+  function refreshSnippetPalette() {
+    if (!completions || !snippetsBar) return;
+    const type = completions.detectDiagramType(textarea.value);
+    if (type === renderedSnippetType) return; // avoid needless DOM churn per keystroke
+    renderedSnippetType = type;
+    snippetsBar.textContent = '';
+    for (const snippet of completions.getSnippets(textarea.value)) {
+      const btn = document.createElement('button');
+      btn.textContent = snippet.label;
+      btn.title = snippet.title;
+      btn.addEventListener('click', () => insertSnippet(snippet.body));
+      snippetsBar.appendChild(btn);
+    }
+  }
+
+  // --- Template gallery -------------------------------------------------
+  let templateMenu = null;
+  /** Template awaiting the host's replace-confirmation reply. */
+  let pendingTemplateBody = null;
+
+  function closeTemplateMenu() {
+    if (templateMenu) {
+      templateMenu.remove();
+      templateMenu = null;
+      document.removeEventListener('mousedown', onTemplateOutsideClick, true);
+    }
+  }
+
+  function onTemplateOutsideClick(e) {
+    if (templateMenu && !templateMenu.contains(e.target) && e.target !== btnTemplate) {
+      closeTemplateMenu();
+    }
+  }
+
+  function openTemplateMenu() {
+    if (!completions || !btnTemplate) return;
+    if (templateMenu) { closeTemplateMenu(); return; }
+
+    templateMenu = document.createElement('div');
+    templateMenu.className = 'mmd-menu';
+    templateMenu.setAttribute('role', 'menu');
+
+    for (const template of completions.TEMPLATES) {
+      const item = document.createElement('button');
+      item.className = 'mmd-menu-item';
+      item.setAttribute('role', 'menuitem');
+
+      const label = document.createElement('span');
+      label.className = 'mmd-menu-label';
+      label.textContent = template.label;
+      const desc = document.createElement('span');
+      desc.className = 'mmd-menu-desc';
+      desc.textContent = template.description;
+      item.appendChild(label);
+      item.appendChild(desc);
+
+      item.addEventListener('click', () => {
+        closeTemplateMenu();
+        if (textarea.value.trim()) {
+          // Replacing a non-empty document silently would destroy work, so
+          // confirm first — but via the host, because webviews are sandboxed
+          // without allow-modals: confirm()/alert() are blocked there (the
+          // same restriction that stops window.print(), see the Print
+          // handler above). A blocked confirm() returns false, which would
+          // make templates silently do nothing on any non-empty document.
+          pendingTemplateBody = template.body;
+          vscode.postMessage({ type: 'confirmTemplateReplace', label: template.label });
+          return;
+        }
+        textarea.focus();
+        insertSnippet(template.body);
+      });
+      templateMenu.appendChild(item);
+    }
+
+    const rect = btnTemplate.getBoundingClientRect();
+    templateMenu.style.top = rect.bottom + 4 + 'px';
+    templateMenu.style.left = rect.left + 'px';
+    document.body.appendChild(templateMenu);
+    // Capture phase, so the click that opened the menu doesn't immediately
+    // close it.
+    setTimeout(() => document.addEventListener('mousedown', onTemplateOutsideClick, true), 0);
+  }
+
+  btnTemplate?.addEventListener('click', openTemplateMenu);
+
+  // --- Completion overlay -----------------------------------------------
+  // VS Code's CompletionItemProvider only applies to real TextEditors, not a
+  // textarea in a webview, so this is a custom overlay — the same approach
+  // the markdown editor uses for [[wikilink]] autocomplete.
+  const autocomplete = (() => {
+    let isOpen = false;
+    let items = [];
+    let selectedIndex = 0;
+    let replaceFrom = 0;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'mmd-autocomplete';
+    overlay.style.display = 'none';
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('mousedown', (e) => {
+      const el = e.target.closest('.mmd-autocomplete-item');
+      if (!el) return;
+      e.preventDefault(); // keep focus in the textarea
+      selectedIndex = Number(el.dataset.index);
+      confirm();
+    });
+
+    function render() {
+      overlay.textContent = '';
+      items.forEach((item, i) => {
+        const row = document.createElement('div');
+        row.className = 'mmd-autocomplete-item' + (i === selectedIndex ? ' selected' : '');
+        row.dataset.index = String(i);
+
+        const kind = document.createElement('span');
+        kind.className = 'mmd-autocomplete-kind kind-' + item.kind;
+        kind.textContent = item.kind.charAt(0).toUpperCase();
+        const label = document.createElement('span');
+        label.className = 'mmd-autocomplete-label';
+        label.textContent = item.label;
+        const detail = document.createElement('span');
+        detail.className = 'mmd-autocomplete-detail';
+        detail.textContent = item.detail || '';
+
+        row.appendChild(kind);
+        row.appendChild(label);
+        row.appendChild(detail);
+        overlay.appendChild(row);
+      });
+    }
+
+    /** Position the overlay under the caret, approximated from line/column. */
+    function position() {
+      const before = textarea.value.slice(0, textarea.selectionStart);
+      const lines = before.split('\n');
+      const lineNum = lines.length - 1;
+      const col = lines[lines.length - 1].length;
+
+      const rect = textarea.getBoundingClientRect();
+      const style = getComputedStyle(textarea);
+      const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6;
+      const padTop = parseFloat(style.paddingTop) || 0;
+      const padLeft = parseFloat(style.paddingLeft) || 0;
+      // Monospace, so a single character's width is representative.
+      const charWidth = measureCharWidth(style);
+
+      let top = rect.top + padTop + (lineNum + 1) * lineHeight - textarea.scrollTop;
+      let left = rect.left + padLeft + col * charWidth - textarea.scrollLeft;
+
+      // Clamp to the SOURCE PANE, not the window. Clamping to the window
+      // lets a long line push the list over the preview pane, where it
+      // covers the toolbar and swallows clicks meant for it.
+      const OVERLAY_W = 260;
+      const OVERLAY_H = 220;
+      const viewH = document.documentElement.clientHeight;
+      const maxLeft = rect.right - OVERLAY_W;
+      if (left > maxLeft) left = maxLeft;
+      if (left < rect.left) left = rect.left;
+      if (top + OVERLAY_H > viewH) top = top - lineHeight - OVERLAY_H;
+
+      overlay.style.top = Math.max(0, top) + 'px';
+      overlay.style.left = Math.max(0, left) + 'px';
+    }
+
+    let cachedCharWidth = 0;
+    let cachedFont = '';
+    function measureCharWidth(style) {
+      const font = style.font || style.fontSize + ' ' + style.fontFamily;
+      if (font === cachedFont && cachedCharWidth) return cachedCharWidth;
+      const probe = document.createElement('span');
+      probe.style.position = 'absolute';
+      probe.style.visibility = 'hidden';
+      probe.style.whiteSpace = 'pre';
+      probe.style.font = font;
+      probe.textContent = '0'.repeat(50);
+      document.body.appendChild(probe);
+      cachedCharWidth = probe.getBoundingClientRect().width / 50;
+      probe.remove();
+      cachedFont = font;
+      return cachedCharWidth;
+    }
+
+    function show(result) {
+      items = result.items;
+      replaceFrom = result.replaceFrom;
+      selectedIndex = 0;
+      isOpen = true;
+      render();
+      position();
+      overlay.style.display = 'block';
+    }
+
+    function hide() {
+      isOpen = false;
+      items = [];
+      overlay.style.display = 'none';
+    }
+
+    function move(delta) {
+      if (!items.length) return;
+      selectedIndex = (selectedIndex + delta + items.length) % items.length;
+      render();
+      const sel = overlay.querySelector('.mmd-autocomplete-item.selected');
+      if (sel) sel.scrollIntoView({ block: 'nearest' });
+    }
+
+    function confirm() {
+      if (!items.length) { hide(); return; }
+      const item = items[selectedIndex];
+      const caret = textarea.selectionStart;
+      hide();
+      insertAtCaret(item.label, undefined, undefined, replaceFrom < caret ? replaceFrom : undefined);
+    }
+
+    return {
+      get isOpen() { return isOpen; },
+      show, hide, move, confirm,
+      /** Re-anchor to the caret, e.g. after the textarea scrolls. */
+      reposition() { if (isOpen) position(); },
+    };
+  })();
+
+  /** Recompute completions for the current caret; hide when there's nothing. */
+  function refreshCompletions() {
+    if (!completions) return;
+    // Only offer completions for a collapsed caret — during a selection the
+    // user is doing something else.
+    if (textarea.selectionStart !== textarea.selectionEnd) {
+      autocomplete.hide();
+      return;
+    }
+    const result = completions.getCompletions(textarea.value, textarea.selectionStart);
+    if (!result.items.length) {
+      autocomplete.hide();
+      return;
+    }
+    autocomplete.show(result);
+  }
+
+  textarea.addEventListener('keydown', (e) => {
+    if (autocomplete.isOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); autocomplete.move(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); autocomplete.move(-1); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); autocomplete.confirm(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); autocomplete.hide(); return; }
+    }
+    // Ctrl/Cmd+Space explicitly requests completions.
+    if ((e.ctrlKey || e.metaKey) && e.key === ' ') {
+      e.preventDefault();
+      refreshCompletions();
+    }
+  });
+
+  textarea.addEventListener('blur', () => autocomplete.hide());
+  // Any click outside the textarea dismisses the list, so it can never sit
+  // over other UI swallowing clicks. Capture phase, so it runs before the
+  // click reaches whatever was aimed at.
+  document.addEventListener('mousedown', (e) => {
+    if (!autocomplete.isOpen) return;
+    if (e.target === textarea || (e.target.closest && e.target.closest('.mmd-autocomplete'))) return;
+    autocomplete.hide();
+  }, true);
+  // Follow the caret rather than dismissing: typing itself scrolls the
+  // textarea to keep the caret visible, so hiding here would close the list
+  // the instant it opened.
+  textarea.addEventListener('scroll', () => autocomplete.reposition());
+
+  // ================================================
   // Draggable divider for pane resizing
   // ================================================
   let isDragging = false;
@@ -775,6 +1129,7 @@
 
   setExportButtonsEnabled(false);
   applyTransform();
+  refreshSnippetPalette();
   vscode.postMessage({ type: 'ready' });
   // Initial render happens when the first 'update' message arrives.
 })();
