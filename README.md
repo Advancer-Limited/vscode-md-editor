@@ -5,7 +5,7 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 ## Features
 
 - **WYSIWYG Editing** — Edit markdown in a rich preview with contenteditable, or switch to split view or raw markdown mode.
-- **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode); a dedicated split-view editor also opens `.mmd`/`.mermaid` files directly, with live rendering and an inline error banner for invalid syntax.
+- **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode). A dedicated split-view editor opens `.mmd`/`.mermaid` files directly, with **syntax highlighting**, **error-line marking**, **zoom and pan**, and **PNG / print (Save as PDF) export** — all themed to match VS Code's light or dark theme.
 - **Task Checklists** — GFM `- [ ] task` / `- [x] task` checkboxes render as clickable checkboxes in the preview and toggle directly in the markdown source. Handy for spec-driven workflows (e.g. GitHub Spec Kit `tasks.md` files).
 - **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
 - **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
@@ -47,7 +47,15 @@ Then press `F5` in VS Code to launch the Extension Development Host.
 
 Write a `\`\`\`mermaid` fenced code block and it renders as a live diagram wherever the preview is visible (WYSIWYG or Split). The rendered diagram is read-only — click into Raw or Split mode to edit its source, and the preview updates as you type. Invalid syntax shows an inline error without losing the last valid render.
 
-Opening a `.mmd` or `.mermaid` file directly uses a dedicated split-view editor (source on the left, live diagram on the right) instead of the full markdown editor.
+Opening a `.mmd` or `.mermaid` file directly uses a dedicated split-view editor (source on the left, live diagram on the right) with:
+
+- **Syntax highlighting** for Mermaid keywords, arrows, node shapes, edge labels and comments.
+- **Error highlighting** — when a diagram fails to parse, the offending source line is marked alongside the error message.
+- **Zoom and pan** — Ctrl/Cmd+scroll zooms about the pointer, drag to pan, and the toolbar has zoom in/out, 100%, and fit-to-view. Your view is kept as you type, so zooming into part of a large diagram doesn't reset on every edit.
+- **Export as PNG** — choose a light or dark background; the light option re-renders for a white background so it stays readable in documents and slides.
+- **Print / Save as PDF** — opens the diagram in your browser, where the print dialog's "Save as PDF" destination is available.
+
+Diagrams follow your VS Code light or dark theme and re-render automatically when you switch themes.
 
 ### Task Checklists
 

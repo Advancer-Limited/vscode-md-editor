@@ -6,8 +6,17 @@
   const textarea = /** @type {HTMLTextAreaElement} */ (
     document.getElementById('mmd-input')
   );
+  const highlightPre = /** @type {HTMLPreElement} */ (
+    document.getElementById('mmd-highlight')
+  );
+  const highlightCode = /** @type {HTMLElement} */ (
+    document.getElementById('mmd-highlight-code')
+  );
   const preview = /** @type {HTMLDivElement} */ (
     document.getElementById('mmd-preview')
+  );
+  const viewport = /** @type {HTMLDivElement} */ (
+    document.getElementById('mmd-viewport')
   );
   const errorEl = /** @type {HTMLDivElement} */ (
     document.getElementById('mmd-error')
@@ -18,13 +27,104 @@
   const divider = /** @type {HTMLDivElement} */ (
     document.getElementById('mmd-divider')
   );
+  const zoomReadout = /** @type {HTMLSpanElement} */ (
+    document.getElementById('mmd-zoom-readout')
+  );
+  const btnExportPng = /** @type {HTMLButtonElement} */ (
+    document.getElementById('mmd-export-png')
+  );
+  const btnPrint = /** @type {HTMLButtonElement} */ (
+    document.getElementById('mmd-print')
+  );
+
+  // @ts-ignore - MermaidSyntax loaded globally from mermaidSyntax.js
+  const syntax = MermaidSyntax;
+
+  // ================================================
+  // Diagram theming
+  // ================================================
+  // Mermaid's stock themes look distinctly "default-y" — squared corners,
+  // heavy saturated fills, browser-default fonts. These overrides aim for a
+  // flatter, more professional look that also sits naturally inside VS Code.
+  const DIAGRAM_FONT =
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif';
+
+  const THEME_VARIABLES = {
+    dark: {
+      background: 'transparent',
+      primaryColor: '#2d333b',
+      primaryBorderColor: '#6e7681',
+      primaryTextColor: '#e6edf3',
+      secondaryColor: '#31363f',
+      tertiaryColor: '#22272e',
+      lineColor: '#8b949e',
+      textColor: '#e6edf3',
+      mainBkg: '#2d333b',
+      nodeBorder: '#6e7681',
+      clusterBkg: 'rgba(110, 118, 129, 0.10)',
+      clusterBorder: '#484f58',
+      edgeLabelBackground: '#22272e',
+      titleColor: '#e6edf3',
+    },
+    light: {
+      background: 'transparent',
+      primaryColor: '#f6f8fa',
+      primaryBorderColor: '#9aa5b1',
+      primaryTextColor: '#1f2328',
+      secondaryColor: '#eef1f4',
+      tertiaryColor: '#ffffff',
+      lineColor: '#6e7781',
+      textColor: '#1f2328',
+      mainBkg: '#f6f8fa',
+      nodeBorder: '#9aa5b1',
+      clusterBkg: 'rgba(110, 119, 129, 0.06)',
+      clusterBorder: '#d0d7de',
+      edgeLabelBackground: '#ffffff',
+      titleColor: '#1f2328',
+    },
+  };
+
+  /** 'light' | 'dark' for the current VS Code colour theme. */
+  function currentThemeKind() {
+    return document.body.classList.contains('vscode-light') ? 'light' : 'dark';
+  }
+
+  function mermaidConfigFor(kind) {
+    const vars = Object.assign({ fontFamily: DIAGRAM_FONT, fontSize: '14px' }, THEME_VARIABLES[kind]);
+    return {
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      fontFamily: DIAGRAM_FONT,
+      themeVariables: vars,
+      flowchart: { curve: 'basis', htmlLabels: true, padding: 12, useMaxWidth: false },
+      sequence: { useMaxWidth: false },
+      class: { useMaxWidth: false },
+    };
+  }
+
+  /**
+   * Refinements mermaid's theme variables can't express (it has no
+   * border-radius variable). Injected as a <style> INSIDE the SVG so it
+   * travels with the element — the preview, the PNG rasterization and the
+   * printed page all pick it up from the same place.
+   */
+  const DIAGRAM_STYLE_CSS =
+    '.node rect,.node polygon,.node path{rx:4px;ry:4px;}' +
+    '.cluster rect{rx:6px;ry:6px;}' +
+    '.node rect,.node circle,.node ellipse,.node polygon,.node path{stroke-width:1.25px;}' +
+    '.edgePath .path,.flowchart-link{stroke-width:1.5px;}' +
+    '.edgeLabel{font-size:12px;}' +
+    'text,.nodeLabel,.edgeLabel,.label{font-family:' + DIAGRAM_FONT + ';}';
+
+  function applyDiagramStyling(svgEl) {
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = DIAGRAM_STYLE_CSS;
+    svgEl.insertBefore(style, svgEl.firstChild);
+  }
 
   // @ts-ignore - mermaid loaded globally from mermaid.min.js
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    theme: document.body.classList.contains('vscode-light') ? 'default' : 'dark',
-  });
+  mermaid.initialize(mermaidConfigFor(currentThemeKind()));
 
   // Track whether the current textarea update originated from the extension
   // host (an 'update' message), so the 'input' handler doesn't treat the
@@ -58,10 +158,88 @@
     return text.replace(/\r\n/g, '\n');
   }
 
+  // ================================================
+  // Syntax highlighting overlay
+  // ================================================
+  // The <pre> mirror is purely presentational: it is never edited, never
+  // focused, and never written back to. The textarea remains the single
+  // editing surface and the source of truth for all document sync.
+
+  /** 1-based line number mermaid last reported an error on, or null. */
+  let currentErrorLine = null;
+  let errorBar = null;
+
+  function getErrorBar() {
+    if (!errorBar) {
+      errorBar = document.createElement('div');
+      errorBar.className = 'mmd-error-line-bar';
+      errorBar.hidden = true;
+      highlightPre.appendChild(errorBar);
+    }
+    return errorBar;
+  }
+
+  /**
+   * Re-apply the error-line marking to the freshly rebuilt highlight DOM.
+   * Must run after every updateHighlight(), since innerHTML replacement
+   * destroys the previous marker and bar position.
+   */
+  function reapplyErrorLine() {
+    const bar = getErrorBar();
+    if (currentErrorLine === null) {
+      bar.hidden = true;
+      return;
+    }
+    const span = highlightCode.querySelector(
+      '.mmd-line[data-line="' + currentErrorLine + '"]'
+    );
+    if (!span) {
+      bar.hidden = true;
+      return;
+    }
+    span.classList.add('mmd-error-line');
+    // An inline span can fragment across visual lines when wrapped, so use
+    // the union rect rather than offsetTop, and convert to the <pre>'s
+    // content coordinates so the bar scrolls with the text.
+    const r = span.getBoundingClientRect();
+    const p = highlightPre.getBoundingClientRect();
+    bar.style.top = (r.top - p.top + highlightPre.scrollTop) + 'px';
+    bar.style.height = r.height + 'px';
+    bar.hidden = false;
+  }
+
+  /**
+   * Rebuild the highlight overlay from the given source.
+   * Runs synchronously on every keystroke — a per-line regex pass plus one
+   * innerHTML assignment is ~1-3ms for a typical diagram, and debouncing it
+   * would leave the (transparent) textarea text visibly unpainted while
+   * typing.
+   */
+  function updateHighlight(text) {
+    highlightCode.innerHTML = syntax.buildHighlightHtml(text);
+    reapplyErrorLine();
+  }
+
+  // Keep the mirror's scroll position locked to the textarea's. Both writes
+  // target an overflow:hidden element, so there's no read-after-write layout
+  // cycle to thrash; doing this in rAF would instead show the colour layer
+  // lagging a frame behind the text while scrolling.
+  textarea.addEventListener('scroll', () => {
+    highlightPre.scrollTop = textarea.scrollTop;
+    highlightPre.scrollLeft = textarea.scrollLeft;
+  });
+
+  // ================================================
+  // Message handling from the extension host
+  // ================================================
   window.addEventListener('message', (event) => {
     const message = event.data;
     if (message.type === 'editAck') {
       editsInFlight = Math.max(0, editsInFlight - 1);
+      return;
+    }
+    if (message.type === 'exportPngTheme') {
+      exportPng(message.theme === 'light' ? 'light' : 'dark');
       return;
     }
     if (message.type === 'update') {
@@ -84,6 +262,10 @@
       textarea.selectionStart = Math.min(selStart, text.length);
       textarea.selectionEnd = Math.min(selEnd, text.length);
       isExternalUpdate = false;
+      // A programmatic value assignment fires no 'input' event, so the
+      // overlay must be refreshed explicitly here.
+      updateHighlight(text);
+      highlightPre.scrollTop = textarea.scrollTop;
       renderDiagram(text);
     }
   });
@@ -93,6 +275,8 @@
       return;
     }
     const text = textarea.value;
+
+    updateHighlight(text);
 
     clearTimeout(renderDebounce);
     renderDebounce = setTimeout(() => renderDiagram(text), 300);
@@ -107,12 +291,40 @@
     }, 150);
   });
 
+  // ================================================
+  // Diagram rendering
+  // ================================================
+
+  /**
+   * Give the SVG intrinsic pixel dimensions. Mermaid emits a viewBox plus
+   * width="100%" (and a max-width style) so it scales to its container —
+   * which would fight the zoom transform, so pin it to real pixels instead.
+   */
+  function normalizeSvg(svg) {
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    const rect = svg.getBoundingClientRect();
+    const w = (vb && vb.width) || rect.width;
+    const h = (vb && vb.height) || rect.height;
+    svg.setAttribute('width', String(w));
+    svg.setAttribute('height', String(h));
+    svg.style.maxWidth = 'none';
+    return { w, h };
+  }
+
+  function setExportButtonsEnabled(enabled) {
+    if (btnExportPng) btnExportPng.disabled = !enabled;
+    if (btnPrint) btnPrint.disabled = !enabled;
+  }
+
   /** @param {string} source */
   async function renderDiagram(source) {
     const seq = ++renderSeq;
     if (!source.trim()) {
       preview.innerHTML = '';
       errorEl.hidden = true;
+      currentErrorLine = null;
+      reapplyErrorLine();
+      setExportButtonsEnabled(false);
       return;
     }
     const diagramId = 'mmd-diagram-' + seq;
@@ -126,8 +338,27 @@
         // drop the stale result instead of flashing an old diagram back in.
         return;
       }
+      // Note: only preview's *contents* are replaced. The #mmd-preview
+      // element itself survives, which is what preserves the zoom/pan
+      // transform on it across re-renders.
       preview.innerHTML = svg;
       errorEl.hidden = true;
+      currentErrorLine = null;
+      reapplyErrorLine();
+
+      const svgEl = preview.querySelector('svg');
+      if (svgEl) {
+        applyDiagramStyling(svgEl);
+        const size = normalizeSvg(svgEl);
+        setExportButtonsEnabled(true);
+        // Auto-fit only on the first successful render of this panel's
+        // lifetime. Re-fitting on later renders would yank the view out from
+        // under a user who has zoomed in and kept typing.
+        if (!hasAutoFitted) {
+          fitToView(size);
+          hasAutoFitted = true;
+        }
+      }
     } catch (err) {
       if (seq !== renderSeq) {
         return;
@@ -141,11 +372,282 @@
         orphan.remove();
       }
       // Keep-last-good-render: leave `preview` untouched (it still shows the
-      // last valid diagram, if any) and just surface the error banner.
+      // last valid diagram, if any) and just surface the error banner plus
+      // the offending source line.
       errorEl.textContent = String((err && err.message) || err);
       errorEl.hidden = false;
+      currentErrorLine = syntax.extractErrorLine(err, source);
+      reapplyErrorLine();
     }
   }
+
+  // ================================================
+  // Zoom & pan
+  // ================================================
+  const ZOOM_MIN = 0.1;
+  const ZOOM_MAX = 8;
+  const ZOOM_STEP = 1.1;
+  const FIT_PADDING = 24;
+
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
+  let hasAutoFitted = false;
+
+  function applyTransform() {
+    preview.style.transform =
+      'translate(' + panX + 'px, ' + panY + 'px) scale(' + zoom + ')';
+    if (zoomReadout) {
+      zoomReadout.textContent = Math.round(zoom * 100) + '%';
+    }
+  }
+
+  function clampZoom(z) {
+    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  }
+
+  /**
+   * Zoom about a fixed viewport point. With transform-origin at 0 0 the
+   * content point under viewport point c is u = (c - pan) / zoom; holding u
+   * fixed across a zoom change gives pan' = c - u * zoom'.
+   */
+  function zoomAt(cx, cy, factor) {
+    const next = clampZoom(zoom * factor);
+    panX = cx - ((cx - panX) / zoom) * next;
+    panY = cy - ((cy - panY) / zoom) * next;
+    zoom = next;
+    applyTransform();
+  }
+
+  function zoomAtCenter(factor) {
+    zoomAt(viewport.clientWidth / 2, viewport.clientHeight / 2, factor);
+  }
+
+  function fitToView(size) {
+    const svg = preview.querySelector('svg');
+    if (!svg) return;
+    let w = size && size.w;
+    let h = size && size.h;
+    if (!w || !h) {
+      const vb = svg.viewBox && svg.viewBox.baseVal;
+      w = (vb && vb.width) || svg.getBoundingClientRect().width;
+      h = (vb && vb.height) || svg.getBoundingClientRect().height;
+    }
+    const vw = viewport.clientWidth;
+    const vh = viewport.clientHeight;
+    if (!w || !h || !vw || !vh) return;
+    zoom = clampZoom(Math.min((vw - 2 * FIT_PADDING) / w, (vh - 2 * FIT_PADDING) / h));
+    panX = (vw - w * zoom) / 2;
+    panY = (vh - h * zoom) / 2;
+    applyTransform();
+  }
+
+  function resetZoom() {
+    zoom = 1;
+    const svg = preview.querySelector('svg');
+    if (svg) {
+      const vb = svg.viewBox && svg.viewBox.baseVal;
+      const w = (vb && vb.width) || svg.getBoundingClientRect().width;
+      const h = (vb && vb.height) || svg.getBoundingClientRect().height;
+      panX = Math.max(0, (viewport.clientWidth - w) / 2);
+      panY = Math.max(0, (viewport.clientHeight - h) / 2);
+    } else {
+      panX = 0;
+      panY = 0;
+    }
+    applyTransform();
+  }
+
+  // Ctrl/Cmd+wheel zooms (this also covers macOS trackpad pinch, which
+  // Chromium reports as ctrl+wheel); plain wheel pans, since the viewport
+  // has no native scrolling of its own — the transform IS the scroll model.
+  viewport.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = viewport.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) {
+      zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+    } else {
+      panX -= e.deltaX;
+      panY -= e.deltaY;
+      applyTransform();
+    }
+  }, { passive: false });
+
+  // Drag-to-pan. Uses its own flag and a distinct mousedown target from the
+  // divider's drag, so the two document-level listeners can never both act.
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let panOrigX = 0;
+  let panOrigY = 0;
+
+  viewport.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    isPanning = true;
+    viewport.classList.add('panning');
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    panOrigX = panX;
+    panOrigY = panY;
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    panX = panOrigX + (e.clientX - panStartX);
+    panY = panOrigY + (e.clientY - panStartY);
+    applyTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isPanning) {
+      isPanning = false;
+      viewport.classList.remove('panning');
+    }
+  });
+
+  document.getElementById('mmd-zoom-in')?.addEventListener('click', () => zoomAtCenter(ZOOM_STEP));
+  document.getElementById('mmd-zoom-out')?.addEventListener('click', () => zoomAtCenter(1 / ZOOM_STEP));
+  document.getElementById('mmd-zoom-reset')?.addEventListener('click', resetZoom);
+  document.getElementById('mmd-zoom-fit')?.addEventListener('click', () => fitToView());
+  zoomReadout?.addEventListener('click', resetZoom);
+  document.getElementById('btn-about')?.addEventListener('click', () => vscode.postMessage({ type: 'showAbout' }));
+
+  // ================================================
+  // Export: PNG and print
+  // ================================================
+  /** Separate from renderSeq — see renderThemedSvg. */
+  let exportSeq = 0;
+
+  /**
+   * Render the current source off-screen in a specific theme, for export and
+   * print. Uses an `%%{init}%%` directive rather than re-initializing mermaid
+   * globally, so it can't race the live preview's own render. (If the user's
+   * source already sets a theme explicitly, theirs wins — respecting an
+   * explicit authored choice is the right call.)
+   *
+   * @param {'light'|'dark'} kind
+   * @returns {Promise<SVGSVGElement|null>}
+   */
+  async function renderThemedSvg(kind) {
+    const source = textarea.value;
+    if (!source.trim()) return null;
+    const directive = '%%{init: ' + JSON.stringify({
+      theme: 'base',
+      themeVariables: Object.assign(
+        { fontFamily: DIAGRAM_FONT, fontSize: '14px' },
+        THEME_VARIABLES[kind]
+      ),
+    }) + '}%%\n';
+    try {
+      // Deliberately NOT renderSeq — bumping that would make an in-flight
+      // preview render see itself as superseded and silently bail.
+      // @ts-ignore - mermaid global
+      const { svg } = await mermaid.render('mmd-export-' + (++exportSeq), directive + source);
+      const holder = document.createElement('div');
+      holder.innerHTML = svg;
+      const el = /** @type {SVGSVGElement|null} */ (holder.querySelector('svg'));
+      if (el) applyDiagramStyling(el);
+      return el;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Serialize a diagram SVG at its intrinsic size, independent of the current
+   * zoom/pan (the transform lives on the wrapper, not the SVG itself).
+   * @param {SVGSVGElement} [svgOverride] use this SVG instead of the previewed one
+   */
+  function serializeSvg(svgOverride) {
+    const svg = svgOverride || preview.querySelector('svg');
+    if (!svg) return null;
+    const clone = /** @type {SVGSVGElement} */ (svg.cloneNode(true));
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    const rect = svg.getBoundingClientRect();
+    const w = (vb && vb.width) || parseFloat(svg.getAttribute('width')) || rect.width / zoom;
+    const h = (vb && vb.height) || parseFloat(svg.getAttribute('height')) || rect.height / zoom;
+    clone.setAttribute('width', String(w));
+    clone.setAttribute('height', String(h));
+    if (!clone.getAttribute('viewBox')) {
+      clone.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    }
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.style.maxWidth = 'none';
+    return { text: new XMLSerializer().serializeToString(clone), w, h };
+  }
+
+  /**
+   * @param {'light'|'dark'} themeKind background/diagram theme for the image
+   */
+  async function exportPng(themeKind) {
+    // Re-render in the chosen theme rather than rasterizing what's on screen,
+    // so a light-background export from a dark editor gets dark-on-light text
+    // rather than an unreadable light-on-light image.
+    const themed = themeKind === currentThemeKind() ? null : await renderThemedSvg(themeKind);
+    const serialized = serializeSvg(themed || undefined);
+    if (!serialized) return;
+    const { text, w, h } = serialized;
+    try {
+      // A data: URL keeps the canvas untainted and is already permitted by
+      // the webview CSP's `img-src ... data:` (a blob: URL would need the
+      // CSP widened).
+      const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('Failed to rasterize the diagram'));
+        img.src = url;
+      });
+
+      // 2x for crispness, clamped so a huge diagram can't blow past
+      // Chromium's canvas limits.
+      const scale = Math.max(1, Math.min(2, 8192 / Math.max(w, h)));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.ceil(w * scale));
+      canvas.height = Math.max(1, Math.ceil(h * scale));
+      const ctx = canvas.getContext('2d');
+      // Fill with the editor background rather than leaving it transparent:
+      // mermaid picks its theme from the VS Code theme, so a dark-theme
+      // diagram has light text that would be invisible on white.
+      ctx.fillStyle = themeKind === 'light'
+        ? '#ffffff'
+        : (getComputedStyle(document.body).backgroundColor || '#1e1e1e');
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const base64 = canvas.toDataURL('image/png').split(',')[1];
+      vscode.postMessage({ type: 'exportPng', base64: base64 });
+    } catch (err) {
+      vscode.postMessage({
+        type: 'exportError',
+        message: String((err && err.message) || err),
+      });
+    }
+  }
+
+  // The image theme is picked in a native VS Code QuickPick on the host side,
+  // which replies with 'exportPngTheme'.
+  btnExportPng?.addEventListener('click', () => {
+    if (!preview.querySelector('svg')) return;
+    vscode.postMessage({ type: 'requestPngExport' });
+  });
+
+  // window.print() does NOT work inside a VS Code webview — they're
+  // sandboxed iframes without allow-modals, so the print dialog is
+  // suppressed silently. Instead the host writes a standalone HTML file and
+  // opens it in the real browser, where Print (and its "Save as PDF"
+  // destination) works properly.
+  //
+  // Printing always uses the light theme: a dark-theme diagram prints as
+  // light-on-white (i.e. invisible) or wastes a page of toner.
+  btnPrint?.addEventListener('click', async () => {
+    if (!preview.querySelector('svg')) return;
+    const themed = currentThemeKind() === 'light' ? null : await renderThemedSvg('light');
+    const serialized = serializeSvg(themed || undefined);
+    if (!serialized) return;
+    vscode.postMessage({ type: 'print', svg: serialized.text });
+  });
 
   // ================================================
   // Draggable divider for pane resizing
@@ -181,6 +683,21 @@
     }
   });
 
+  // VS Code swaps body classes (vscode-light/vscode-dark) when the colour
+  // theme changes. Mermaid bakes its colours into the rendered SVG, so the
+  // diagram has to be re-rendered to follow the new theme.
+  let themeKind = currentThemeKind();
+  new MutationObserver(() => {
+    const next = currentThemeKind();
+    if (next === themeKind) return;
+    themeKind = next;
+    // @ts-ignore - mermaid global
+    mermaid.initialize(mermaidConfigFor(next));
+    renderDiagram(textarea.value);
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+  setExportButtonsEnabled(false);
+  applyTransform();
   vscode.postMessage({ type: 'ready' });
   // Initial render happens when the first 'update' message arrives.
 })();

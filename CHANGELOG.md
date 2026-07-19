@@ -2,6 +2,19 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.0.0] - 2026-07-19
+
+First stable release.
+
+### Added
+
+- **Mermaid source editor overhaul** — the `.mmd`/`.mermaid` editor now has full syntax highlighting in the source pane (diagram keywords, arrows, node shapes, edge labels, comments, `%%{init}%%` directives), with the offending line highlighted when a diagram fails to parse.
+- **Zoom and pan in the diagram preview** — Ctrl/Cmd+scroll to zoom about the cursor, drag to pan, plus toolbar controls for zoom in/out, 100%, and fit-to-view with a live zoom readout. Your view is preserved as you keep typing, so zooming into part of a large diagram no longer resets on every edit.
+- **Export diagrams as PNG**, with a choice of light or dark background — a light export re-renders the diagram for a white background, so it stays readable when dropped into documents and slides.
+- **Print diagrams / save as PDF** — opens the diagram in your browser, where Print and its "Save as PDF" destination work properly.
+- **Refreshed diagram styling** — softer rounded corners, a flatter and more professional palette, and cleaner typography, with proper light and dark theme support that follows your VS Code theme (including live re-render when you switch themes).
+- An **About** button on editor toolbars showing the product, version, and author.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added
