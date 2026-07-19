@@ -462,3 +462,43 @@ Investigation and code review delegated first to a Fable-model subagent (full di
 - PR #44 is stacked on #43 (not `develop`) for a clean review — merge #43 first, then retarget #44's base to `develop`.
 - PR #45 and #46 are independent of #43/#44 and of each other; can merge in any order.
 - All four branches: `npm run check-types`, `npm run compile`, `npm test` green (#43/#44: 35/35 tests; #46 adds 5 more, 40/40).
+
+## 2026-07-19 — Mermaid editor overhaul, release 1.0.0
+
+Planned by a Fable subagent (full implementation spec), built in the main session, then adversarially reviewed by a second Fable subagent. Three research agents ran in parallel on renderer/licensing questions (see Research notes below).
+
+### Method: regression contract first
+Before touching anything, captured a 14-check behavioral suite against the *existing* `.mmd` editor covering the parts most at risk — echo suppression, CRLF normalization, stale-update dropping, keep-last-good-render, the ready handshake. Baseline: 14/14. Re-run after every subsequent change; still 14/14. This is what makes "didn't break existing functionality" a verified claim rather than an assertion. Reviewer independently confirmed the sync-critical block is byte-identical to develop.
+
+### Features
+- **Syntax highlighting** in the `.mmd` source pane via a transparent-textarea-over-highlighted-`<pre>` overlay. Tokenizer extracted to `media/mermaidSyntax.js` (UMD, following the `turndownTableRules.js` precedent) so it is unit-testable: 26 committed tests covering tokenization, exact source round-trip, and HTML-injection attempts — the output goes to `innerHTML`, so escaping is security-critical, not cosmetic. Escape-then-wrap; class names come from a fixed whitelist so no user input ever reaches an attribute.
+- **Error-line marking** — structured jison `err.hash` first, message-text regex as fallback, banner-only when mermaid reports no line (e.g. UnknownDiagramError).
+- **Zoom/pan** with cursor-anchored Ctrl+wheel zoom, drag-pan, fit/reset/percentage toolbar. Transform deliberately preserved across re-renders — resetting the view on every keystroke made zooming into a large diagram useless.
+- **PNG export** with a light/dark background choice via native QuickPick; a light export *re-renders* rather than rasterizing the on-screen dark diagram (which would give unreadable light-on-white).
+- **Print** — `window.print()` is suppressed in VS Code webviews (sandboxed iframe, no allow-modals) and fails *silently*; the host writes a standalone page and opens it externally where the real print dialog and Save-as-PDF live.
+- **Visual restyle** — themeVariables plus a `<style>` injected *inside* the SVG (so preview, PNG and print all share it): rounded corners, flatter palette, cleaner type. Live re-render on VS Code theme change via a MutationObserver on the body class.
+- **About/brand button** on both editor toolbars; version 1.0.0; `author` field added.
+
+### Empirical findings worth remembering
+- Mermaid emits `width="100%"` and **no** `height` — export dimensions must come from the **viewBox**, not the attributes.
+- Mermaid uses `<foreignObject>` for flowchart labels. This *does* rasterize correctly to canvas in Chromium (verified by writing the PNG out and inspecting it), so no `htmlLabels:false` workaround is needed. Would not hold in Safari — irrelevant, webviews are always Chromium.
+- Rasterizing an inline SVG via a `data:` URL does **not** taint the canvas, so `toDataURL()` works and no CSP change was needed (`img-src data:` was already present). A `blob:` URL *would* have required widening the CSP.
+
+### Review findings fixed (all in the new export path; none touched document sync)
+1. **BUG** dark export from a *light* editor filled the canvas with the light body background → fixed constants per export theme.
+2. **BUG** export/print with a broken source silently fell back to the on-screen SVG in the wrong theme *and reported success* → now renders from `lastGoodSource` (matching what keep-last-good is displaying) and fails loudly if that's unavailable.
+3. **BUG** a diagram wider than 8192px produced a 0-byte PNG with a success toast (`Math.max(1, …)` prevented scaling *down*; oversized canvas → `toDataURL()` returns `"data:,"`) → allow scale < 1 and reject empty output on both sides.
+4. Themed export leaked mermaid's scratch node on failure → same orphan cleanup as the preview path.
+5. Host `exportPng` had no try/catch or payload validation → added.
+6. Print temp files accumulated forever in globalStorageUri → age-based sweep (immediate deletion is unsafe, the browser opens them async).
+7. `vscode-high-contrast-light` was classified as dark → fixed.
+8. Reviewer asked for a *manual* check that `scrollbar-gutter: stable` really equalises content width in both scrolling and non-scrolling states — automated it instead; passes both.
+
+### Research notes (parallel agents) — renderer and licensing decisions
+- **Licensing is the deciding filter**, given the intent to keep commercial options open. The repo already has a CLA, so contributor rights are assigned and relicensing remains possible.
+- **D2** — MPL-2.0 (file-level copyleft; safe to depend on without open-sourcing our code). Official `@terrastruct/d2` WASM build bundles dagre+ELK; TALA is proprietary and excluded. ~8MB, and needs `wasm-unsafe-eval` + `worker-src blob:` added to the CSP. **Recommended** as a future second renderer for architecture diagrams.
+- **PlantUML** — core is GPL. A first-party MIT-flavoured `@plantuml/core` (TeaVM) build now exists and genuinely renders client-side including Graphviz-dependent diagram types, but it is very new and its MIT-ness depends on the maintainer gating GPL paths correctly every release. **Avoid** — the downside is the whole product becoming GPL-encumbered.
+- **3D** — no "Mermaid for 3D" exists. A-Frame (MIT, three.js-based, LLM-fluent) is a *scene* language with no auto-layout, so an LLM must compute coordinates. Recommendation for architecture visualisation is a small custom DSL compiling to vendored three.js, with compiler-side layout so the LLM never emits coordinates. OpenSCAD/X_ITE are GPL — avoid.
+
+### Verification
+66 unit tests, 14 behavioral regression, 23 new-feature Playwright, 7 review-fix Playwright — all passing; `check-types` and `compile` clean.

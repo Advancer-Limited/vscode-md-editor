@@ -9,6 +9,35 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** How long a generated print page is kept before being swept. */
+const PRINT_FILE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Delete previously generated print pages that are older than the TTL.
+ *
+ * They can't be removed immediately after opening — the browser loads them
+ * asynchronously — so they're swept on the next print instead. Without this
+ * they accumulate indefinitely, each holding a full copy of a diagram.
+ */
+async function sweepOldPrintFiles(dir: vscode.Uri): Promise<void> {
+  try {
+    const cutoff = Date.now() - PRINT_FILE_TTL_MS;
+    const entries = await vscode.workspace.fs.readDirectory(dir);
+    for (const [name, type] of entries) {
+      if (type !== vscode.FileType.File) continue;
+      const match = /^mmd-print-(\d+)\.html$/.exec(name);
+      if (!match || Number(match[1]) >= cutoff) continue;
+      try {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(dir, name));
+      } catch {
+        // A file we can't delete shouldn't block printing.
+      }
+    }
+  } catch {
+    // Sweeping is best-effort housekeeping — never fail a print over it.
+  }
+}
+
 /**
  * Build a standalone page containing just the diagram, for printing in an
  * external browser. Carries its own strict CSP (no script-src at all) as
@@ -179,6 +208,10 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
           }
 
           case 'exportPng': {
+            if (typeof message.base64 !== 'string' || message.base64.length === 0) {
+              vscode.window.showErrorMessage('Diagram export failed: no image data was produced.');
+              return;
+            }
             const base = path
               .basename(document.fileName)
               .replace(/\.(mmd|mermaid)$/i, '');
@@ -189,13 +222,20 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
             if (!target) {
               return; // user cancelled
             }
-            await vscode.workspace.fs.writeFile(
-              target,
-              Buffer.from(message.base64, 'base64')
-            );
-            vscode.window.showInformationMessage(
-              `Exported ${path.basename(target.fsPath)}`
-            );
+            try {
+              const bytes = Buffer.from(message.base64, 'base64');
+              if (bytes.length === 0) {
+                throw new Error('decoded image was empty');
+              }
+              await vscode.workspace.fs.writeFile(target, bytes);
+              vscode.window.showInformationMessage(
+                `Exported ${path.basename(target.fsPath)}`
+              );
+            } catch (err) {
+              vscode.window.showErrorMessage(
+                `Failed to save the diagram: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
             return;
           }
 
@@ -215,6 +255,7 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
             try {
               const dir = this.context.globalStorageUri;
               await vscode.workspace.fs.createDirectory(dir);
+              await sweepOldPrintFiles(dir);
               const file = vscode.Uri.joinPath(dir, `mmd-print-${Date.now()}.html`);
               await vscode.workspace.fs.writeFile(
                 file,

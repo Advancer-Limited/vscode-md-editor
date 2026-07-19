@@ -84,9 +84,19 @@
     },
   };
 
+  /** Canvas fill for each export theme. Must not be sampled from the live
+   *  body background — exporting "dark" from a light editor would then fill
+   *  with the light background and produce light-on-light output. */
+  const EXPORT_BACKGROUND = { light: '#ffffff', dark: '#1e1e1e' };
+
   /** 'light' | 'dark' for the current VS Code colour theme. */
   function currentThemeKind() {
-    return document.body.classList.contains('vscode-light') ? 'light' : 'dark';
+    const cl = document.body.classList;
+    // vscode-high-contrast-light also carries vscode-high-contrast, so test
+    // for the light variant explicitly rather than assuming HC means dark.
+    return cl.contains('vscode-light') || cl.contains('vscode-high-contrast-light')
+      ? 'light'
+      : 'dark';
   }
 
   function mermaidConfigFor(kind) {
@@ -168,6 +178,12 @@
   /** 1-based line number mermaid last reported an error on, or null. */
   let currentErrorLine = null;
   let errorBar = null;
+  /**
+   * The most recent source that parsed successfully — i.e. what the preview
+   * is actually showing, which may be older than textarea.value while the
+   * user is mid-edit (keep-last-good). Export and print render from this.
+   */
+  let lastGoodSource = null;
 
   function getErrorBar() {
     if (!errorBar) {
@@ -323,8 +339,13 @@
       preview.innerHTML = '';
       errorEl.hidden = true;
       currentErrorLine = null;
+      lastGoodSource = null;
       reapplyErrorLine();
       setExportButtonsEnabled(false);
+      // The next diagram is a fresh one — let it auto-fit rather than
+      // inheriting the previous diagram's pan/zoom (which could place it
+      // entirely off-screen).
+      hasAutoFitted = false;
       return;
     }
     const diagramId = 'mmd-diagram-' + seq;
@@ -344,6 +365,7 @@
       preview.innerHTML = svg;
       errorEl.hidden = true;
       currentErrorLine = null;
+      lastGoodSource = source;
       reapplyErrorLine();
 
       const svgEl = preview.querySelector('svg');
@@ -530,8 +552,13 @@
    * @returns {Promise<SVGSVGElement|null>}
    */
   async function renderThemedSvg(kind) {
-    const source = textarea.value;
-    if (!source.trim()) return null;
+    // Deliberately the last source that PARSED, not textarea.value. The
+    // preview keeps showing the last good diagram while the source is
+    // mid-edit and broken (keep-last-good), and export must match what the
+    // user is looking at — rendering the broken source would fail, silently
+    // fall back to the on-screen SVG, and export it in the wrong theme.
+    const source = lastGoodSource;
+    if (!source || !source.trim()) return null;
     const directive = '%%{init: ' + JSON.stringify({
       theme: 'base',
       themeVariables: Object.assign(
@@ -539,17 +566,22 @@
         THEME_VARIABLES[kind]
       ),
     }) + '}%%\n';
+    // Deliberately NOT renderSeq — bumping that would make an in-flight
+    // preview render see itself as superseded and silently bail.
+    const diagramId = 'mmd-export-' + (++exportSeq);
     try {
-      // Deliberately NOT renderSeq — bumping that would make an in-flight
-      // preview render see itself as superseded and silently bail.
       // @ts-ignore - mermaid global
-      const { svg } = await mermaid.render('mmd-export-' + (++exportSeq), directive + source);
+      const { svg } = await mermaid.render(diagramId, directive + source);
       const holder = document.createElement('div');
       holder.innerHTML = svg;
       const el = /** @type {SVGSVGElement|null} */ (holder.querySelector('svg'));
       if (el) applyDiagramStyling(el);
       return el;
     } catch (_) {
+      // Same scratch-node cleanup as the preview path — a failed render can
+      // leave mermaid's hidden container behind.
+      const orphan = document.getElementById('d' + diagramId);
+      if (orphan) orphan.remove();
       return null;
     }
   }
@@ -584,7 +616,20 @@
     // Re-render in the chosen theme rather than rasterizing what's on screen,
     // so a light-background export from a dark editor gets dark-on-light text
     // rather than an unreadable light-on-light image.
-    const themed = themeKind === currentThemeKind() ? null : await renderThemedSvg(themeKind);
+    let themed = null;
+    if (themeKind !== currentThemeKind()) {
+      themed = await renderThemedSvg(themeKind);
+      if (!themed) {
+        // Falling back to the on-screen SVG here would export the WRONG
+        // theme (e.g. a dark diagram onto a white canvas) while still
+        // reporting success. Fail loudly instead.
+        vscode.postMessage({
+          type: 'exportError',
+          message: 'Could not render the diagram for export. Fix any errors in the diagram and try again.',
+        });
+        return;
+      }
+    }
     const serialized = serializeSvg(themed || undefined);
     if (!serialized) return;
     const { text, w, h } = serialized;
@@ -600,9 +645,12 @@
         img.src = url;
       });
 
-      // 2x for crispness, clamped so a huge diagram can't blow past
-      // Chromium's canvas limits.
-      const scale = Math.max(1, Math.min(2, 8192 / Math.max(w, h)));
+      // 2x for crispness, but scale DOWN below 1 when necessary: a diagram
+      // wider than the cap would otherwise exceed Chromium's canvas limits,
+      // making toDataURL() return the empty "data:," and silently write a
+      // 0-byte file.
+      const MAX_DIMENSION = 8192;
+      const scale = Math.min(2, MAX_DIMENSION / Math.max(w, h));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.ceil(w * scale));
       canvas.height = Math.max(1, Math.ceil(h * scale));
@@ -610,13 +658,20 @@
       // Fill with the editor background rather than leaving it transparent:
       // mermaid picks its theme from the VS Code theme, so a dark-theme
       // diagram has light text that would be invisible on white.
-      ctx.fillStyle = themeKind === 'light'
-        ? '#ffffff'
-        : (getComputedStyle(document.body).backgroundColor || '#1e1e1e');
+      ctx.fillStyle = EXPORT_BACKGROUND[themeKind] || EXPORT_BACKGROUND.dark;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      const base64 = canvas.toDataURL('image/png').split(',')[1];
+      // A canvas that exceeded the browser's limits yields the empty
+      // "data:," rather than throwing — catch that here so it surfaces as an
+      // error instead of a success toast over a 0-byte file.
+      const dataUrl = canvas.toDataURL('image/png');
+      const base64 = dataUrl.startsWith('data:image/png;base64,')
+        ? dataUrl.slice('data:image/png;base64,'.length)
+        : '';
+      if (!base64) {
+        throw new Error('The diagram is too large to rasterize.');
+      }
       vscode.postMessage({ type: 'exportPng', base64: base64 });
     } catch (err) {
       vscode.postMessage({
@@ -643,7 +698,19 @@
   // light-on-white (i.e. invisible) or wastes a page of toner.
   btnPrint?.addEventListener('click', async () => {
     if (!preview.querySelector('svg')) return;
-    const themed = currentThemeKind() === 'light' ? null : await renderThemedSvg('light');
+    let themed = null;
+    if (currentThemeKind() !== 'light') {
+      themed = await renderThemedSvg('light');
+      if (!themed) {
+        // Same reasoning as exportPng: printing the on-screen dark diagram
+        // onto white paper is worse than telling the user why it failed.
+        vscode.postMessage({
+          type: 'exportError',
+          message: 'Could not render the diagram for printing. Fix any errors in the diagram and try again.',
+        });
+        return;
+      }
+    }
     const serialized = serializeSvg(themed || undefined);
     if (!serialized) return;
     vscode.postMessage({ type: 'print', svg: serialized.text });
