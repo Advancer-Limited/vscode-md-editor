@@ -172,7 +172,9 @@ export type MermaidEditorToWebviewMessage =
   | { type: 'update'; text: string }
   | { type: 'editAck' }
   /** Result of the export-theme QuickPick; the webview then rasterizes. */
-  | { type: 'exportPngTheme'; theme: 'light' | 'dark' };
+  | { type: 'exportPngTheme'; theme: 'light' | 'dark' }
+  /** Result of the "replace the document with a template?" confirmation. */
+  | { type: 'templateReplaceConfirmed'; confirmed: boolean };
 
 /** Messages from mermaid editor webview -> extension host */
 export type MermaidWebviewToExtensionMessage =
@@ -185,6 +187,12 @@ export type MermaidWebviewToExtensionMessage =
   | { type: 'exportError'; message: string }
   /** Toolbar brand button — show the About dialog. */
   | { type: 'showAbout' }
+  /**
+   * Ask the host to confirm replacing the document with a template.
+   * Confirmation must happen host-side: webviews are sandboxed without
+   * allow-modals, so confirm() is blocked there.
+   */
+  | { type: 'confirmTemplateReplace'; label: string }
   /**
    * Serialized SVG to print. The host writes it to a standalone HTML file and
    * opens it externally — window.print() is suppressed inside VS Code's
