@@ -5,7 +5,8 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 ## Features
 
 - **WYSIWYG Editing** — Edit markdown in a rich preview with contenteditable, or switch to split view or raw markdown mode.
-- **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode); a dedicated split-view editor also opens `.mmd`/`.mermaid` files directly, with live rendering and an inline error banner for invalid syntax.
+- **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode). A dedicated split-view editor opens `.mmd`/`.mermaid` files directly, with **syntax highlighting**, **error-line marking**, **zoom and pan**, **PNG / print (Save as PDF) export**, and **authoring help** (template gallery, snippet palette, and node-ID completions) — all themed to match VS Code's light or dark theme.
+- **3D Model Viewer** — open a `.gltf` file to get its JSON source alongside a live 3D preview rendered with three.js, with orbit, pan and zoom. The preview updates as you edit and keeps your camera position.
 - **Task Checklists** — GFM `- [ ] task` / `- [x] task` checkboxes render as clickable checkboxes in the preview and toggle directly in the markdown source. Handy for spec-driven workflows (e.g. GitHub Spec Kit `tasks.md` files).
 - **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
 - **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
@@ -47,11 +48,33 @@ Then press `F5` in VS Code to launch the Extension Development Host.
 
 Write a `\`\`\`mermaid` fenced code block and it renders as a live diagram wherever the preview is visible (WYSIWYG or Split). The rendered diagram is read-only — click into Raw or Split mode to edit its source, and the preview updates as you type. Invalid syntax shows an inline error without losing the last valid render.
 
-Opening a `.mmd` or `.mermaid` file directly uses a dedicated split-view editor (source on the left, live diagram on the right) instead of the full markdown editor.
+Opening a `.mmd` or `.mermaid` file directly uses a dedicated split-view editor (source on the left, live diagram on the right) with:
+
+- **Syntax highlighting** for Mermaid keywords, arrows, node shapes, edge labels and comments.
+- **Error highlighting** — when a diagram fails to parse, the offending source line is marked alongside the error message.
+- **Zoom and pan** — Ctrl/Cmd+scroll zooms about the pointer, drag to pan, and the toolbar has zoom in/out, 100%, and fit-to-view. Your view is kept as you type, so zooming into part of a large diagram doesn't reset on every edit.
+- **Export as PNG** — choose a light or dark background; the light option re-renders for a white background so it stays readable in documents and slides.
+- **Print / Save as PDF** — opens the diagram in your browser, where the print dialog's "Save as PDF" destination is available.
+
+Diagrams follow your VS Code light or dark theme and re-render automatically when you switch themes.
 
 ### Task Checklists
 
 `- [ ] some task` and `- [x] done task` lines render as checkboxes in the preview. Click a checkbox to toggle it — the change is written straight back to the markdown source as `[ ]`/`[x]`.
+
+### Writing Mermaid Diagrams
+
+The `.mmd` editor helps you write diagrams rather than just render them:
+
+- **Template** — inserts a working starter diagram (flowchart, sequence, class, state, ER, gantt, pie, mind map) with its first label selected to type over.
+- **Snippet palette** — the buttons beside Template change with the diagram type you're writing: node shapes and link styles for flowcharts, `participant`/`loop`/`alt` for sequence diagrams, and so on.
+- **Completions** — as you type, the editor offers the node IDs already in your diagram (press `Ctrl+Space` to summon them manually). This is the most useful one: in Mermaid a mistyped node ID doesn't produce an error, it quietly creates a stray disconnected node.
+
+### 3D Models (`.gltf`)
+
+Open a `.gltf` file and you'll get the JSON source on the left with a live 3D preview on the right. Drag to orbit, scroll to zoom, right-drag to pan. The preview updates as you edit and **keeps your camera position**, so you don't lose your place while tweaking a model. The toolbar has fit-to-view, reset, wireframe and grid toggles, plus an Update button (used automatically for files over 2 MB, where live updating is disabled).
+
+Models with external `.bin` buffers and textures work as long as those files sit within your workspace folder. Binary `.glb` files aren't supported yet, nor are Draco/KTX2-compressed assets — those report a clear error rather than failing silently.
 
 ### Comparing Versions
 

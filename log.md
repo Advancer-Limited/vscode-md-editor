@@ -462,3 +462,87 @@ Investigation and code review delegated first to a Fable-model subagent (full di
 - PR #44 is stacked on #43 (not `develop`) for a clean review — merge #43 first, then retarget #44's base to `develop`.
 - PR #45 and #46 are independent of #43/#44 and of each other; can merge in any order.
 - All four branches: `npm run check-types`, `npm run compile`, `npm test` green (#43/#44: 35/35 tests; #46 adds 5 more, 40/40).
+
+## 2026-07-19 — Mermaid editor overhaul, release 1.0.0
+
+Planned by a Fable subagent (full implementation spec), built in the main session, then adversarially reviewed by a second Fable subagent. Three research agents ran in parallel on renderer/licensing questions (see Research notes below).
+
+### Method: regression contract first
+Before touching anything, captured a 14-check behavioral suite against the *existing* `.mmd` editor covering the parts most at risk — echo suppression, CRLF normalization, stale-update dropping, keep-last-good-render, the ready handshake. Baseline: 14/14. Re-run after every subsequent change; still 14/14. This is what makes "didn't break existing functionality" a verified claim rather than an assertion. Reviewer independently confirmed the sync-critical block is byte-identical to develop.
+
+### Features
+- **Syntax highlighting** in the `.mmd` source pane via a transparent-textarea-over-highlighted-`<pre>` overlay. Tokenizer extracted to `media/mermaidSyntax.js` (UMD, following the `turndownTableRules.js` precedent) so it is unit-testable: 26 committed tests covering tokenization, exact source round-trip, and HTML-injection attempts — the output goes to `innerHTML`, so escaping is security-critical, not cosmetic. Escape-then-wrap; class names come from a fixed whitelist so no user input ever reaches an attribute.
+- **Error-line marking** — structured jison `err.hash` first, message-text regex as fallback, banner-only when mermaid reports no line (e.g. UnknownDiagramError).
+- **Zoom/pan** with cursor-anchored Ctrl+wheel zoom, drag-pan, fit/reset/percentage toolbar. Transform deliberately preserved across re-renders — resetting the view on every keystroke made zooming into a large diagram useless.
+- **PNG export** with a light/dark background choice via native QuickPick; a light export *re-renders* rather than rasterizing the on-screen dark diagram (which would give unreadable light-on-white).
+- **Print** — `window.print()` is suppressed in VS Code webviews (sandboxed iframe, no allow-modals) and fails *silently*; the host writes a standalone page and opens it externally where the real print dialog and Save-as-PDF live.
+- **Visual restyle** — themeVariables plus a `<style>` injected *inside* the SVG (so preview, PNG and print all share it): rounded corners, flatter palette, cleaner type. Live re-render on VS Code theme change via a MutationObserver on the body class.
+- **About/brand button** on both editor toolbars; version 1.0.0; `author` field added.
+
+### Empirical findings worth remembering
+- Mermaid emits `width="100%"` and **no** `height` — export dimensions must come from the **viewBox**, not the attributes.
+- Mermaid uses `<foreignObject>` for flowchart labels. This *does* rasterize correctly to canvas in Chromium (verified by writing the PNG out and inspecting it), so no `htmlLabels:false` workaround is needed. Would not hold in Safari — irrelevant, webviews are always Chromium.
+- Rasterizing an inline SVG via a `data:` URL does **not** taint the canvas, so `toDataURL()` works and no CSP change was needed (`img-src data:` was already present). A `blob:` URL *would* have required widening the CSP.
+
+### Review findings fixed (all in the new export path; none touched document sync)
+1. **BUG** dark export from a *light* editor filled the canvas with the light body background → fixed constants per export theme.
+2. **BUG** export/print with a broken source silently fell back to the on-screen SVG in the wrong theme *and reported success* → now renders from `lastGoodSource` (matching what keep-last-good is displaying) and fails loudly if that's unavailable.
+3. **BUG** a diagram wider than 8192px produced a 0-byte PNG with a success toast (`Math.max(1, …)` prevented scaling *down*; oversized canvas → `toDataURL()` returns `"data:,"`) → allow scale < 1 and reject empty output on both sides.
+4. Themed export leaked mermaid's scratch node on failure → same orphan cleanup as the preview path.
+5. Host `exportPng` had no try/catch or payload validation → added.
+6. Print temp files accumulated forever in globalStorageUri → age-based sweep (immediate deletion is unsafe, the browser opens them async).
+7. `vscode-high-contrast-light` was classified as dark → fixed.
+8. Reviewer asked for a *manual* check that `scrollbar-gutter: stable` really equalises content width in both scrolling and non-scrolling states — automated it instead; passes both.
+
+### Research notes (parallel agents) — renderer and licensing decisions
+- **Licensing is the deciding filter**, given the intent to keep commercial options open. The repo already has a CLA, so contributor rights are assigned and relicensing remains possible.
+- **D2** — MPL-2.0 (file-level copyleft; safe to depend on without open-sourcing our code). Official `@terrastruct/d2` WASM build bundles dagre+ELK; TALA is proprietary and excluded. ~8MB, and needs `wasm-unsafe-eval` + `worker-src blob:` added to the CSP. **Recommended** as a future second renderer for architecture diagrams.
+- **PlantUML** — core is GPL. A first-party MIT-flavoured `@plantuml/core` (TeaVM) build now exists and genuinely renders client-side including Graphviz-dependent diagram types, but it is very new and its MIT-ness depends on the maintainer gating GPL paths correctly every release. **Avoid** — the downside is the whole product becoming GPL-encumbered.
+- **3D** — no "Mermaid for 3D" exists. A-Frame (MIT, three.js-based, LLM-fluent) is a *scene* language with no auto-layout, so an LLM must compute coordinates. Recommendation for architecture visualisation is a small custom DSL compiling to vendored three.js, with compiler-side layout so the LLM never emits coordinates. OpenSCAD/X_ITE are GPL — avoid.
+
+### Verification
+66 unit tests, 14 behavioral regression, 23 new-feature Playwright, 7 review-fix Playwright — all passing; `check-types` and `compile` clean.
+
+## 2026-07-19 — Mermaid authoring assistance (toolbox + completions)
+
+Follow-on to the mermaid editor overhaul. Same method: pure logic extracted to a UMD module for the Node test runner, DOM work in the webview, and the existing Playwright suites re-run as a regression gate before anything else.
+
+### What was built
+- `media/mermaidCompletions.js` — diagram templates, the context-aware snippet palette, the node-id scanner and the completion engine. No DOM access, so it is unit tested directly (28 tests).
+- **Template gallery** (8 starter diagrams) — the highest value-per-effort item: it solves "I can never remember mermaid syntax" outright. Replacing a non-empty document asks for confirmation first.
+- **Snippet palette**, rebuilt only when the detected diagram type changes (avoids DOM churn on every keystroke).
+- **Completion overlay** — VS Code's CompletionItemProvider does not apply to a textarea in a webview, so this is a custom overlay modelled on the markdown editor's `[[wikilink]]` autocomplete. Offers node ids after an arrow (the standout: a typo'd node id doesn't error in mermaid, it silently creates an orphan), plus diagram types, directions, keywords and arrows.
+- All insertion goes through `document.execCommand('insertText')` so the browser's native undo stack survives and a real `input` event fires — which is what drives the existing highlight refresh, render debounce and document sync. Assigning `textarea.value` directly would break undo AND fire no event, silently desyncing the document. There is a manual splice + synthetic event fallback in case execCommand is ever removed.
+
+### Bugs caught during verification
+1. **Completion list closed the instant it opened.** The `scroll` handler hid it, and typing itself scrolls the textarea to keep the caret visible. Fixed by repositioning on scroll instead of hiding — which is the better behavior anyway.
+2. **Overlay swallowed toolbar clicks** (caught by the *existing* feature suite, not the new one — the regression gate earning its keep). The overlay clamped to the window edge, so a long line pushed it over the preview pane where it covered the toolbar. Now clamped to the source pane, plus an outside-mousedown dismiss.
+3. **Layout broken — caught only by looking at a screenshot, with all 61 automated checks passing.** `.mmd-editor-pane` is `display: flex` with default row direction, so the new source toolbar became a row-sibling and squeezed the text into a one-character-wide strip. Fixed with `flex-direction: column` (+ `min-height: 0` on the stack instead of `height: 100%`, which would now overflow by the toolbar's height). A good reminder that behavioral tests keyed on element IDs say nothing about whether the thing is usable.
+
+### Verification
+94 unit tests (66 existing + 28 new); 61 Playwright checks (14 behavioral regression, 23 feature, 7 review-fix, 17 new toolbox/completions); check-types and compile clean.
+
+## 2026-07-19 — glTF 3D viewer
+
+Designed by a Fable subagent, built by a Sonnet subagent in an isolated worktree, then independently verified and reviewed here.
+
+### Key design decisions (from the spec)
+- **`.gltf` only for v1.** `.glb` is binary — a `CustomTextEditorProvider` would show mojibake and corrupt it on save. Supporting it needs a separate `CustomReadonlyEditorProvider`; the whole viewer half is reusable when we do.
+- **three.js cannot be file-copied like mermaid.** It removed its UMD builds at r160/r161 and ships ESM only; `examples/jsm` (GLTFLoader, OrbitControls) has been ESM-only since r148. Solved with a *second, parallel* esbuild context producing an IIFE global (`media/three-bundle.js`, 778KB), leaving the extension-host build untouched. MIT licensed — commercially safe.
+- **Live re-render, not an Update button** — with a `JSON.parse` validity gate (the document is usually invalid mid-typing, so invalid states cost nothing), a semantic-identity skip so reformatting is free, and a 2MB size gate above which auto-render is disabled. An Update button always exists as a force path.
+- **Camera preservation is structural, not save/restore.** Renderer/scene/camera/OrbitControls are created once per webview lifetime; a reload only swaps the model subtree. The viewport therefore survives every reload by construction — the same insight as the mermaid editor's transform surviving `innerHTML` replacement.
+- **`connect-src` had to be added to the CSP** — GLTFLoader's FileLoader/ImageBitmapLoader use `fetch` for `.bin` buffers and textures. Easy to miss; would only fail on real multi-file models.
+
+### Build agent's deviations, all accepted
+- Passes the already-`JSON.parse`d object into `GLTFLoader.parse()` rather than the raw string: `parse()` does its own unguarded `JSON.parse` on a string, which throws *synchronously* and bypasses `onError`. Genuinely better than the spec.
+- Dedicated `THREE.LoadingManager` rather than the shared default, for isolation.
+- Added `loadCount` to the debug hook so tests can detect completion deterministically instead of via fixed timeouts.
+
+### Review finding fixed
+`lastRenderedJson` was recorded *before* the async load succeeded, so a glTF that parsed as JSON but failed to load would poison the identity cache: returning to that exact text later hit the skip path, which clears the error banner while the stale previous model is still displayed — a broken document silently presenting as fine. Now recorded only on success.
+
+### Verification note worth keeping
+My first camera-preservation test reported a failure that was **my test's bug, not the code's**: OrbitControls has damping enabled, so the camera keeps easing for a second or two after a drag, and I measured mid-settle. A controlled comparison (drift with reload vs drift over the same interval without one) gave 0.000000 vs 0.000022 — proving preservation exactly. The build agent had actually warned about this in its report. Lesson: when a test disagrees with a design claim, measure the control before believing either.
+
+### Verification
+107 unit tests (94 + 13 new); 6 glTF Playwright checks (render, camera preservation, GPU-leak accounting over 8 reloads, invalid-JSON keep-last-good); the mermaid behavioral suite re-run against the merged branch (14/14, no cross-feature regression); check-types and compile clean.

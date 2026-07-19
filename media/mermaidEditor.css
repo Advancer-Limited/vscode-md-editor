@@ -10,6 +10,10 @@
   --font-family: var(--vscode-editor-font-family, 'Consolas', 'Courier New', monospace);
   --font-size: var(--vscode-editor-font-size, 14px);
   --preview-font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  --toolbar-bg: var(--vscode-editorGroupHeader-tabsBackground, #252526);
+  --button-bg: var(--vscode-button-secondaryBackground, #3a3d41);
+  --button-fg: var(--vscode-button-secondaryForeground, #ccc);
+  --button-hover-bg: var(--vscode-button-secondaryHoverBackground, #505357);
 }
 
 * {
@@ -36,35 +40,181 @@ html, body {
 }
 
 /* =============================================
-   Editor Pane
+   Editor Pane — transparent textarea over a
+   syntax-highlighted <pre> mirror
    ============================================= */
 .mmd-editor-pane {
   flex: 1;
   display: flex;
+  /* Column, so the source toolbar stacks ABOVE the editor. Without this the
+     toolbar becomes a row-sibling and squeezes the text into a sliver. */
+  flex-direction: column;
   overflow: hidden;
   min-width: 0;
 }
 
-.mmd-editor-pane textarea {
-  width: 100%;
-  height: 100%;
-  background: var(--editor-bg);
-  color: var(--editor-fg);
-  border: none;
-  outline: none;
-  resize: none;
-  padding: 16px;
-  font-family: var(--font-family);
-  font-size: var(--font-size);
-  line-height: 1.6;
-  tab-size: 4;
-  -moz-tab-size: 4;
-  word-wrap: break-word;
-  white-space: pre-wrap;
+.mmd-editor-stack {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  /* NOT height:100% — the pane is now a flex column containing the toolbar
+     too, so a fixed 100% would overflow by the toolbar's height. `flex: 1`
+     plus min-height:0 lets it take exactly the remaining space. */
+  min-height: 0;
 }
 
-.mmd-editor-pane textarea::placeholder {
+/* ---------------------------------------------
+   SHARED TEXT METRICS — every property here
+   affects glyph position. The textarea and the
+   highlight <pre> MUST agree on all of them or
+   the overlay drifts out of alignment. They are
+   deliberately in ONE rule so they cannot be
+   changed for one element and not the other.
+   --------------------------------------------- */
+.mmd-editor-stack textarea,
+.mmd-editor-stack pre.mmd-highlight,
+.mmd-editor-stack pre.mmd-highlight code {
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  font-weight: normal;
+  font-style: normal;
+  /* Ligature/kerning substitution differs between a plain text run and one
+     split across <span>s, which shifts glyphs — disable both. */
+  font-variant-ligatures: none;
+  font-kerning: none;
+  font-feature-settings: normal;
+  line-height: 1.6;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -moz-tab-size: 4;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
+  -webkit-hyphens: none;
+  hyphens: none;
+  text-align: left;
+  text-indent: 0;
+  text-transform: none;
+  text-rendering: auto;
+  direction: ltr;
+  box-sizing: border-box;
+  border: none;
+  margin: 0;
+}
+
+.mmd-editor-stack textarea,
+.mmd-editor-stack pre.mmd-highlight {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  /* Reserve the scrollbar gutter on BOTH elements unconditionally. Without
+     this the textarea (overflow:auto) loses ~14px of content width to its
+     scrollbar while the <pre> (overflow:hidden) does not — different content
+     widths mean different wrap points under pre-wrap, which misaligns
+     everything below the first wrapped line.
+     (Linters flag this as unsupported in Safari; irrelevant here — VS Code
+     webviews are always Chromium/Electron.) */
+  scrollbar-gutter: stable;
+}
+
+.mmd-editor-stack pre.mmd-highlight {
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--editor-bg);
+  color: var(--editor-fg);
+}
+
+.mmd-editor-stack pre.mmd-highlight code {
+  display: block;
+  padding: 0;
+}
+
+/* Token spans must colour text without perturbing its metrics. */
+.mmd-highlight code span {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+.mmd-editor-stack textarea {
+  z-index: 2;
+  color: transparent;
+  background: transparent;
+  caret-color: var(--editor-fg);
+  outline: none;
+  resize: none;
+  overflow: auto;
+}
+
+.mmd-editor-stack textarea::selection {
+  background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.6));
+  color: transparent;
+}
+
+/* ::placeholder colour is independent of the element's transparent color. */
+.mmd-editor-stack textarea::placeholder {
   color: var(--vscode-input-placeholderForeground, #888);
+}
+
+/* =============================================
+   Syntax highlighting token colours
+   (VS Code exposes no token colours as CSS vars,
+   so these mirror Dark+ / Light+ conventions)
+   ============================================= */
+.tok-comment   { color: #6A9955; }
+.tok-directive { color: #C586C0; }
+.tok-string    { color: #CE9178; }
+.tok-diagram   { color: #569CD6; font-weight: 600; }
+.tok-keyword   { color: #C586C0; }
+.tok-direction { color: #4EC9B0; }
+.tok-arrow     { color: #569CD6; }
+.tok-bracket   { color: #FFD700; }
+.tok-label     { color: #CE9178; }
+.tok-number    { color: #B5CEA8; }
+
+body.vscode-light .tok-comment   { color: #008000; }
+body.vscode-light .tok-directive { color: #AF00DB; }
+body.vscode-light .tok-string    { color: #A31515; }
+body.vscode-light .tok-diagram   { color: #0000FF; }
+body.vscode-light .tok-keyword   { color: #AF00DB; }
+body.vscode-light .tok-direction { color: #267F99; }
+body.vscode-light .tok-arrow     { color: #0000FF; }
+body.vscode-light .tok-bracket   { color: #0431FA; }
+body.vscode-light .tok-label     { color: #A31515; }
+body.vscode-light .tok-number    { color: #098658; }
+
+body.vscode-high-contrast .mmd-highlight code span { color: var(--editor-fg); }
+body.vscode-high-contrast .tok-comment { color: #7CA668; }
+
+/* =============================================
+   Error line marking in the source pane
+   ============================================= */
+.mmd-line.mmd-error-line {
+  background: rgba(190, 17, 0, 0.18);
+}
+
+body.vscode-light .mmd-line.mmd-error-line {
+  background: rgba(190, 17, 0, 0.10);
+}
+
+/* Full-width bar behind the offending line, with a gutter marker. Positioned
+   in the <pre>'s content coordinates so it scrolls with the text. */
+.mmd-error-line-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(190, 17, 0, 0.10);
+  border-left: 3px solid var(--vscode-inputValidation-errorBorder, #be1100);
 }
 
 /* =============================================
@@ -83,25 +233,109 @@ html, body {
 }
 
 /* =============================================
-   Preview Pane
+   Preview Pane — toolbar + zoom/pan viewport
    ============================================= */
 .mmd-preview-pane {
   flex: 1;
-  overflow: auto;
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   min-width: 0;
 }
 
-.mmd-preview-pane svg {
-  max-width: 100%;
-  height: auto;
+.mmd-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.mmd-toolbar button {
+  background: var(--button-bg);
+  color: var(--button-fg);
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--preview-font-family);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mmd-toolbar button:hover:not(:disabled) {
+  background: var(--button-hover-bg);
+}
+
+.mmd-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mmd-toolbar button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.mmd-zoom-readout {
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground, #999);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mmd-toolbar-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
+.mmd-toolbar-spacer {
+  flex: 1;
+}
+
+/* The viewport clips; the inner canvas is what gets transformed. */
+.mmd-viewport {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.mmd-viewport.panning {
+  cursor: grabbing;
+}
+
+.mmd-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* NOTE: deliberately NOT `max-width: 100%` — that would rescale the diagram
+   against the pane on every resize and fight the zoom transform. Size is
+   normalized from the SVG's viewBox in mermaidEditor.js instead. */
+.mmd-canvas svg {
+  display: block;
 }
 
 /* =============================================
-   Error banner
+   Error banner — outside the viewport, so it
+   never zooms or pans with the diagram
    ============================================= */
 .mmd-error {
-  margin-top: 12px;
+  flex-shrink: 0;
+  margin: 8px;
   padding: 8px 12px;
   border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
   background: var(--vscode-inputValidation-errorBackground, rgba(190, 17, 0, 0.15));
@@ -110,4 +344,190 @@ html, body {
   font-size: 12px;
   white-space: pre-wrap;
   border-radius: 3px;
+  max-height: 30%;
+  overflow: auto;
+}
+
+/* =============================================
+   Brand / About button
+   ============================================= */
+.brand-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.brand-button:hover {
+  background: var(--button-hover-bg);
+  opacity: 1;
+}
+
+.brand-button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.brand-button svg {
+  display: block;
+}
+
+/* =============================================
+   Source-pane toolbox (templates + snippets)
+   ============================================= */
+.mmd-source-toolbar {
+  flex-shrink: 0;
+}
+
+.mmd-snippets {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* Wrap rather than scroll: with ~15 snippets, discoverability beats
+     saving a row of vertical space. */
+  flex-wrap: wrap;
+}
+
+.mmd-snippets button {
+  background: var(--button-bg);
+  color: var(--button-fg);
+  border: none;
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-family: var(--preview-font-family);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.mmd-snippets button:hover {
+  background: var(--button-hover-bg);
+}
+
+.mmd-snippets button:focus-visible,
+.mmd-source-toolbar button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+/* =============================================
+   Template gallery menu
+   ============================================= */
+.mmd-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--vscode-editorWidget-background, #252526);
+  border: 1px solid var(--vscode-editorWidget-border, #454545);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+}
+
+.mmd-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--preview-font-family);
+}
+
+.mmd-menu-item:hover,
+.mmd-menu-item:focus-visible {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+  outline: none;
+}
+
+.mmd-menu-label {
+  color: var(--editor-fg);
+  font-size: 12px;
+}
+
+.mmd-menu-desc {
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 11px;
+}
+
+/* =============================================
+   Completion overlay
+   ============================================= */
+.mmd-autocomplete {
+  position: fixed;
+  z-index: 100;
+  min-width: 200px;
+  max-width: 260px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--vscode-editorWidget-background, #252526);
+  border: 1px solid var(--vscode-editorWidget-border, #454545);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: 2px;
+}
+
+.mmd-autocomplete-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.mmd-autocomplete-item.selected,
+.mmd-autocomplete-item:hover {
+  background: var(--vscode-list-activeSelectionBackground, #04395e);
+}
+
+.mmd-autocomplete-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  background: #6e7681;
+}
+
+.mmd-autocomplete-kind.kind-node { background: #4e9a5f; }
+.mmd-autocomplete-kind.kind-keyword { background: #9a5fa8; }
+.mmd-autocomplete-kind.kind-diagram { background: #3c7fb1; }
+.mmd-autocomplete-kind.kind-direction { background: #3f8f88; }
+.mmd-autocomplete-kind.kind-arrow { background: #a8763f; }
+
+.mmd-autocomplete-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--editor-fg);
+}
+
+.mmd-autocomplete-detail {
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 10px;
+  flex-shrink: 0;
 }

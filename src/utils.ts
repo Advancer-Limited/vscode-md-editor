@@ -36,6 +36,30 @@ export function debounce(fn: (...args: any[]) => any, delayMs: number): (...args
 }
 
 /**
+ * The Advancer mark, as inline SVG for a toolbar button.
+ *
+ * Inline rather than an <img> so it needs no `img-src` allowance and adds no
+ * extra request; `currentColor` is deliberately avoided so the brand keeps its
+ * colours in both light and dark themes.
+ */
+export function getBrandButtonHtml(): string {
+  return /* html */ `<button id="btn-about" class="brand-button" title="About this extension" aria-label="About this extension">
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="advancerBrandGradient" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#c084fc"/>
+          <stop offset="55%" stop-color="#a855f7"/>
+          <stop offset="100%" stop-color="#6b21a8"/>
+        </linearGradient>
+      </defs>
+      <path fill="url(#advancerBrandGradient)" fill-rule="evenodd" clip-rule="evenodd"
+            d="M12 2.5 L22 21 L2 21 Z M12 9.6 L16.1 17.2 L7.9 17.2 Z"/>
+      <path fill="#581c87" d="M2 21 L6.6 12.5 L9.1 17.2 L7 21 Z"/>
+    </svg>
+  </button>`;
+}
+
+/**
  * Case-insensitively test whether a path (or URI fsPath) has a markdown
  * extension — `.md` or `.markdown`. The extension's customEditors selector
  * (package.json) claims both extensions, so anything gating markdown-only

@@ -23,6 +23,8 @@ todo.md
 serve-test.js
 test-sample.md
 test-server.html
+mmd-test-server.html
+gltf-test-server.html
 
 # OS files
 .DS_Store

@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
-import { getNonce, computeMinimalEdit } from './utils.js';
+import { getNonce, computeMinimalEdit, getBrandButtonHtml } from './utils.js';
 import { WebviewToExtensionMessage, GrammarMatch } from './types.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
+import { showAboutDialog } from './about.js';
 
 export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly viewType = 'vscodeMdEditor.editor';
@@ -144,6 +145,10 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
           case 'requestGrammarCheck':
             vscode.commands.executeCommand('vscodeMdEditor.checkGrammar');
+            return;
+
+          case 'showAbout':
+            await showAboutDialog(this.context);
             return;
 
           case 'requestWikilinkSuggestions': {
@@ -301,6 +306,8 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       <button id="btn-split" title="Split View">Split</button>
       <button id="btn-editor-only" title="Raw Markdown">Raw</button>
     </div>
+    <span class="toolbar-separator"></span>
+    ${getBrandButtonHtml()}
   </div>
   <div class="editor-container preview-only" id="editor-container">
     <div class="editor-pane" id="editor-pane">

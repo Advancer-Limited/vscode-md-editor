@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { MarkdownEditorProvider } from './markdownEditorProvider.js';
 import { MermaidEditorProvider } from './mermaidEditorProvider.js';
+import { GltfEditorProvider } from './gltfEditorProvider.js';
 import { isMarkdownFile } from './utils.js';
 import { LanguageToolService } from './languageToolService.js';
 import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
@@ -41,6 +42,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerCustomEditorProvider(
       MermaidEditorProvider.viewType,
       new MermaidEditorProvider(context),
+      {
+        webviewOptions: { retainContextWhenHidden: true },
+        supportsMultipleEditorsPerDocument: false,
+      }
+    )
+  );
+
+  // 2c. Register the glTF 3D editor (self-contained, independent of the
+  // markdown and mermaid editors above).
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      GltfEditorProvider.viewType,
+      new GltfEditorProvider(context),
       {
         webviewOptions: { retainContextWhenHidden: true },
         supportsMultipleEditorsPerDocument: false,

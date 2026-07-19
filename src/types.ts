@@ -90,7 +90,9 @@ export type WebviewToExtensionMessage =
   | { type: 'requestGrammarCheck' }
   | { type: 'requestWikilinkSuggestions'; prefix: string }
   | { type: 'openWikilink'; target: string }
-  | { type: 'applyGrammarFix'; offset: number; length: number; replacement: string; expectedText?: string };
+  | { type: 'applyGrammarFix'; offset: number; length: number; replacement: string; expectedText?: string }
+  /** Toolbar brand button — show the About dialog. */
+  | { type: 'showAbout' };
 
 export interface WikilinkSuggestion {
   stem: string;
@@ -168,12 +170,51 @@ export type FullGraphToExtensionMessage =
 /** Messages from extension host -> mermaid editor webview */
 export type MermaidEditorToWebviewMessage =
   | { type: 'update'; text: string }
-  | { type: 'editAck' };
+  | { type: 'editAck' }
+  /** Result of the export-theme QuickPick; the webview then rasterizes. */
+  | { type: 'exportPngTheme'; theme: 'light' | 'dark' }
+  /** Result of the "replace the document with a template?" confirmation. */
+  | { type: 'templateReplaceConfirmed'; confirmed: boolean };
 
 /** Messages from mermaid editor webview -> extension host */
 export type MermaidWebviewToExtensionMessage =
   | { type: 'ready' }
-  | { type: 'edit'; text: string };
+  | { type: 'edit'; text: string }
+  /** Asks the host to prompt for an image theme before rasterizing. */
+  | { type: 'requestPngExport' }
+  /** Rasterized diagram, base64-encoded PNG, for the host to save to disk. */
+  | { type: 'exportPng'; base64: string }
+  | { type: 'exportError'; message: string }
+  /** Toolbar brand button — show the About dialog. */
+  | { type: 'showAbout' }
+  /**
+   * Ask the host to confirm replacing the document with a template.
+   * Confirmation must happen host-side: webviews are sandboxed without
+   * allow-modals, so confirm() is blocked there.
+   */
+  | { type: 'confirmTemplateReplace'; label: string }
+  /**
+   * Serialized SVG to print. The host writes it to a standalone HTML file and
+   * opens it externally — window.print() is suppressed inside VS Code's
+   * sandboxed webview iframes, so printing cannot be done in the webview.
+   */
+  | { type: 'print'; svg: string };
+
+// ========================================
+// glTF 3D Editor Types
+// ========================================
+
+/** Messages from extension host -> glTF editor webview */
+export type GltfEditorToWebviewMessage =
+  | { type: 'update'; text: string }
+  | { type: 'editAck' };
+
+/** Messages from glTF editor webview -> extension host */
+export type GltfWebviewToExtensionMessage =
+  | { type: 'ready' }
+  | { type: 'edit'; text: string }
+  /** Toolbar brand button — show the About dialog. */
+  | { type: 'showAbout' };
 
 // ========================================
 // Extension Configuration

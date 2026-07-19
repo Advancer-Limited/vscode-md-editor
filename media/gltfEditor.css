@@ -1,0 +1,250 @@
+/* =============================================
+   Root variables - adapt to VS Code theme
+   (mirrors media/mermaidEditor.css's variable names)
+   ============================================= */
+:root {
+  --editor-bg: var(--vscode-editor-background, #1e1e1e);
+  --editor-fg: var(--vscode-editor-foreground, #d4d4d4);
+  --border-color: var(--vscode-panel-border, #444);
+  --focus-border: var(--vscode-focusBorder, #007fd4);
+  --font-family: var(--vscode-editor-font-family, 'Consolas', 'Courier New', monospace);
+  --font-size: var(--vscode-editor-font-size, 14px);
+  --preview-font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  --toolbar-bg: var(--vscode-editorGroupHeader-tabsBackground, #252526);
+  --button-bg: var(--vscode-button-secondaryBackground, #3a3d41);
+  --button-fg: var(--vscode-button-secondaryForeground, #ccc);
+  --button-hover-bg: var(--vscode-button-secondaryHoverBackground, #505357);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--editor-bg);
+  color: var(--editor-fg);
+  font-family: var(--preview-font-family);
+}
+
+/* =============================================
+   Container — always split, no view-toggle modes
+   ============================================= */
+.gltf-container {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* =============================================
+   Editor Pane — plain textarea (no highlight
+   overlay in v1 — glTF JSON is typically
+   machine-generated and often a single line).
+   Wrapped in a stack div so an overlay can be
+   added later without markup churn.
+   ============================================= */
+.gltf-editor-pane {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.gltf-editor-stack {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.gltf-editor-stack textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  line-height: 1.6;
+  white-space: pre;
+  color: var(--editor-fg);
+  background: var(--editor-bg);
+  caret-color: var(--editor-fg);
+  outline: none;
+  resize: none;
+  overflow: auto;
+  border: none;
+}
+
+.gltf-editor-stack textarea::selection {
+  background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.6));
+}
+
+.gltf-editor-stack textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground, #888);
+}
+
+/* =============================================
+   Divider (draggable)
+   ============================================= */
+.gltf-divider {
+  width: 4px;
+  background: var(--border-color);
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.gltf-divider:hover, .gltf-divider.dragging {
+  background: var(--focus-border);
+}
+
+/* =============================================
+   Preview Pane — toolbar + 3D viewport
+   ============================================= */
+.gltf-preview-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.gltf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.gltf-toolbar button {
+  background: var(--button-bg);
+  color: var(--button-fg);
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--preview-font-family);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.gltf-toolbar button:hover:not(:disabled) {
+  background: var(--button-hover-bg);
+}
+
+.gltf-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.gltf-toolbar button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.gltf-toolbar button.active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+}
+
+.gltf-toolbar-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
+.gltf-toolbar-spacer {
+  flex: 1;
+}
+
+/* The viewport hosts the three.js <canvas>, which fills it via gltfEditor.js
+   resize handling (ResizeObserver -> renderer.setSize). */
+.gltf-viewport {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+}
+
+.gltf-container-3d {
+  position: absolute;
+  inset: 0;
+}
+
+.gltf-container-3d canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Passive note — e.g. "Auto-update disabled for large files". Distinct from
+   the error banner: informational, not a failure. */
+.gltf-note {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 4px 10px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-descriptionForeground, #999);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+/* =============================================
+   Error banner — outside the viewport
+   ============================================= */
+.gltf-error {
+  flex-shrink: 0;
+  margin: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  background: var(--vscode-inputValidation-errorBackground, rgba(190, 17, 0, 0.15));
+  color: var(--vscode-errorForeground, #f48771);
+  font-family: var(--font-family);
+  font-size: 12px;
+  white-space: pre-wrap;
+  border-radius: 3px;
+  max-height: 30%;
+  overflow: auto;
+}
+
+/* =============================================
+   Brand / About button
+   ============================================= */
+.brand-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.brand-button:hover {
+  background: var(--button-hover-bg);
+  opacity: 1;
+}
+
+.brand-button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.brand-button svg {
+  display: block;
+}

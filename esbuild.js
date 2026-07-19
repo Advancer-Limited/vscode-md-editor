@@ -33,11 +33,34 @@ async function main() {
     logLevel: 'silent',
     plugins: [esbuildProblemMatcherPlugin],
   });
+
+  // Separate, parallel context for the glTF editor's three.js vendor bundle.
+  // three.js ships ESM-only (no UMD build to copy the way mermaid.min.js /
+  // force-graph.min.js are in scripts/copy-vendor.js), so it's bundled here
+  // into a single IIFE global (`ThreeBundle`) that media/gltfEditor.js reads
+  // from. Deliberately a distinct esbuild.context() from the extension-host
+  // build above — a mistake in this config can't affect dist/extension.js.
+  const webviewCtx = await esbuild.context({
+    entryPoints: ['scripts/three-vendor-entry.js'],
+    bundle: true,
+    format: 'iife',
+    globalName: 'ThreeBundle',
+    platform: 'browser',
+    minify: true,
+    sourcemap: false,
+    outfile: 'media/three-bundle.js',
+    logLevel: 'silent',
+    plugins: [esbuildProblemMatcherPlugin],
+  });
+
   if (watch) {
     await ctx.watch();
+    await webviewCtx.watch();
   } else {
     await ctx.rebuild();
     await ctx.dispose();
+    await webviewCtx.rebuild();
+    await webviewCtx.dispose();
   }
 }
 

@@ -2,6 +2,21 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.0.0] - 2026-07-19
+
+First stable release.
+
+### Added
+
+- **Mermaid source editor overhaul** — the `.mmd`/`.mermaid` editor now has full syntax highlighting in the source pane (diagram keywords, arrows, node shapes, edge labels, comments, `%%{init}%%` directives), with the offending line highlighted when a diagram fails to parse.
+- **Zoom and pan in the diagram preview** — Ctrl/Cmd+scroll to zoom about the cursor, drag to pan, plus toolbar controls for zoom in/out, 100%, and fit-to-view with a live zoom readout. Your view is preserved as you keep typing, so zooming into part of a large diagram no longer resets on every edit.
+- **Export diagrams as PNG**, with a choice of light or dark background — a light export re-renders the diagram for a white background, so it stays readable when dropped into documents and slides.
+- **Print diagrams / save as PDF** — opens the diagram in your browser, where Print and its "Save as PDF" destination work properly.
+- **Refreshed diagram styling** — softer rounded corners, a flatter and more professional palette, and cleaner typography, with proper light and dark theme support that follows your VS Code theme (including live re-render when you switch themes).
+- **Mermaid authoring help** — a **Template** gallery inserting working starter diagrams (flowchart, sequence, class, state, ER, gantt, pie, mind map), a snippet palette that changes with the diagram type you're writing, and completions offering the node IDs already in your diagram, plus diagram types, directions, keywords and arrows. The node-ID completion prevents Mermaid's most common trap: a mistyped ID doesn't error, it silently creates a stray disconnected node.
+- **glTF 3D file editor** — opening a `.gltf` file gives you the JSON source alongside a live 3D preview rendered with three.js, with orbit, pan and zoom. The view updates as you edit and keeps your camera position, so you don't lose your place. Toolbar has fit, reset, wireframe and grid toggles. (Binary `.glb` files are not supported in this release.)
+- An **About** button on editor toolbars showing the product, version, and author.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added
