@@ -185,6 +185,24 @@
    */
   let lastGoodSource = null;
 
+  // ================================================
+  // Zoom & pan — state
+  // ================================================
+  // Declared here, above renderDiagram, because renderDiagram reads
+  // hasAutoFitted. `let` is in the temporal dead zone until its declaration
+  // executes, so declaring these below renderDiagram would work only by
+  // accident (nothing calls it during module evaluation) and would break the
+  // moment anything did. The behavior lives further down.
+  const ZOOM_MIN = 0.1;
+  const ZOOM_MAX = 8;
+  const ZOOM_STEP = 1.1;
+  const FIT_PADDING = 24;
+
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
+  let hasAutoFitted = false;
+
   function getErrorBar() {
     if (!errorBar) {
       errorBar = document.createElement('div');
@@ -404,17 +422,9 @@
   }
 
   // ================================================
-  // Zoom & pan
+  // Zoom & pan — behavior
   // ================================================
-  const ZOOM_MIN = 0.1;
-  const ZOOM_MAX = 8;
-  const ZOOM_STEP = 1.1;
-  const FIT_PADDING = 24;
-
-  let zoom = 1;
-  let panX = 0;
-  let panY = 0;
-  let hasAutoFitted = false;
+  // (state is declared above renderDiagram, which reads it)
 
   function applyTransform() {
     preview.style.transform =
