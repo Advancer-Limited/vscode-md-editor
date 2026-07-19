@@ -162,3 +162,23 @@
 - [ ] Mermaid diagram rendering in the diff view itself (a changed diagram currently shows as plain fenced-code hunks, not rendered SVG) — needs the shared mermaid vendor files from #44/#45 merged first
 - [ ] `.mmd` file diff support (side-by-side rendered old/new diagram) — diff commands aren't yet gated for `.mmd` in package.json menus
 - [ ] #44 and #45 both independently vendor `mermaid` as a dependency (built in parallel off develop) — trivial duplicate-addition conflict expected in package.json/package-lock.json when both merge
+
+## 2026-07-19 Mermaid editor overhaul + 1.0.0 (PR #50)
+
+- [x] Capture a behavioral baseline suite of the existing .mmd editor (14 checks) BEFORE changing anything, as an explicit regression contract
+- [x] Syntax highlighting in the .mmd source pane (transparent-textarea-over-<pre> overlay; tokenizer extracted to media/mermaidSyntax.js with 26 committed unit tests incl. HTML-injection cases)
+- [x] Error-line marking when a diagram fails to parse
+- [x] Zoom/pan in the diagram preview, transform preserved across re-renders
+- [x] PNG export with light/dark background choice (native QuickPick)
+- [x] Print via host -> temp HTML -> external browser (window.print() is suppressed in VS Code webviews)
+- [x] Professional diagram restyle + light/dark theming with live theme-switch re-render
+- [x] About/brand button on both editor toolbars
+- [x] Bump to 1.0.0, add author field, update README/CHANGELOG
+- [x] Fable adversarial review; fixed 3 bugs + 4 risks it found (see log.md)
+
+### Deferred / follow-up work
+- [ ] PR: Mermaid toolbox (snippet palette, template gallery) + IntelliSense-style autocomplete in the raw view
+- [ ] PR: glTF 3D viewer — `.gltf` raw view + three.js preview with zoom/orbit navigation (Fable to design; decide live-rerender-preserving-viewport vs an explicit Update button)
+- [ ] Evaluate D2 (`@terrastruct/d2`, MPL-2.0) as a second diagram renderer for architecture diagrams — needs `wasm-unsafe-eval` + `worker-src blob:` CSP additions, ~8MB bundle
+- [ ] AVOID PlantUML: core is GPL. An MIT-flavoured `@plantuml/core` build exists but is very new and its MIT-ness depends on the maintainer gating GPL paths each release — unacceptable risk given the intent to keep commercial options open
+- [ ] Clickable/editable mermaid diagrams in the markdown WYSIWYG view (currently read-only by design — Turndown round-trip would mangle an editable SVG)

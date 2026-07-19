@@ -782,6 +782,11 @@
     });
   }
 
+  // Toolbar: About (brand button)
+  document.getElementById('btn-about')?.addEventListener('click', () => {
+    vscode.postMessage({ type: 'showAbout' });
+  });
+
   // ================================================
   // View toggle
   // ================================================
