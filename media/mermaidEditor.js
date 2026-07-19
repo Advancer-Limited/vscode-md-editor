@@ -276,6 +276,15 @@
       exportPng(message.theme === 'light' ? 'light' : 'dark');
       return;
     }
+    if (message.type === 'templateReplaceConfirmed') {
+      const body = pendingTemplateBody;
+      pendingTemplateBody = null;
+      if (!body || !message.confirmed) return;
+      textarea.focus();
+      textarea.select(); // replace the whole document
+      insertSnippet(body);
+      return;
+    }
     if (message.type === 'update') {
       const text = normalizeEol(message.text);
       const isEcho = text === textarea.value || text === lastSentEditText;
@@ -736,7 +745,6 @@
   // @ts-ignore - MermaidCompletions loaded globally from mermaidCompletions.js
   const completions = typeof MermaidCompletions !== 'undefined' ? MermaidCompletions : null;
 
-  const sourceToolbar = document.getElementById('mmd-source-toolbar');
   const snippetsBar = document.getElementById('mmd-snippets');
   const btnTemplate = document.getElementById('mmd-template');
 
@@ -820,6 +828,8 @@
 
   // --- Template gallery -------------------------------------------------
   let templateMenu = null;
+  /** Template awaiting the host's replace-confirmation reply. */
+  let pendingTemplateBody = null;
 
   function closeTemplateMenu() {
     if (templateMenu) {
@@ -859,17 +869,18 @@
 
       item.addEventListener('click', () => {
         closeTemplateMenu();
-        const existing = textarea.value.trim();
-        if (existing) {
-          // Replacing a non-empty document silently would destroy work.
-          const replace = confirm(
-            'Replace the current diagram with the ' + template.label + ' template?'
-          );
-          if (!replace) return;
-          textarea.select();
-        } else {
-          textarea.focus();
+        if (textarea.value.trim()) {
+          // Replacing a non-empty document silently would destroy work, so
+          // confirm first — but via the host, because webviews are sandboxed
+          // without allow-modals: confirm()/alert() are blocked there (the
+          // same restriction that stops window.print(), see the Print
+          // handler above). A blocked confirm() returns false, which would
+          // make templates silently do nothing on any non-empty document.
+          pendingTemplateBody = template.body;
+          vscode.postMessage({ type: 'confirmTemplateReplace', label: template.label });
+          return;
         }
+        textarea.focus();
         insertSnippet(template.body);
       });
       templateMenu.appendChild(item);

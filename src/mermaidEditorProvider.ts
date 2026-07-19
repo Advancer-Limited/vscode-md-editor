@@ -247,6 +247,19 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
             await showAboutDialog(this.context);
             return;
 
+          case 'confirmTemplateReplace': {
+            const answer = await vscode.window.showWarningMessage(
+              `Replace the current diagram with the ${message.label} template?`,
+              { modal: true, detail: 'The existing diagram source will be overwritten. This can be undone.' },
+              'Replace'
+            );
+            webviewPanel.webview.postMessage({
+              type: 'templateReplaceConfirmed',
+              confirmed: answer === 'Replace',
+            });
+            return;
+          }
+
           case 'print': {
             // window.print() is suppressed inside VS Code's sandboxed webview
             // iframes (no allow-modals), and fails silently. Write a
