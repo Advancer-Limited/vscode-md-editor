@@ -236,7 +236,6 @@
       hideError();
       return;
     }
-    lastRenderedJson = json;
     lastResourceError = null;
 
     loader.parse(
@@ -250,6 +249,12 @@
           disposeObject3D(gltf.scene);
           return;
         }
+        // Record the identity ONLY on success. Recording it up-front would
+        // let a glTF that parsed as JSON but failed to load poison the cache:
+        // returning to that exact text later would hit the skip path, which
+        // clears the error banner while the stale previous model is still on
+        // screen — a broken document silently presenting as fine.
+        lastRenderedJson = json;
         setModel(gltf.scene);
         hideError();
       },

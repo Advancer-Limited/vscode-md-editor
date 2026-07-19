@@ -190,3 +190,20 @@
 - [x] Context-aware snippet palette that follows the detected diagram type
 - [x] IntelliSense-style completion overlay: node ids after arrows (the headline feature — a typo'd id silently creates an orphan node in mermaid), diagram types, directions, keywords, arrows
 - [x] Regression gate: all 44 pre-existing Playwright checks + 66 unit tests still pass
+
+## 2026-07-19 glTF 3D viewer (PR #52)
+
+- [x] Fable design spec (formats, three.js vendoring, resource resolution, live-vs-Update decision)
+- [x] `src/gltfEditorProvider.ts` — `.gltf` split-view editor, document-sync copied from the mermaid provider
+- [x] three.js vendored via a second esbuild IIFE bundle (three ships ESM only since r160 — file-copy is not possible)
+- [x] Live re-render with `JSON.parse` gate, semantic-identity skip, 2MB size gate + Update button
+- [x] Camera preservation across reloads (structural: renderer/scene/camera built once, only the model subtree swaps)
+- [x] Full GPU disposal walk (three.js never GCs GPU resources)
+- [x] External `.bin`/texture resolution via `asWebviewUri` base + `connect-src` CSP
+- [x] `media/gltfViewerMath.js` + 13 unit tests; 6 Playwright checks incl. camera preservation and GPU-leak accounting
+
+### Deferred
+- [ ] `.glb` (binary) support — needs a separate `CustomReadonlyEditorProvider`; the viewer half is reusable
+- [ ] Draco / KTX2 compressed assets (currently fail with a clear error)
+- [ ] Animation playback (animated models load, but don't play)
+- [ ] Manual VS Code verification: `LoaderUtils.resolveURL` against real `vscode-resource:` URIs, and `visibilitychange` in a genuinely hidden panel
