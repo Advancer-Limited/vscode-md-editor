@@ -823,8 +823,17 @@
     snippetsBar.textContent = '';
     for (const snippet of completions.getSnippets(textarea.value)) {
       const btn = document.createElement('button');
-      btn.textContent = snippet.label;
-      btn.title = snippet.title;
+      btn.className = 'mmd-snippet-btn';
+      // Icon-only button: the label/title pair becomes the hover tooltip
+      // (and the accessible name) instead of visible words, so a full
+      // shape/option palette fits on one toolbar row.
+      btn.innerHTML =
+        '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+        snippet.icon +
+        '</svg>';
+      btn.title = `${snippet.label} — ${snippet.title}`;
+      btn.setAttribute('aria-label', `${snippet.label}: ${snippet.title}`);
       btn.addEventListener('click', () => insertSnippet(snippet.body));
       snippetsBar.appendChild(btn);
     }

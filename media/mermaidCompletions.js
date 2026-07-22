@@ -309,60 +309,68 @@
 
   // ============================================================
   // Snippet palette — context-aware by diagram type
+  //
+  // `icon` is inner SVG markup (no <svg> wrapper) rendered by the webview
+  // inside a shared viewBox="0 0 16 16" element that supplies
+  // fill="none" stroke="currentColor" — child shapes inherit that, so only
+  // filled glyphs (a composition diamond, a state's initial/final dot) need
+  // to set their own fill. This keeps the palette buttons small icon
+  // buttons rather than words, with the label+title as the hover tooltip,
+  // so the toolbar fits on one line instead of wrapping.
   // ============================================================
   const FLOWCHART_SNIPPETS = [
-    { label: 'Box', title: 'Rectangular node', body: '${A}[Label]' },
-    { label: 'Rounded', title: 'Rounded node', body: '${A}(Label)' },
-    { label: 'Stadium', title: 'Stadium-shaped node', body: '${A}([Label])' },
-    { label: 'Circle', title: 'Circular node', body: '${A}((Label))' },
-    { label: 'Diamond', title: 'Decision node', body: '${A}{Label}' },
-    { label: 'Hexagon', title: 'Hexagonal node', body: '${A}{{Label}}' },
-    { label: 'Database', title: 'Cylinder node', body: '${A}[(Database)]' },
-    { label: 'Arrow', title: 'Arrow link', body: ' --> ' },
-    { label: 'Open', title: 'Open link (no arrowhead)', body: ' --- ' },
-    { label: 'Dotted', title: 'Dotted link', body: ' -.-> ' },
-    { label: 'Thick', title: 'Thick link', body: ' ==> ' },
-    { label: 'Labelled', title: 'Link with a label', body: ' -->|${label}| ' },
-    { label: 'Subgraph', title: 'Grouped section', body: 'subgraph ${Name}\n    \nend\n' },
+    { label: 'Box', title: 'Rectangular node', icon: '<rect x="2" y="4" width="12" height="8"/>', body: '${A}[Label]' },
+    { label: 'Rounded', title: 'Rounded node', icon: '<rect x="2" y="4" width="12" height="8" rx="3"/>', body: '${A}(Label)' },
+    { label: 'Stadium', title: 'Stadium-shaped node', icon: '<rect x="2" y="5" width="12" height="6" rx="3"/>', body: '${A}([Label])' },
+    { label: 'Circle', title: 'Circular node', icon: '<circle cx="8" cy="8" r="6"/>', body: '${A}((Label))' },
+    { label: 'Diamond', title: 'Decision node', icon: '<path d="M8 2 L14 8 L8 14 L2 8 Z"/>', body: '${A}{Label}' },
+    { label: 'Hexagon', title: 'Hexagonal node', icon: '<path d="M4.5 3 H11.5 L14 8 L11.5 13 H4.5 L2 8 Z"/>', body: '${A}{{Label}}' },
+    { label: 'Database', title: 'Cylinder node', icon: '<path d="M2 5c0-1.1 2.7-2 6-2s6 .9 6 2v6c0 1.1-2.7 2-6 2s-6-.9-6-2V5z"/><path d="M2 5c0 1.1 2.7 2 6 2s6-.9 6-2"/>', body: '${A}[(Database)]' },
+    { label: 'Arrow', title: 'Arrow link', icon: '<line x1="1.5" y1="8" x2="12" y2="8"/><path d="M9.5 5 L13 8 L9.5 11"/>', body: ' --> ' },
+    { label: 'Open', title: 'Open link (no arrowhead)', icon: '<line x1="1.5" y1="8" x2="14.5" y2="8"/>', body: ' --- ' },
+    { label: 'Dotted', title: 'Dotted link', icon: '<line x1="1.5" y1="8" x2="12" y2="8" stroke-dasharray="2.2 2.2"/><path d="M9.5 5 L13 8 L9.5 11"/>', body: ' -.-> ' },
+    { label: 'Thick', title: 'Thick link', icon: '<line x1="1.5" y1="8" x2="11.5" y2="8" stroke-width="3"/><path d="M9 5 L13.5 8 L9 11"/>', body: ' ==> ' },
+    { label: 'Labelled', title: 'Link with a label', icon: '<rect x="4" y="2" width="6" height="4" rx="1"/><line x1="1.5" y1="10" x2="12" y2="10"/><path d="M9.5 7 L13 10 L9.5 13"/>', body: ' -->|${label}| ' },
+    { label: 'Subgraph', title: 'Grouped section', icon: '<rect x="2" y="3" width="12" height="10" rx="2" stroke-dasharray="2 2"/>', body: 'subgraph ${Name}\n    \nend\n' },
   ];
 
   const SEQUENCE_SNIPPETS = [
-    { label: 'Participant', title: 'Declare a participant', body: 'participant ${Name}\n' },
-    { label: 'Actor', title: 'Declare an actor', body: 'actor ${Name}\n' },
-    { label: 'Message', title: 'Solid arrow message', body: '${A}->>B: Message\n' },
-    { label: 'Reply', title: 'Dashed reply', body: '${B}-->>A: Reply\n' },
-    { label: 'Activate', title: 'Activation block', body: 'activate ${A}\n\ndeactivate A\n' },
-    { label: 'Note', title: 'Note over participants', body: 'Note over ${A},B: Text\n' },
-    { label: 'Loop', title: 'Loop block', body: 'loop ${Every minute}\n    \nend\n' },
-    { label: 'Alt', title: 'Alternative paths', body: 'alt ${Condition}\n    \nelse Otherwise\n    \nend\n' },
-    { label: 'Opt', title: 'Optional block', body: 'opt ${Condition}\n    \nend\n' },
-    { label: 'Par', title: 'Parallel block', body: 'par ${Branch one}\n    \nand Branch two\n    \nend\n' },
+    { label: 'Participant', title: 'Declare a participant', icon: '<rect x="3" y="2" width="10" height="4" rx="1"/><line x1="8" y1="6" x2="8" y2="14" stroke-dasharray="1.6 1.6"/>', body: 'participant ${Name}\n' },
+    { label: 'Actor', title: 'Declare an actor', icon: '<circle cx="8" cy="4" r="2"/><line x1="8" y1="6" x2="8" y2="11"/><line x1="4.5" y1="8.5" x2="11.5" y2="8.5"/><line x1="8" y1="11" x2="5" y2="14"/><line x1="8" y1="11" x2="11" y2="14"/>', body: 'actor ${Name}\n' },
+    { label: 'Message', title: 'Solid arrow message', icon: '<line x1="1.5" y1="8" x2="12" y2="8"/><path d="M9.5 5 L13 8 L9.5 11"/>', body: '${A}->>B: Message\n' },
+    { label: 'Reply', title: 'Dashed reply', icon: '<line x1="3.5" y1="8" x2="14.5" y2="8" stroke-dasharray="2.2 2.2"/><path d="M6.5 5 L3 8 L6.5 11"/>', body: '${B}-->>A: Reply\n' },
+    { label: 'Activate', title: 'Activation block', icon: '<rect x="6.5" y="2" width="3" height="12"/>', body: 'activate ${A}\n\ndeactivate A\n' },
+    { label: 'Note', title: 'Note over participants', icon: '<path d="M2 2 H10 L14 6 V14 H2 Z"/><path d="M10 2 V6 H14"/>', body: 'Note over ${A},B: Text\n' },
+    { label: 'Loop', title: 'Loop block', icon: '<path d="M12.6 6.4A5 5 0 1 0 13 9"/><path d="M13 3.4 V6.6 H9.8"/>', body: 'loop ${Every minute}\n    \nend\n' },
+    { label: 'Alt', title: 'Alternative paths', icon: '<path d="M2 8 H6 M6 8 L11 4 M6 8 L11 12 M11 4 H14 M11 12 H14"/>', body: 'alt ${Condition}\n    \nelse Otherwise\n    \nend\n' },
+    { label: 'Opt', title: 'Optional block', icon: '<rect x="5" y="3" width="9" height="10" rx="2" stroke-dasharray="2 2"/><line x1="1" y1="8" x2="5" y2="8"/>', body: 'opt ${Condition}\n    \nend\n' },
+    { label: 'Par', title: 'Parallel block', icon: '<line x1="1.5" y1="5" x2="12" y2="5"/><path d="M9.5 3 L13 5 L9.5 7"/><line x1="1.5" y1="11" x2="12" y2="11"/><path d="M9.5 9 L13 11 L9.5 13"/>', body: 'par ${Branch one}\n    \nand Branch two\n    \nend\n' },
   ];
 
   const CLASS_SNIPPETS = [
-    { label: 'Class', title: 'Class with members', body: 'class ${Name} {\n    +String field\n    +method()\n}\n' },
-    { label: 'Inherit', title: 'Inheritance', body: '${Base} <|-- Derived\n' },
-    { label: 'Compose', title: 'Composition', body: '${Whole} *-- Part\n' },
-    { label: 'Aggregate', title: 'Aggregation', body: '${Whole} o-- Part\n' },
-    { label: 'Associate', title: 'Association', body: '${A} --> B\n' },
+    { label: 'Class', title: 'Class with members', icon: '<rect x="2" y="2" width="12" height="12"/><line x1="2" y1="6" x2="14" y2="6"/><line x1="2" y1="9" x2="14" y2="9"/>', body: 'class ${Name} {\n    +String field\n    +method()\n}\n' },
+    { label: 'Inherit', title: 'Inheritance', icon: '<line x1="8" y1="14" x2="8" y2="6.5"/><path d="M8 2 L11 7 H5 Z"/>', body: '${Base} <|-- Derived\n' },
+    { label: 'Compose', title: 'Composition', icon: '<line x1="7" y1="8" x2="14" y2="8"/><path d="M2 8 L5 5.5 L8 8 L5 10.5 Z" fill="currentColor" stroke="none"/>', body: '${Whole} *-- Part\n' },
+    { label: 'Aggregate', title: 'Aggregation', icon: '<line x1="7" y1="8" x2="14" y2="8"/><path d="M2 8 L5 5.5 L8 8 L5 10.5 Z"/>', body: '${Whole} o-- Part\n' },
+    { label: 'Associate', title: 'Association', icon: '<line x1="1.5" y1="8" x2="12" y2="8"/><path d="M9.5 5 L13 8 L9.5 11"/>', body: '${A} --> B\n' },
   ];
 
   const STATE_SNIPPETS = [
-    { label: 'Start', title: 'Initial state', body: '[*] --> ${State}\n' },
-    { label: 'End', title: 'Final state', body: '${State} --> [*]\n' },
-    { label: 'Transition', title: 'Labelled transition', body: '${A} --> B: event\n' },
-    { label: 'Composite', title: 'Nested state', body: 'state ${Name} {\n    [*] --> Inner\n}\n' },
-    { label: 'Choice', title: 'Choice pseudo-state', body: 'state ${choice} <<choice>>\n' },
+    { label: 'Start', title: 'Initial state', icon: '<circle cx="3" cy="8" r="2" fill="currentColor" stroke="none"/><line x1="5.5" y1="8" x2="10" y2="8"/><path d="M8 5.5 L11 8 L8 10.5"/>', body: '[*] --> ${State}\n' },
+    { label: 'End', title: 'Final state', icon: '<line x1="1.5" y1="8" x2="7.5" y2="8"/><path d="M5.5 5.5 L8.5 8 L5.5 10.5"/><circle cx="12" cy="8" r="2.6"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/>', body: '${State} --> [*]\n' },
+    { label: 'Transition', title: 'Labelled transition', icon: '<rect x="1.5" y="5.5" width="4.5" height="5" rx="1.2"/><rect x="10" y="5.5" width="4.5" height="5" rx="1.2"/><line x1="6" y1="8" x2="9.5" y2="8"/><path d="M8 6 L10 8 L8 10"/>', body: '${A} --> B: event\n' },
+    { label: 'Composite', title: 'Nested state', icon: '<rect x="1.5" y="2" width="13" height="12" rx="1.5"/><rect x="4" y="5" width="8" height="6" rx="1" stroke-dasharray="1.6 1.6"/>', body: 'state ${Name} {\n    [*] --> Inner\n}\n' },
+    { label: 'Choice', title: 'Choice pseudo-state', icon: '<path d="M8 2 L14 8 L8 14 L2 8 Z"/>', body: 'state ${choice} <<choice>>\n' },
   ];
 
   const ER_SNIPPETS = [
-    { label: 'Relation', title: 'One-to-many relationship', body: '${A} ||--o{ B : label\n' },
-    { label: 'Entity', title: 'Entity with attributes', body: '${NAME} {\n    string field\n}\n' },
+    { label: 'Relation', title: 'One-to-many relationship', icon: '<line x1="2" y1="8" x2="9" y2="8"/><path d="M9 8 L14 5 M9 8 L14 8 M9 8 L14 11"/>', body: '${A} ||--o{ B : label\n' },
+    { label: 'Entity', title: 'Entity with attributes', icon: '<rect x="2" y="2" width="12" height="12"/><line x1="2" y1="6.5" x2="14" y2="6.5"/><line x1="2" y1="10" x2="14" y2="10"/>', body: '${NAME} {\n    string field\n}\n' },
   ];
 
   const COMMON_SNIPPETS = [
-    { label: 'Comment', title: 'Comment line', body: '%% ${note}\n' },
-    { label: 'Title', title: 'Accessible title', body: 'accTitle: ${Title}\n' },
+    { label: 'Comment', title: 'Comment line', icon: '<path d="M2 3 H14 V10 H6 L3 13 V10 H2 Z"/>', body: '%% ${note}\n' },
+    { label: 'Title', title: 'Accessible title', icon: '<path d="M3 3 H13 M8 3 V13"/>', body: 'accTitle: ${Title}\n' },
   ];
 
   const SNIPPETS_BY_TYPE = {

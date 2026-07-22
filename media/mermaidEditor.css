@@ -389,23 +389,30 @@ body.vscode-light .mmd-line.mmd-error-line {
 .mmd-snippets {
   display: flex;
   align-items: center;
-  gap: 4px;
-  /* Wrap rather than scroll: with ~15 snippets, discoverability beats
-     saving a row of vertical space. */
+  gap: 2px;
+  /* Icon buttons are narrow enough that the full palette fits one row at
+     most editor widths; wrap is kept only as a fallback for very narrow
+     panes rather than the expected layout. */
   flex-wrap: wrap;
 }
 
 .mmd-snippets button {
-  background: var(--button-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
   color: var(--button-fg);
   border: none;
   border-radius: 3px;
-  padding: 3px 8px;
+  padding: 0;
   cursor: pointer;
-  font-family: var(--preview-font-family);
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mmd-snippets button svg {
+  display: block;
 }
 
 .mmd-snippets button:hover {
