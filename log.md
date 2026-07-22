@@ -581,3 +581,16 @@ Opened PR #55 (`feature/mmd-templates-and-activity-icon` → `develop`), then ra
 - **Select-all then choosing a template hit the "safe" fast path** — `selectionStart === 0` looked like "caret at document start" even though the entire document was selected, silently inserting at position 0 without deleting the selection (old content kept, producing an invalid two-diagram file) and no warning shown. The boundary check now also requires the selection to be collapsed; any active selection routes through the same host-confirmation modal.
 
 All fixes verified: unit tests (110/110), the existing 69 Playwright checks re-run clean, plus 10 new Playwright checks written specifically against these findings (keyboard Tab+Enter activation, select-all confirmation, stale-menu-closes-on-external-update, and all 5 repaired templates rendering error-free after typing over their placeholder).
+
+## 2026-07-22 — Activity bar icon replaced with a pixel-traced silhouette (v1.1.1)
+
+The user pointed out the 1.1.0 activity bar icon didn't actually look like `media/icon.png` — it was a hand-drawn approximation (an outer triangle with a triangular hole cut out) that read as a plain hollow triangle, not the "A" mark.
+
+Rather than redraw it by eye again, traced it directly from the source image's pixels:
+1. Read `media/icon.png` (128x128) pixel-by-pixel with `pngjs`; every pixel with alpha > 50% became solid black, everything else white — this flattens all the logo's color facets into one silhouette, exactly the way VS Code's activity-bar CSS-mask recoloring will flatten it anyway regardless of the source's colors.
+2. Traced that black/white mask into an SVG path with `potrace`, using `optCurve: false` and `alphaMax: 0` to force straight-edged polygon output (curve-fitting is wrong for a source that's entirely triangular facets).
+3. Rescaled the resulting path from the 128px source down to a 24x24 viewBox to match the existing file's convention.
+
+This makes the icon pixel-accurate to the real logo — same silhouette, same counter/hole, same base — rather than an approximation. Before committing, rendered a preview simulating VS Code's activity-bar CSS-mask recoloring at real 24px icon size (published as a Claude Artifact) so the user could confirm it looked right first.
+
+Version bumped 1.1.0 → 1.1.1 (patch — visual fix only, no behavior change).
