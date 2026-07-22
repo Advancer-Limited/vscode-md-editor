@@ -173,8 +173,8 @@ export type MermaidEditorToWebviewMessage =
   | { type: 'editAck' }
   /** Result of the export-theme QuickPick; the webview then rasterizes. */
   | { type: 'exportPngTheme'; theme: 'light' | 'dark' }
-  /** Result of the "replace the document with a template?" confirmation. */
-  | { type: 'templateReplaceConfirmed'; confirmed: boolean };
+  /** Result of the "insert a template mid-document?" confirmation. */
+  | { type: 'midDocumentInsertConfirmed'; confirmed: boolean };
 
 /** Messages from mermaid editor webview -> extension host */
 export type MermaidWebviewToExtensionMessage =
@@ -188,11 +188,13 @@ export type MermaidWebviewToExtensionMessage =
   /** Toolbar brand button — show the About dialog. */
   | { type: 'showAbout' }
   /**
-   * Ask the host to confirm replacing the document with a template.
-   * Confirmation must happen host-side: webviews are sandboxed without
-   * allow-modals, so confirm() is blocked there.
+   * Ask the host to confirm inserting a template at a caret that sits
+   * strictly inside existing document content (as opposed to the start or
+   * end, which are inserted directly with no prompt). Confirmation must
+   * happen host-side: webviews are sandboxed without allow-modals, so
+   * confirm() is blocked there.
    */
-  | { type: 'confirmTemplateReplace'; label: string }
+  | { type: 'confirmMidDocumentInsert'; label: string }
   /**
    * Serialized SVG to print. The host writes it to a standalone HTML file and
    * opens it externally — window.print() is suppressed inside VS Code's
