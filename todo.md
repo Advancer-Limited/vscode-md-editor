@@ -218,3 +218,9 @@
 - [x] Searchable dropdown (filter input + keyboard nav + scrollable list), mirroring the existing wikilink-picker pattern in editor.js, since 22 items in a plain list would be hard to scan
 - [x] Cursor-position-aware template insertion: inserts directly at the caret when it's at the very start/end of the document; when strictly mid-document, asks the host to confirm first (native modal, since confirm() is blocked in webviews) — replaces the previous "replace the whole document" flow entirely
 - [x] Fable adversarial review on PR #55; fixed 2 template bugs (sequence alias syntax backwards; 4 templates with a placeholder on a referenced identifier that broke on edit) + 2 UI bugs (keyboard Enter/Space didn't activate a Tab-focused menu item; select-all bypassed the mid-document confirmation) + 1 latent risk (stale menu left open across an external document update) — see log.md for detail
+
+## 2026-07-22 Activity bar icon replaced with a pixel-traced silhouette (v1.1.1)
+
+- [x] The 1.1.0 icon (media/activity-icon.svg) was a hand-drawn approximation that read as a plain hollow triangle rather than an "A" — replaced with a silhouette traced directly from media/icon.png's actual pixels (alpha-thresholded to black/white, then vectorized to straight-edged paths with potrace, rescaled to the 24x24 viewBox), so it's pixel-accurate to the real logo, counter and base included
+- [x] Verified with a rendered preview simulating VS Code's activity-bar CSS-mask recoloring at real 24px size before committing, per user request
+- [x] Version bumped 1.1.0 -> 1.1.1 (patch)

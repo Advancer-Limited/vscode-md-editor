@@ -2,6 +2,12 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.1.1] - 2026-07-22
+
+### Fixed
+
+- **Activity bar icon now matches the real logo** — the 1.1.0 icon was a hand-drawn approximation that read as a plain hollow triangle. Replaced with a silhouette traced directly from `media/icon.png`'s actual pixels (not redrawn by eye), so it's pixel-accurate to the real "A" mark, counter and base included.
+
 ## [1.1.0] - 2026-07-20
 
 ### Added
