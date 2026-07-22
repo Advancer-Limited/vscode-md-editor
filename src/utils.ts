@@ -70,6 +70,15 @@ export function isMarkdownFile(filePath: string): boolean {
 }
 
 /**
+ * Case-insensitively test whether a path (or URI fsPath) has a Mermaid
+ * diagram extension — `.mmd` or `.mermaid`, matching the customEditors
+ * selector for the diagram editor in package.json.
+ */
+export function isMermaidFile(filePath: string): boolean {
+  return /\.(mmd|mermaid)$/i.test(filePath);
+}
+
+/**
  * Get the filename stem (without extension) from a path.
  */
 export function getFileStem(filePath: string): string {

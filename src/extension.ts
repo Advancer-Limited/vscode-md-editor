@@ -10,6 +10,7 @@ import { FileIndexService } from './wikilink/fileIndexService.js';
 import { handleWillRenameFiles } from './wikilink/renamePropagation.js';
 import { GraphDataService } from './graph/graphDataService.js';
 import { GraphViewProvider } from './graph/graphViewProvider.js';
+import { MermaidFileIndexService } from './graph/mermaidFileIndexService.js';
 import { FullGraphPanel } from './graph/fullGraphPanel.js';
 import { DiffService } from './diff/diffService.js';
 import { MarkdownDiffPanel } from './diff/markdownDiffPanel.js';
@@ -20,6 +21,14 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(fileIndexService);
   fileIndexService.initialize().catch(err => {
     console.error('[MarkdownEditor] FileIndexService initialization failed:', err);
+  });
+
+  // 1b. Mermaid file index (sidebar's Mermaid tab) — lightweight sibling to
+  // the file index above, just filenames, no wikilink/backlink graph.
+  const mermaidFileIndexService = new MermaidFileIndexService();
+  context.subscriptions.push(mermaidFileIndexService);
+  mermaidFileIndexService.initialize().catch(err => {
+    console.error('[MarkdownEditor] MermaidFileIndexService initialization failed:', err);
   });
 
   // 2. Register the custom markdown editor
@@ -205,6 +214,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const graphViewProvider = new GraphViewProvider(
     context,
     fileIndexService,
+    mermaidFileIndexService,
     graphDataService,
     getActiveFilePath,
   );
