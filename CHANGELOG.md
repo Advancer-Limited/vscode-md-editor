@@ -2,6 +2,14 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.2.0] - 2026-07-22
+
+### Added
+
+- **Sidebar now has tabs** — the "Markdown Links" panel is joined by a new **Mermaid** tab listing every `.mmd`/`.mermaid` file in the workspace (search + click to open), laying the groundwork for further tabs down the line.
+- **Flat/folder view toggle**, independent per tab — switch either tab between a flat sorted list and a folder tree. The tree only ever shows folders that actually contain a matching file (directly or in a subfolder); typing in that tab's search box temporarily flattens the view, reverting to folder view when the search is cleared. Each tab remembers its own view mode across reloads.
+- **Right-click a folder in folder view** for **Add Markdown**/**Add Mermaid** (prompts for a name, creates the file, and opens it) and **Show in Explorer** (reveals that folder in VS Code's native Explorer).
+
 ## [1.1.2] - 2026-07-22
 
 ### Fixed
