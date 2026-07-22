@@ -46,8 +46,8 @@
       description: 'Interactions between participants over time',
       body:
         'sequenceDiagram\n' +
-        '    participant "${Actor 1}" as A1\n' +
-        '    participant "Actor 2" as A2\n' +
+        '    participant A1 as ${Actor 1}\n' +
+        '    participant A2 as Actor 2\n' +
         '    A1->>A2: Message 1\n' +
         '    A2-->>A1: Message 2\n',
     },
@@ -72,7 +72,7 @@
         'erDiagram\n' +
         '    "${Entity 1}" ||--o{ "Entity 2" : relates\n' +
         '    "Entity 2" ||--|{ "Entity 3" : contains\n' +
-        '    "Entity 1" {\n' +
+        '    "Entity 2" {\n' +
         '        string field1\n' +
         '        string field2\n' +
         '    }\n',
@@ -147,9 +147,9 @@
       body:
         'gitGraph\n' +
         '    commit\n' +
-        '    branch ${feature-branch}\n' +
+        '    branch feature-branch\n' +
         '    checkout feature-branch\n' +
-        '    commit\n' +
+        '    commit tag: "${v1.0}"\n' +
         '    commit\n' +
         '    checkout main\n' +
         '    merge feature-branch\n' +
@@ -203,9 +203,9 @@
       description: 'Requirements and satisfying elements',
       body:
         'requirementDiagram\n' +
-        '    requirement ${requirement_1} {\n' +
+        '    requirement requirement_1 {\n' +
         '    id: 1\n' +
-        '    text: "Requirement text."\n' +
+        '    text: "${Requirement text.}"\n' +
         '    risk: medium\n' +
         '    verifymethod: test\n' +
         '    }\n' +
@@ -286,7 +286,7 @@
       description: 'Services, groups and connections',
       body:
         'architecture-beta\n' +
-        '    group ${group1}(cloud)[Group 1]\n' +
+        '    group group1(cloud)[${Group 1}]\n' +
         '    service service1(database)[Service 1] in group1\n' +
         '    service service2(server)[Service 2] in group1\n' +
         '    service2:R -- L:service1\n',

@@ -314,6 +314,7 @@
       highlightPre.scrollTop = textarea.scrollTop;
       refreshSnippetPalette();
       autocomplete.hide(); // the document changed underneath any open list
+      closeTemplateMenu(); // targetCaret captured at open-time would now be stale
       renderDiagram(text);
     }
   });
@@ -856,12 +857,14 @@
   }
 
   /** Insert `template` at `caret`, confirming with the host first if `caret` sits strictly inside existing content. */
-  function insertTemplateAt(template, caret) {
+  function insertTemplateAt(template, caret, hasSelection) {
     const value = textarea.value;
     // Safe without asking: an empty document, or the caret at the very
-    // start/end of a non-empty one. Anything strictly between those two
-    // points could be inside an existing diagram's syntax.
-    if (caret <= 0 || caret >= value.length) {
+    // start/end of a non-empty one, with nothing selected. Anything
+    // strictly between those two points — or any active selection, which
+    // could span existing content even when it starts/ends at a boundary
+    // (e.g. select-all) — could be inside an existing diagram's syntax.
+    if (!hasSelection && (caret <= 0 || caret >= value.length)) {
       textarea.focus();
       textarea.setSelectionRange(caret, caret);
       insertSnippet(template.body);
@@ -879,9 +882,10 @@
     if (templateMenu) { closeTemplateMenu(); return; }
 
     // Capture the caret NOW — opening the menu and searching within it moves
-    // focus (and hence textarea.selectionStart) away from where the user
+    // focus (and hence textarea.selectionStart/End) away from where the user
     // actually wants the template inserted.
     const targetCaret = textarea.selectionStart;
+    const targetHasSelection = textarea.selectionStart !== textarea.selectionEnd;
 
     templateMenu = document.createElement('div');
     templateMenu.className = 'mmd-menu';
@@ -932,7 +936,7 @@
       if (!filtered.length) return;
       const template = filtered[selectedIndex];
       closeTemplateMenu();
-      insertTemplateAt(template, targetCaret);
+      insertTemplateAt(template, targetCaret, targetHasSelection);
     }
 
     searchInput.addEventListener('input', () => {
@@ -963,6 +967,18 @@
     });
 
     list.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.mmd-menu-item');
+      if (!item) return;
+      e.preventDefault();
+      selectedIndex = Number(item.dataset.index);
+      confirmSelection();
+    });
+
+    // Items are focusable buttons (Tab can land on them directly from the
+    // search input), so Enter/Space must activate them too — the mousedown
+    // handler above only covers pointer activation.
+    list.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
       const item = e.target.closest('.mmd-menu-item');
       if (!item) return;
       e.preventDefault();
