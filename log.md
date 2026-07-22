@@ -594,3 +594,17 @@ Rather than redraw it by eye again, traced it directly from the source image's p
 This makes the icon pixel-accurate to the real logo — same silhouette, same counter/hole, same base — rather than an approximation. Before committing, rendered a preview simulating VS Code's activity-bar CSS-mask recoloring at real 24px icon size (published as a Claude Artifact) so the user could confirm it looked right first.
 
 Version bumped 1.1.0 → 1.1.1 (patch — visual fix only, no behavior change).
+
+## 2026-07-22 — Mermaid print/openExternal fix + icon-only snippet palette (v1.1.2)
+
+Two fixes were made directly in the working tree (not through this session originally) and handed off for testing and release:
+
+**Print/Save as PDF failing on Windows.** The print flow writes the diagram's SVG to a temp HTML file under `context.globalStorageUri` and hands that URI to `vscode.env.openExternal()` to open in the system browser. `globalStorageUri` can carry a `vscode-userdata:` scheme rather than `file:` (seen on Windows) — `openExternal` passes that scheme straight to the OS shell, which has no application registered for it, producing a "Get an app to open this vscode-userdata link" prompt instead of the browser's print dialog. Fixed in `src/mermaidEditorProvider.ts` by rebuilding the URI as `vscode.Uri.file(file.fsPath)` before calling `openExternal` — `fsPath` resolves to the real filesystem path regardless of the URI's scheme, so wrapping it forces a proper `file:` URI the shell can actually open.
+
+**Snippet palette: text labels → icon buttons.** The `.mmd` editor's context-aware snippet palette (Box, Diamond, Hexagon, Participant, Loop, Alt, Par, etc. — the buttons beside Template) used text-label buttons, which wrapped across 2-3 toolbar rows once a diagram type's full snippet set was shown. Replaced with small 24×24px icon buttons (hand-authored inline SVG per snippet, sharing a `viewBox="0 0 16 16"` with `stroke="currentColor"` so they theme automatically), with the old label + description now living in the `title` tooltip and a matching `aria-label`. Verified the full palette now fits on a single row at normal editor widths.
+
+Testing found one thing needing an update, not a bug: the pre-existing `toolbox-tests.js` Playwright suite queried snippet buttons by `.textContent` to find/verify them by name (e.g. `find(b => b.textContent === 'Diamond')`) — with icon-only buttons this is now always empty, so the assertions and the "click the Diamond snippet" helper both silently failed. Updated those to read the button's `title` (`"Label — Description"`) instead, which is the whole point of the change: the label moved from the DOM text to the tooltip, not away entirely.
+
+Verification: 110 unit tests, existing 89 Playwright checks (across toolbox/fable-fix/feature/review-fix/behavior suites) re-run clean after updating the stale label-lookup assertions, plus 10 new Playwright checks specifically for the icon palette (icon-only rendering, tooltip content, one-row layout, click-to-insert still works, palette still switches per diagram type). The `openExternal` fix itself isn't Playwright-testable (host-side VS Code API, not reachable from the webview harness) — verified by code review instead: `file` is `vscode.Uri.joinPath(this.context.globalStorageUri, ...)`, and `.fsPath` resolves to the real filesystem path regardless of the source URI's scheme, so `vscode.Uri.file(file.fsPath)` is a safe, correct rebuild.
+
+Version bumped 1.1.1 → 1.1.2 (patch — one bug fix, one UI change, no breaking behavior).

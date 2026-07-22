@@ -224,3 +224,11 @@
 - [x] The 1.1.0 icon (media/activity-icon.svg) was a hand-drawn approximation that read as a plain hollow triangle rather than an "A" — replaced with a silhouette traced directly from media/icon.png's actual pixels (alpha-thresholded to black/white, then vectorized to straight-edged paths with potrace, rescaled to the 24x24 viewBox), so it's pixel-accurate to the real logo, counter and base included
 - [x] Verified with a rendered preview simulating VS Code's activity-bar CSS-mask recoloring at real 24px size before committing, per user request
 - [x] Version bumped 1.1.0 -> 1.1.1 (patch)
+
+## 2026-07-22 Mermaid print/openExternal fix + icon-only snippet palette (v1.1.2)
+
+- [x] Print/Save as PDF could fail with a "Get an app to open this vscode-userdata link" error on Windows — the print HTML file's URI could carry a `vscode-userdata:` scheme (from `context.globalStorageUri`) rather than `file:`; fixed by rebuilding via `vscode.Uri.file(file.fsPath)` before `openExternal()`
+- [x] Snippet palette (Box, Diamond, Participant, Loop, etc.) changed from text-label buttons to 24x24px icon buttons with title/aria-label tooltips, so the full palette fits on one toolbar row instead of wrapping across 2-3
+- [x] Verified with Playwright: icon-only rendering, tooltip carries label+description, layout fits one row, click-to-insert still works, palette still switches per diagram type — plus updated the pre-existing toolbox-tests.js snippet-palette assertions, which read button textContent (now empty, since buttons are icon-only) rather than the title tooltip
+- [x] Full regression: 110 unit tests + 89 Playwright checks (25 toolbox + 10 fable-fix + 23 feature + 7 review-fix + 14 behavior + 10 new icon-palette), all green
+- [x] Version bumped 1.1.1 -> 1.1.2 (patch)
