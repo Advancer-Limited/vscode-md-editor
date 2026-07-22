@@ -5,12 +5,13 @@
     renders), so a single solid black fill on a transparent background is
     the correct, standard approach — see VS Code's own codicon assets.
 
-    Same silhouette as the toolbar's brand/About button (src/utils.ts,
-    getBrandButtonHtml): an outer triangle with a smaller triangular
-    aperture cut out via fill-rule evenodd, forming the 'A'. The colored
-    toolbar version additionally shades one facet for a faceted look; that
-    distinction has no meaning in a flat monochrome icon, so it's omitted.
+    Traced directly from media/icon.png (the marketplace icon) rather than
+    redrawn by eye: every pixel with alpha > 50% became solid black,
+    everything else transparent, then vectorized to straight-edged paths
+    (no curve-fitting, since the source is entirely triangular facets) and
+    rescaled from the 128px source to this 24x24 viewBox. Pixel-accurate
+    to the real logo's silhouette, including its counter and base.
   -->
   <path fill="#000000" fill-rule="evenodd" clip-rule="evenodd"
-        d="M12 2.5 L22 21 L2 21 Z M12 9.6 L16.1 17.2 L7.9 17.2 Z"/>
+        d="M 11.99 2.15 L 11.86 2.07 8.58 7.46 L 5.30 12.84 2.65 17.20 L 0.01 21.56 2.98 21.56 L 5.96 21.56 10.31 14.41 L 14.66 7.25 14.76 7.00 L 14.85 6.75 13.49 4.49 L 12.12 2.23 11.99 2.15 M 14.96 11.81 L 11.98 11.81 12.41 12.53 L 12.84 13.25 15.37 17.40 L 17.90 21.56 20.87 21.56 L 23.83 21.56 23.76 21.42 L 23.68 21.28 20.81 16.55 L 17.94 11.81 14.96 11.81 M 11.91 16.69 L 8.98 16.69 9.06 16.83 L 9.14 16.97 10.49 19.17 L 11.85 21.38 12.01 21.28 L 12.17 21.18 13.43 19.07 L 14.68 16.97 14.76 16.83 L 14.83 16.69 11.91 16.69"/>
 </svg>
