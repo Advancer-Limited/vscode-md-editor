@@ -281,7 +281,12 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
                 file,
                 Buffer.from(buildPrintHtml(path.basename(document.fileName), message.svg), 'utf8')
               );
-              await vscode.env.openExternal(file);
+              // globalStorageUri can be a vscode-userdata: URI rather than
+              // file: (seen on Windows) — openExternal then hands that
+              // scheme straight to the OS shell, which has no app
+              // registered for it. Uri.file(fsPath) rebuilds a real file:
+              // URI the shell/browser can open.
+              await vscode.env.openExternal(vscode.Uri.file(file.fsPath));
             } catch (err) {
               vscode.window.showErrorMessage(
                 `Failed to open the diagram for printing: ${err instanceof Error ? err.message : String(err)}`

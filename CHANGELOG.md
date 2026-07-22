@@ -2,6 +2,16 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.1.2] - 2026-07-22
+
+### Fixed
+
+- **Print/Save as PDF could fail with a "Get an app to open this vscode-userdata link" error** on Windows — the print HTML file's URI was passed to `openExternal()` as-is, which can carry a `vscode-userdata:` scheme rather than `file:`. Rebuilt as a proper `file:` URI before opening.
+
+### Changed
+
+- **Mermaid source-editor snippet palette is now icon buttons instead of text labels** (Box, Diamond, Participant, Loop, etc.) — the full shape/option palette now fits on one toolbar row instead of wrapping across 2-3, with the label and description available as a hover tooltip.
+
 ## [1.1.1] - 2026-07-22
 
 ### Fixed
