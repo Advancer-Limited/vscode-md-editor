@@ -247,15 +247,22 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
             await showAboutDialog(this.context);
             return;
 
-          case 'confirmTemplateReplace': {
+          case 'confirmMidDocumentInsert': {
             const answer = await vscode.window.showWarningMessage(
-              `Replace the current diagram with the ${message.label} template?`,
-              { modal: true, detail: 'The existing diagram source will be overwritten. This can be undone.' },
-              'Replace'
+              `Insert the ${message.label} template here?`,
+              {
+                modal: true,
+                detail:
+                  'The cursor is in the middle of the existing diagram. Mermaid only supports one ' +
+                  'diagram per file, so inserting here is likely to break it — for a clean result, ' +
+                  'consider moving the cursor to the very beginning or end of the file instead.\n\n' +
+                  'Or choose "Insert Anyway" to insert at the current cursor position.',
+              },
+              'Insert Anyway'
             );
             webviewPanel.webview.postMessage({
-              type: 'templateReplaceConfirmed',
-              confirmed: answer === 'Replace',
+              type: 'midDocumentInsertConfirmed',
+              confirmed: answer === 'Insert Anyway',
             });
             return;
           }

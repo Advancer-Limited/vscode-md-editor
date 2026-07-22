@@ -207,3 +207,13 @@
 - [ ] Draco / KTX2 compressed assets (currently fail with a clear error)
 - [ ] Animation playback (animated models load, but don't play)
 - [ ] Manual VS Code verification: `LoaderUtils.resolveURL` against real `vscode-resource:` URIs, and `visibilitychange` in a genuinely hidden panel
+
+## 2026-07-20 Activity bar icon + expanded mermaid template dropdown (PR #55)
+
+- [x] Monochrome Advancer 'A' activity-bar icon (media/activity-icon.svg), replacing the generic $(link) codicon — same silhouette as the toolbar brand mark, verified via a CSS-mask simulation of VS Code's icon recoloring
+- [x] Researched most-common Mermaid diagram types to prioritize dropdown ordering (flowchart/sequence/class/ER/state confirmed as the daily-use core)
+- [x] Expanded the template dropdown from 8 to 22 diagram types (within the "up to 25" budget), covering essentially every official Mermaid diagram type
+- [x] Every template body verified with mermaid.parse() against the actual vendored bundle (11.16.0) — 4 of the initial 22 candidates needed quoted identifiers for multi-word names (sequence participants, ER entities, state names) that mermaid's grammar rejects unquoted; caught by empirical validation, not guessed
+- [x] All example content rewritten to generic, obviously-editable placeholders (Box 1, Task 2, Entity 1...) instead of domain-flavored content (Customer, Order, Animal...)
+- [x] Searchable dropdown (filter input + keyboard nav + scrollable list), mirroring the existing wikilink-picker pattern in editor.js, since 22 items in a plain list would be hard to scan
+- [x] Cursor-position-aware template insertion: inserts directly at the caret when it's at the very start/end of the document; when strictly mid-document, asks the host to confirm first (native modal, since confirm() is blocked in webviews) — replaces the previous "replace the whole document" flow entirely

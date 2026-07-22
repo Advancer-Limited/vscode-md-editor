@@ -276,13 +276,16 @@
       exportPng(message.theme === 'light' ? 'light' : 'dark');
       return;
     }
-    if (message.type === 'templateReplaceConfirmed') {
-      const body = pendingTemplateBody;
-      pendingTemplateBody = null;
-      if (!body || !message.confirmed) return;
+    if (message.type === 'midDocumentInsertConfirmed') {
+      const pending = pendingTemplate;
+      pendingTemplate = null;
+      if (!pending || !message.confirmed) return;
+      // Re-clamp: the document could in principle have changed size while
+      // the (modal, blocking) host dialog was open — e.g. an external edit.
+      const caret = Math.min(pending.caret, textarea.value.length);
       textarea.focus();
-      textarea.select(); // replace the whole document
-      insertSnippet(body);
+      textarea.setSelectionRange(caret, caret);
+      insertSnippet(pending.body);
       return;
     }
     if (message.type === 'update') {
@@ -826,10 +829,17 @@
     }
   }
 
-  // --- Template gallery -------------------------------------------------
+  // --- Template gallery ---------------------------------------------------
+  // Up to 25 starter diagrams in a searchable dropdown (mirrors the
+  // search+filter+keyboard-nav pattern of the wikilink picker in editor.js).
+  // Inserts at the CURRENT CARET, not a whole-document replace: a template
+  // dropped at the start or end of the file is safe, but dropped in the
+  // middle of an existing diagram it can produce an unparseable document
+  // (mermaid only allows one diagram declaration per file) — so a
+  // mid-document insert is confirmed by the host first (see below).
   let templateMenu = null;
-  /** Template awaiting the host's replace-confirmation reply. */
-  let pendingTemplateBody = null;
+  /** Template + caret offset awaiting the host's mid-document-insert reply. */
+  let pendingTemplate = null;
 
   function closeTemplateMenu() {
     if (templateMenu) {
@@ -845,51 +855,127 @@
     }
   }
 
+  /** Insert `template` at `caret`, confirming with the host first if `caret` sits strictly inside existing content. */
+  function insertTemplateAt(template, caret) {
+    const value = textarea.value;
+    // Safe without asking: an empty document, or the caret at the very
+    // start/end of a non-empty one. Anything strictly between those two
+    // points could be inside an existing diagram's syntax.
+    if (caret <= 0 || caret >= value.length) {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+      insertSnippet(template.body);
+      return;
+    }
+    // Confirmation must happen host-side: webviews are sandboxed without
+    // allow-modals, so confirm()/alert() are blocked there (the same
+    // restriction that stops window.print(), see the Print handler above).
+    pendingTemplate = { body: template.body, caret };
+    vscode.postMessage({ type: 'confirmMidDocumentInsert', label: template.label });
+  }
+
   function openTemplateMenu() {
     if (!completions || !btnTemplate) return;
     if (templateMenu) { closeTemplateMenu(); return; }
 
+    // Capture the caret NOW — opening the menu and searching within it moves
+    // focus (and hence textarea.selectionStart) away from where the user
+    // actually wants the template inserted.
+    const targetCaret = textarea.selectionStart;
+
     templateMenu = document.createElement('div');
     templateMenu.className = 'mmd-menu';
-    templateMenu.setAttribute('role', 'menu');
 
-    for (const template of completions.TEMPLATES) {
-      const item = document.createElement('button');
-      item.className = 'mmd-menu-item';
-      item.setAttribute('role', 'menuitem');
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search diagram types…';
+    searchInput.className = 'mmd-menu-search';
+    templateMenu.appendChild(searchInput);
 
-      const label = document.createElement('span');
-      label.className = 'mmd-menu-label';
-      label.textContent = template.label;
-      const desc = document.createElement('span');
-      desc.className = 'mmd-menu-desc';
-      desc.textContent = template.description;
-      item.appendChild(label);
-      item.appendChild(desc);
+    const list = document.createElement('div');
+    list.className = 'mmd-menu-list';
+    list.setAttribute('role', 'menu');
+    templateMenu.appendChild(list);
 
-      item.addEventListener('click', () => {
-        closeTemplateMenu();
-        if (textarea.value.trim()) {
-          // Replacing a non-empty document silently would destroy work, so
-          // confirm first — but via the host, because webviews are sandboxed
-          // without allow-modals: confirm()/alert() are blocked there (the
-          // same restriction that stops window.print(), see the Print
-          // handler above). A blocked confirm() returns false, which would
-          // make templates silently do nothing on any non-empty document.
-          pendingTemplateBody = template.body;
-          vscode.postMessage({ type: 'confirmTemplateReplace', label: template.label });
-          return;
-        }
-        textarea.focus();
-        insertSnippet(template.body);
+    const all = completions.TEMPLATES;
+    let filtered = all;
+    let selectedIndex = 0;
+
+    function render() {
+      list.textContent = '';
+      if (filtered.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'mmd-menu-empty';
+        empty.textContent = 'No matching diagram type';
+        list.appendChild(empty);
+        return;
+      }
+      filtered.forEach((template, i) => {
+        const item = document.createElement('button');
+        item.className = 'mmd-menu-item' + (i === selectedIndex ? ' selected' : '');
+        item.setAttribute('role', 'menuitem');
+        item.dataset.index = String(i);
+
+        const label = document.createElement('span');
+        label.className = 'mmd-menu-label';
+        label.textContent = template.label;
+        const desc = document.createElement('span');
+        desc.className = 'mmd-menu-desc';
+        desc.textContent = template.description;
+        item.appendChild(label);
+        item.appendChild(desc);
+        list.appendChild(item);
       });
-      templateMenu.appendChild(item);
     }
 
+    function confirmSelection() {
+      if (!filtered.length) return;
+      const template = filtered[selectedIndex];
+      closeTemplateMenu();
+      insertTemplateAt(template, targetCaret);
+    }
+
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.trim().toLowerCase();
+      filtered = q
+        ? all.filter((t) => t.label.toLowerCase().includes(q) || t.description.toLowerCase().includes(q))
+        : all;
+      selectedIndex = 0;
+      render();
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1);
+        render();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = Math.max(selectedIndex - 1, 0);
+        render();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmSelection();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeTemplateMenu();
+      }
+    });
+
+    list.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.mmd-menu-item');
+      if (!item) return;
+      e.preventDefault();
+      selectedIndex = Number(item.dataset.index);
+      confirmSelection();
+    });
+
+    render();
     const rect = btnTemplate.getBoundingClientRect();
     templateMenu.style.top = rect.bottom + 4 + 'px';
     templateMenu.style.left = rect.left + 'px';
     document.body.appendChild(templateMenu);
+    searchInput.focus();
     // Capture phase, so the click that opened the menu doesn't immediately
     // close it.
     setTimeout(() => document.addEventListener('mousedown', onTemplateOutsideClick, true), 0);

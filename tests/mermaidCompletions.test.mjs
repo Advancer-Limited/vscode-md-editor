@@ -88,13 +88,41 @@ test('every template body starts with its own diagram type', () => {
   // unparseable document when inserted into an empty file.
   const expectations = {
     flowchart: /^flowchart /, sequence: /^sequenceDiagram/, class: /^classDiagram/,
-    state: /^stateDiagram-v2/, er: /^erDiagram/, gantt: /^gantt/, pie: /^pie /,
-    mindmap: /^mindmap/,
+    er: /^erDiagram/, state: /^stateDiagram-v2/, gantt: /^gantt/, pie: /^pie /,
+    mindmap: /^mindmap/, journey: /^journey/, gitgraph: /^gitGraph/,
+    kanban: /^kanban/, timeline: /^timeline/, quadrant: /^quadrantChart/,
+    requirement: /^requirementDiagram/, c4context: /^C4Context/,
+    block: /^block-beta/, sankey: /^sankey-beta/, xychart: /^xychart-beta/,
+    radar: /^radar-beta/, packet: /^packet-beta/,
+    architecture: /^architecture-beta/, treemap: /^treemap-beta/,
   };
   for (const t of TEMPLATES) {
     const re = expectations[t.id];
     assert.ok(re, `no expectation registered for template ${t.id}`);
     assert.match(applyPlaceholders(t.body).text, re, `template ${t.id}`);
+  }
+});
+
+test('template count is within the "up to 25" budget and ids/labels are unique', () => {
+  assert.ok(TEMPLATES.length <= 25, `expected at most 25 templates, got ${TEMPLATES.length}`);
+  assert.strictEqual(new Set(TEMPLATES.map((t) => t.id)).size, TEMPLATES.length, 'duplicate template id');
+  assert.strictEqual(new Set(TEMPLATES.map((t) => t.label)).size, TEMPLATES.length, 'duplicate template label');
+});
+
+test('every template has exactly one placeholder to select on insert', () => {
+  for (const t of TEMPLATES) {
+    const matches = t.body.match(/\$\{[^}]*\}/g) || [];
+    assert.strictEqual(matches.length, 1, `template ${t.id} should have exactly one \${...} placeholder`);
+  }
+});
+
+test('every template uses generic, obviously-editable example content', () => {
+  // Placeholder-style labels (Box 1, Task 2, Entity 1...) rather than
+  // domain-flavored ones (Customer, Order...) make it unambiguous that the
+  // content is meant to be edited, regardless of the user's own domain.
+  const domainFlavored = /\b(Customer|Order|Animal|Dog|Client|Server)\b/;
+  for (const t of TEMPLATES) {
+    assert.doesNotMatch(t.body, domainFlavored, `template ${t.id} uses domain-flavored example content`);
   }
 });
 

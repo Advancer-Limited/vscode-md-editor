@@ -546,3 +546,26 @@ My first camera-preservation test reported a failure that was **my test's bug, n
 
 ### Verification
 107 unit tests (94 + 13 new); 6 glTF Playwright checks (render, camera preservation, GPU-leak accounting over 8 reloads, invalid-JSON keep-last-good); the mermaid behavioral suite re-run against the merged branch (14/14, no cross-feature regression); check-types and compile clean.
+
+## 2026-07-20 — Activity bar icon + expanded mermaid template dropdown
+
+### Activity bar icon
+Replaced the generic `$(link)` built-in codicon with a monochrome SVG (`media/activity-icon.svg`) using the same silhouette as the toolbar's brand/About button (`src/utils.ts` `getBrandButtonHtml`) — an outer triangle with a smaller triangular aperture cut via `fill-rule: evenodd`. VS Code recolors activity-bar SVGs via a CSS mask, so the file's own fill color is irrelevant to what renders; verified this empirically by simulating the mask technique (`background + mask-image`) in a headless browser rather than assuming — confirmed a clean, recognizable white silhouette on both the resting and "active" (blue indicator bar) states.
+
+### Mermaid template dropdown: 8 → 22 diagram types
+Researched actual usage patterns first (flowchart/sequence/class/ER/state confirmed as the "daily-use" core across sources) to order the dropdown sensibly, then drafted 22 candidates covering nearly every official Mermaid diagram type up to the "up to 25" budget the user set.
+
+**Every template body was validated against the real vendored mermaid bundle (11.16.0) via `mermaid.parse()`** — not hand-verified syntax. This caught 4 real failures on the first pass: sequence-diagram participants, ER entities, and state names with spaces in their names (`"Actor 1"`, `"Entity 1"`, `"State 1"`) are rejected unquoted by mermaid's grammar; fixed by quoting the identifier and using a short alias for arrow references. Empirical validation over guessed syntax paid off immediately.
+
+All example content was written (and one existing test extended to enforce) as generic, obviously-placeholder text — "Box 1", "Task 2", "Entity 1" — rather than domain-flavored content ("Customer", "Order", "Animal") that a user might mistake for real content and forget to edit, per explicit instruction.
+
+### Searchable dropdown + cursor-position-aware insertion
+With 22 items a plain scrolling list would be hard to scan, so added a search/filter input at the top of the menu — mirroring the existing wikilink-picker pattern already in `editor.js` (search input, live filter, arrow-key nav, Enter to confirm, Escape to close) rather than inventing a new UI convention.
+
+**Insertion behavior changed entirely**, replacing the previous "replace the whole document" flow: a template now inserts at the current caret. If the caret sits at the very start or end of the document, it inserts directly (no prompt) — otherwise (caret strictly inside existing content, i.e. likely inside an existing diagram's syntax, since mermaid only supports one diagram per file) the host shows a native modal warning suggesting the user move to the start/end instead, with an "Insert Anyway" option to proceed regardless. Confirmation is necessarily host-side: `confirm()`/`alert()` are blocked in VS Code's sandboxed webviews (same restriction as `window.print()`, already documented from the PR #50 work) — a blocked `confirm()` would make the safety warning silently do nothing.
+
+### A real bug the tests found in themselves, not the app
+The Playwright test for choosing a template initially used `element.click()` inside `page.evaluate()`, which dispatches only a synthetic `click` event with no preceding `mousedown` — but the app's menu-item handler listens on `mousedown` (matching the wikilink-picker's existing convention, so a real mouse click always fires it). The test silently did nothing on the first three insertion-position scenarios. Fixed by switching to Playwright's `locator.click()`, which simulates the full physical mousedown/mouseup/click sequence. Worth remembering: a scripted `.click()` is not equivalent to a real click for mousedown-driven UI.
+
+### Verification
+110 unit tests (28 in mermaidCompletions alone, including 3 new ones asserting the template count/budget, exactly-one-placeholder-per-template, and no domain-flavored example content); 69 Playwright checks (44 pre-existing regression/feature/review-fix suites re-run unchanged, plus 25 new ones covering the dropdown, search, and all three insertion-position paths — end/start/mid-document — with the exact "content spliced around the insertion point" assertion for the mid-document accept case). check-types and compile clean.

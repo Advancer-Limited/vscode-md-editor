@@ -419,18 +419,39 @@ body.vscode-light .mmd-line.mmd-error-line {
 }
 
 /* =============================================
-   Template gallery menu
+   Template gallery menu — search input (fixed) +
+   scrollable list, mirroring editor.js's wikilink
+   link-picker pattern
    ============================================= */
 .mmd-menu {
   position: fixed;
   z-index: 100;
-  min-width: 240px;
+  min-width: 260px;
+  max-width: 320px;
   max-height: 60vh;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: var(--vscode-editorWidget-background, #252526);
   border: 1px solid var(--vscode-editorWidget-border, #454545);
   border-radius: 4px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.mmd-menu-search {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  border: none;
+  border-bottom: 1px solid var(--vscode-editorSuggestWidget-border, #454545);
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  font-family: var(--preview-font-family);
+  font-size: 13px;
+  outline: none;
+}
+
+.mmd-menu-list {
+  overflow-y: auto;
   padding: 4px;
 }
 
@@ -450,9 +471,16 @@ body.vscode-light .mmd-line.mmd-error-line {
 }
 
 .mmd-menu-item:hover,
+.mmd-menu-item.selected,
 .mmd-menu-item:focus-visible {
-  background: var(--vscode-list-hoverBackground, #2a2d2e);
+  background: var(--vscode-editorSuggestWidget-selectedBackground, #094771);
   outline: none;
+}
+
+.mmd-menu-item:hover .mmd-menu-label,
+.mmd-menu-item.selected .mmd-menu-label,
+.mmd-menu-item:focus-visible .mmd-menu-label {
+  color: var(--vscode-editorSuggestWidget-selectedForeground, #fff);
 }
 
 .mmd-menu-label {
@@ -463,6 +491,14 @@ body.vscode-light .mmd-line.mmd-error-line {
 .mmd-menu-desc {
   color: var(--vscode-descriptionForeground, #999);
   font-size: 11px;
+}
+
+.mmd-menu-empty {
+  padding: 10px 8px;
+  text-align: center;
+  opacity: 0.6;
+  font-style: italic;
+  font-size: 12px;
 }
 
 /* =============================================

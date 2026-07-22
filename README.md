@@ -66,7 +66,7 @@ Diagrams follow your VS Code light or dark theme and re-render automatically whe
 
 The `.mmd` editor helps you write diagrams rather than just render them:
 
-- **Template** — inserts a working starter diagram (flowchart, sequence, class, state, ER, gantt, pie, mind map) with its first label selected to type over.
+- **Template** — a searchable dropdown of 22 starter diagrams covering nearly every Mermaid diagram type (flowchart, sequence, class, state, ER, gantt, pie, mind map, user journey, git graph, kanban, timeline, quadrant chart, requirement diagram, C4 context, block, sankey, XY chart, radar, packet, architecture, treemap), each with generic example content (`Box 1`, `Task 2`...) obviously meant to be edited, and the first label pre-selected so you can type straight over it. Inserts at your cursor; if the cursor is in the middle of an existing diagram, you'll be asked to confirm first, since Mermaid only supports one diagram per file.
 - **Snippet palette** — the buttons beside Template change with the diagram type you're writing: node shapes and link styles for flowcharts, `participant`/`loop`/`alt` for sequence diagrams, and so on.
 - **Completions** — as you type, the editor offers the node IDs already in your diagram (press `Ctrl+Space` to summon them manually). This is the most useful one: in Mermaid a mistyped node ID doesn't produce an error, it quietly creates a stray disconnected node.
 
