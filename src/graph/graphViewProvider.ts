@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { FileIndexService } from '../wikilink/fileIndexService.js';
 import { MermaidFileIndexService } from './mermaidFileIndexService.js';
 import { GraphDataService } from './graphDataService.js';
@@ -64,6 +65,12 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
       (msg: SidebarMessage) => {
         switch (msg.type) {
           case 'ready':
+            // A fresh 'ready' means the webview's DOM (and its search boxes)
+            // just loaded from scratch — e.g. the view was hidden and is
+            // being re-resolved. Reset any stale query from before, or the
+            // now-empty search box would silently keep filtering by it.
+            this.searchQuery = '';
+            this.mermaidSearchQuery = '';
             this.sendFileList();
             this.sendMermaidFileList();
             break;
@@ -106,7 +113,9 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
             }
             break;
           case 'revealInExplorer':
-            this.handleRevealInExplorer(msg.folderPath || '');
+            if (msg.kind) {
+              this.handleRevealInExplorer(msg.folderPath || '', msg.kind);
+            }
             break;
         }
       },
@@ -174,7 +183,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
       fileName += ext;
     }
 
-    const folderUri = this.resolveWorkspaceFolderUri(folderPath);
+    const folderUri = this.resolveWorkspaceFolderUri(folderPath, kind);
     if (!folderUri) {
       vscode.window.showErrorMessage('Could not resolve the target folder.');
       return;
@@ -182,30 +191,62 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 
     const fileUri = vscode.Uri.joinPath(folderUri, fileName);
 
-    const alreadyExists = await vscode.workspace.fs.stat(fileUri).then(() => true, () => false);
-    if (alreadyExists) {
+    // Create atomically via a WorkspaceEdit rather than stat-then-write:
+    // ignoreIfExists/overwrite both false means applyEdit fails outright if
+    // something else created the file in between, instead of a separate
+    // existence check racing the write and silently truncating it.
+    const edit = new vscode.WorkspaceEdit();
+    edit.createFile(fileUri, { overwrite: false, ignoreIfExists: false });
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (!applied) {
       vscode.window.showErrorMessage(`"${fileName}" already exists in that folder.`);
       return;
     }
 
-    await vscode.workspace.fs.writeFile(fileUri, new Uint8Array());
     await vscode.commands.executeCommand('vscode.open', fileUri);
   }
 
-  private handleRevealInExplorer(folderPath: string): void {
-    const folderUri = this.resolveWorkspaceFolderUri(folderPath);
+  private handleRevealInExplorer(folderPath: string, kind: FileKind): void {
+    const folderUri = this.resolveWorkspaceFolderUri(folderPath, kind);
     if (folderUri) {
       vscode.commands.executeCommand('revealInExplorer', folderUri);
     }
   }
 
-  /** Resolve a workspace-relative folder path ('' for the root) to a URI. */
-  private resolveWorkspaceFolderUri(folderPath: string): vscode.Uri | undefined {
-    const root = vscode.workspace.workspaceFolders?.[0];
+  /**
+   * Resolve a workspace-relative folder path ('' for the root) to a URI.
+   *
+   * A bare `folderPath` string doesn't say which workspace folder it belongs
+   * to in a multi-root workspace — `relativePath` is computed per-file
+   * against that file's OWN root (see FileIndexService/MermaidFileIndexService
+   * getRelativePath), so two roots can produce identical-looking relative
+   * paths. Resolve the root from an actual indexed file under this folder
+   * instead of always assuming workspaceFolders[0].
+   */
+  private resolveWorkspaceFolderUri(folderPath: string, kind: FileKind): vscode.Uri | undefined {
+    const files = kind === 'markdown'
+      ? this.fileIndexService.getAllFiles()
+      : this.mermaidFileIndexService.getAllFiles();
+    const prefix = folderPath ? folderPath + '/' : '';
+    const match = files.find(f => f.relativePath.startsWith(prefix));
+
+    const root = match
+      ? vscode.workspace.getWorkspaceFolder(match.uri)
+      : vscode.workspace.workspaceFolders?.[0];
     if (!root) {
       return undefined;
     }
-    return folderPath ? vscode.Uri.joinPath(root.uri, folderPath) : root.uri;
+
+    const folderUri = folderPath ? vscode.Uri.joinPath(root.uri, folderPath) : root.uri;
+
+    // Defense in depth: joinPath normalizes '..' segments, so a crafted
+    // folderPath could otherwise resolve outside the workspace root.
+    const normalizedRoot = root.uri.fsPath.replace(/[\\/]+$/, '');
+    if (folderUri.fsPath !== normalizedRoot && !folderUri.fsPath.startsWith(normalizedRoot + path.sep)) {
+      return undefined;
+    }
+
+    return folderUri;
   }
 
   private sendFileList(): void {

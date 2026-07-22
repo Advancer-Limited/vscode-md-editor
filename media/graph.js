@@ -52,12 +52,17 @@
     btn.setAttribute('aria-label', nextLabel);
   }
 
-  function setSearchDisabledLook(btn, disabled) {
+  function setSearchDisabledLook(btn, disabled, viewMode) {
     if (!btn) return;
     btn.disabled = disabled;
     btn.classList.toggle('disabled', disabled);
     if (disabled) {
       btn.title = 'Folder view is unavailable while searching';
+      btn.setAttribute('aria-label', btn.title);
+    } else {
+      // Restore the real label/icon — otherwise the "unavailable while
+      // searching" tooltip would stick around after the search is cleared.
+      renderToggleButton(btn, viewMode);
     }
   }
 
@@ -179,13 +184,28 @@
   // ================================================
   // Render Markdown Links file list
   // ================================================
-  function renderFileList(nodes) {
+  /**
+   * Match the host's own searchChanged filter (label/folder substring),
+   * so the instant client-side preview while typing shows the CORRECT
+   * filtered set immediately, rather than the stale unfiltered list for the
+   * ~200ms until the debounced host round-trip's real filtered list lands.
+   */
+  function filterNodesByQuery(nodes, query) {
+    if (!query) return nodes;
+    const q = query.toLowerCase();
+    return nodes.filter((n) =>
+      n.label.toLowerCase().includes(q) || (n.folder || '').toLowerCase().includes(q));
+  }
+
+  function renderFileList(nodes, isCanonical = true) {
     if (!fileList) return;
-    lastLinksNodes = nodes || [];
+    if (isCanonical) {
+      lastLinksNodes = nodes || [];
+    }
 
     const query = searchInput ? searchInput.value.trim() : '';
     const effectiveMode = query ? 'flat' : state.linksViewMode;
-    setSearchDisabledLook(btnToggleLinksView, !!query);
+    setSearchDisabledLook(btnToggleLinksView, !!query, state.linksViewMode);
 
     // The whole list is torn down and rebuilt on every update (including
     // expand/collapse round-trips) — preserve the scroll position so the
@@ -280,13 +300,15 @@
   // ================================================
   // Render Mermaid file list
   // ================================================
-  function renderMermaidFileList(nodes) {
+  function renderMermaidFileList(nodes, isCanonical = true) {
     if (!mermaidFileList) return;
-    lastMermaidNodes = nodes || [];
+    if (isCanonical) {
+      lastMermaidNodes = nodes || [];
+    }
 
     const query = mermaidSearchInput ? mermaidSearchInput.value.trim() : '';
     const effectiveMode = query ? 'flat' : state.mermaidViewMode;
-    setSearchDisabledLook(btnToggleMermaidView, !!query);
+    setSearchDisabledLook(btnToggleMermaidView, !!query, state.mermaidViewMode);
 
     const savedScrollTop = mermaidFileList.scrollTop;
 
@@ -342,11 +364,18 @@
       folderMenu.remove();
       folderMenu = null;
       document.removeEventListener('mousedown', onFolderMenuOutsideClick, true);
+      document.removeEventListener('keydown', onFolderMenuKeydown, true);
     }
   }
 
   function onFolderMenuOutsideClick(e) {
     if (folderMenu && !folderMenu.contains(e.target)) {
+      closeFolderMenu();
+    }
+  }
+
+  function onFolderMenuKeydown(e) {
+    if (e.key === 'Escape') {
       closeFolderMenu();
     }
   }
@@ -373,14 +402,35 @@
     revealItem.addEventListener('mousedown', (e) => {
       e.preventDefault();
       closeFolderMenu();
-      vscode.postMessage({ type: 'revealInExplorer', folderPath });
+      vscode.postMessage({ type: 'revealInExplorer', folderPath, kind });
     });
     folderMenu.appendChild(revealItem);
 
-    folderMenu.style.left = x + 'px';
-    folderMenu.style.top = y + 'px';
+    // Items are focusable buttons, so a keyboard user can Tab onto one —
+    // mousedown alone (needed so a real click doesn't blur/close the menu
+    // first) doesn't fire for Enter/Space, so handle those explicitly too.
+    folderMenu.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const item = e.target.closest('.folder-menu-item');
+      if (!item) return;
+      e.preventDefault();
+      item.dispatchEvent(new MouseEvent('mousedown'));
+    });
+
     document.body.appendChild(folderMenu);
-    setTimeout(() => document.addEventListener('mousedown', onFolderMenuOutsideClick, true), 0);
+
+    // Clamp to the viewport so a right-click near the right/bottom edge
+    // doesn't render partly off-screen.
+    const rect = folderMenu.getBoundingClientRect();
+    const left = Math.min(x, window.innerWidth - rect.width - 4);
+    const top = Math.min(y, window.innerHeight - rect.height - 4);
+    folderMenu.style.left = Math.max(4, left) + 'px';
+    folderMenu.style.top = Math.max(4, top) + 'px';
+
+    setTimeout(() => {
+      document.addEventListener('mousedown', onFolderMenuOutsideClick, true);
+      document.addEventListener('keydown', onFolderMenuKeydown, true);
+    }, 0);
   }
 
   // ================================================
@@ -453,8 +503,12 @@
 
   let searchTimer;
   searchInput?.addEventListener('input', () => {
-    setSearchDisabledLook(btnToggleLinksView, !!searchInput.value.trim());
-    renderFileList(lastLinksNodes);
+    const query = searchInput.value.trim();
+    setSearchDisabledLook(btnToggleLinksView, !!query, state.linksViewMode);
+    // Instant preview from the data already on hand, correctly filtered —
+    // not the canonical list, so this doesn't clobber lastLinksNodes; the
+    // host's own (debounced) filtered reply still lands and re-renders.
+    renderFileList(filterNodesByQuery(lastLinksNodes, query), false);
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       vscode.postMessage({ type: 'searchChanged', query: searchInput.value });
@@ -463,8 +517,9 @@
 
   let mermaidSearchTimer;
   mermaidSearchInput?.addEventListener('input', () => {
-    setSearchDisabledLook(btnToggleMermaidView, !!mermaidSearchInput.value.trim());
-    renderMermaidFileList(lastMermaidNodes);
+    const mermaidQuery = mermaidSearchInput.value.trim();
+    setSearchDisabledLook(btnToggleMermaidView, !!mermaidQuery, state.mermaidViewMode);
+    renderMermaidFileList(filterNodesByQuery(lastMermaidNodes, mermaidQuery), false);
     clearTimeout(mermaidSearchTimer);
     mermaidSearchTimer = setTimeout(() => {
       vscode.postMessage({ type: 'mermaidSearchChanged', query: mermaidSearchInput.value });
