@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!--
+    Monochrome Advancer 'A' mark for the activity bar. VS Code recolors
+    activity-bar SVGs via a CSS mask (the fill color here is not what
+    renders), so a single solid black fill on a transparent background is
+    the correct, standard approach — see VS Code's own codicon assets.
+
+    Same silhouette as the toolbar's brand/About button (src/utils.ts,
+    getBrandButtonHtml): an outer triangle with a smaller triangular
+    aperture cut out via fill-rule evenodd, forming the 'A'. The colored
+    toolbar version additionally shades one facet for a faceted look; that
+    distinction has no meaning in a flat monochrome icon, so it's omitted.
+  -->
+  <path fill="#000000" fill-rule="evenodd" clip-rule="evenodd"
+        d="M12 2.5 L22 21 L2 21 Z M12 9.6 L16.1 17.2 L7.9 17.2 Z"/>
+</svg>

@@ -15,7 +15,18 @@
   // Diagram templates — the "blank page" problem
   // ============================================================
   // `${...}` marks the text to select after insertion so the user can type
-  // straight over it (see applyPlaceholders below).
+  // straight over it (see applyPlaceholders below). All example content is
+  // deliberately generic ("Box 1", "Task 2", "Entity 1") rather than
+  // domain-flavored — obviously placeholder text meant to be edited, not
+  // content a user might mistake for something real and leave in place.
+  //
+  // Every template here has been verified to parse cleanly against the
+  // vendored mermaid build (mermaid.parse(), not just eyeballed syntax) —
+  // several needed quoted identifiers for multi-word names that mermaid's
+  // grammar doesn't accept unquoted (sequence participants, ER entities,
+  // state names). Ordered with the five daily-use types teams reach for most
+  // (flowchart, sequence, class, ER, state) first, then other common types,
+  // then more specialized ones.
   const TEMPLATES = [
     {
       id: 'flowchart',
@@ -23,10 +34,10 @@
       description: 'Boxes and arrows, top-down',
       body:
         'flowchart TD\n' +
-        '    A[${Start}] --> B{Decision?}\n' +
-        '    B -->|Yes| C[Do the thing]\n' +
-        '    B -->|No| D[Skip it]\n' +
-        '    C --> E[Done]\n' +
+        '    A[${Box 1}] --> B{Decision?}\n' +
+        '    B -->|Yes| C[Box 2]\n' +
+        '    B -->|No| D[Box 3]\n' +
+        '    C --> E[Box 4]\n' +
         '    D --> E\n',
     },
     {
@@ -35,10 +46,10 @@
       description: 'Interactions between participants over time',
       body:
         'sequenceDiagram\n' +
-        '    participant ${Client}\n' +
-        '    participant Server\n' +
-        '    Client->>Server: Request\n' +
-        '    Server-->>Client: Response\n',
+        '    participant A1 as ${Actor 1}\n' +
+        '    participant A2 as Actor 2\n' +
+        '    A1->>A2: Message 1\n' +
+        '    A2-->>A1: Message 2\n',
     },
     {
       id: 'class',
@@ -46,22 +57,12 @@
       description: 'Types, fields and relationships',
       body:
         'classDiagram\n' +
-        '    class ${Animal} {\n' +
-        '        +String name\n' +
-        '        +move()\n' +
+        '    class ${Class1} {\n' +
+        '        +field1\n' +
+        '        +method1()\n' +
         '    }\n' +
-        '    Animal <|-- Dog\n',
-    },
-    {
-      id: 'state',
-      label: 'State diagram',
-      description: 'States and the transitions between them',
-      body:
-        'stateDiagram-v2\n' +
-        '    [*] --> ${Idle}\n' +
-        '    Idle --> Running: start\n' +
-        '    Running --> Idle: stop\n' +
-        '    Running --> [*]: exit\n',
+        '    class Class2\n' +
+        '    Class1 <|-- Class2\n',
     },
     {
       id: 'er',
@@ -69,12 +70,25 @@
       description: 'Entities, keys and cardinality',
       body:
         'erDiagram\n' +
-        '    ${CUSTOMER} ||--o{ ORDER : places\n' +
-        '    ORDER ||--|{ LINE_ITEM : contains\n' +
-        '    CUSTOMER {\n' +
-        '        string name\n' +
-        '        string email\n' +
+        '    "${Entity 1}" ||--o{ "Entity 2" : relates\n' +
+        '    "Entity 2" ||--|{ "Entity 3" : contains\n' +
+        '    "Entity 2" {\n' +
+        '        string field1\n' +
+        '        string field2\n' +
         '    }\n',
+    },
+    {
+      id: 'state',
+      label: 'State diagram',
+      description: 'States and the transitions between them',
+      body:
+        'stateDiagram-v2\n' +
+        '    [*] --> s1\n' +
+        '    state "${State 1}" as s1\n' +
+        '    state "State 2" as s2\n' +
+        '    s1 --> s2: event 1\n' +
+        '    s2 --> s1: event 2\n' +
+        '    s2 --> [*]: event 3\n',
     },
     {
       id: 'gantt',
@@ -84,11 +98,11 @@
         'gantt\n' +
         '    title ${Project plan}\n' +
         '    dateFormat YYYY-MM-DD\n' +
-        '    section Design\n' +
-        '        Research      :a1, 2026-01-01, 7d\n' +
-        '        Wireframes    :after a1, 5d\n' +
-        '    section Build\n' +
-        '        Implementation:2026-01-15, 14d\n',
+        '    section Section 1\n' +
+        '        Task 1      :a1, 2026-01-01, 7d\n' +
+        '        Task 2      :after a1, 5d\n' +
+        '    section Section 2\n' +
+        '        Task 3      :2026-01-15, 14d\n',
     },
     {
       id: 'pie',
@@ -96,9 +110,9 @@
       description: 'Proportions of a whole',
       body:
         'pie title ${Distribution}\n' +
-        '    "First"  : 45\n' +
-        '    "Second" : 30\n' +
-        '    "Third"  : 25\n',
+        '    "Item 1" : 45\n' +
+        '    "Item 2" : 30\n' +
+        '    "Item 3" : 25\n',
     },
     {
       id: 'mindmap',
@@ -107,9 +121,189 @@
       body:
         'mindmap\n' +
         '  root((${Central idea}))\n' +
-        '    Branch one\n' +
-        '      Detail\n' +
-        '    Branch two\n',
+        '    Branch 1\n' +
+        '      Detail 1\n' +
+        '    Branch 2\n' +
+        '      Detail 2\n',
+    },
+    {
+      id: 'journey',
+      label: 'User journey',
+      description: 'Steps and satisfaction across a process',
+      body:
+        'journey\n' +
+        '    title ${My journey}\n' +
+        '    section Section 1\n' +
+        '      Step 1: 5: User\n' +
+        '      Step 2: 3: User\n' +
+        '    section Section 2\n' +
+        '      Step 3: 5: User\n' +
+        '      Step 4: 4: User\n',
+    },
+    {
+      id: 'gitgraph',
+      label: 'Git graph',
+      description: 'Commits, branches and merges',
+      body:
+        'gitGraph\n' +
+        '    commit\n' +
+        '    branch feature-branch\n' +
+        '    checkout feature-branch\n' +
+        '    commit tag: "${v1.0}"\n' +
+        '    commit\n' +
+        '    checkout main\n' +
+        '    merge feature-branch\n' +
+        '    commit\n',
+    },
+    {
+      id: 'kanban',
+      label: 'Kanban board',
+      description: 'Columns of tickets',
+      body:
+        'kanban\n' +
+        '    Column 1\n' +
+        '        [${Task 1}]\n' +
+        '        [Task 2]\n' +
+        '    Column 2\n' +
+        '        [Task 3]\n' +
+        '    Column 3\n' +
+        '        [Task 4]\n',
+    },
+    {
+      id: 'timeline',
+      label: 'Timeline',
+      description: 'Chronological events',
+      body:
+        'timeline\n' +
+        '    title ${My timeline}\n' +
+        '    2023 : Event 1\n' +
+        '    2024 : Event 2\n' +
+        '    2025 : Event 3\n' +
+        '    2026 : Event 4\n',
+    },
+    {
+      id: 'quadrant',
+      label: 'Quadrant chart',
+      description: 'Plot items across two axes',
+      body:
+        'quadrantChart\n' +
+        '    title ${Quadrant chart}\n' +
+        '    x-axis Low --> High\n' +
+        '    y-axis Low --> High\n' +
+        '    quadrant-1 Quadrant 1\n' +
+        '    quadrant-2 Quadrant 2\n' +
+        '    quadrant-3 Quadrant 3\n' +
+        '    quadrant-4 Quadrant 4\n' +
+        '    Item 1: [0.3, 0.6]\n' +
+        '    Item 2: [0.45, 0.23]\n',
+    },
+    {
+      id: 'requirement',
+      label: 'Requirement diagram',
+      description: 'Requirements and satisfying elements',
+      body:
+        'requirementDiagram\n' +
+        '    requirement requirement_1 {\n' +
+        '    id: 1\n' +
+        '    text: "${Requirement text.}"\n' +
+        '    risk: medium\n' +
+        '    verifymethod: test\n' +
+        '    }\n' +
+        '    element element_1 {\n' +
+        '    type: simulation\n' +
+        '    }\n' +
+        '    element_1 - satisfies -> requirement_1\n',
+    },
+    {
+      id: 'c4context',
+      label: 'C4 context diagram',
+      description: 'System context — actors and systems',
+      body:
+        'C4Context\n' +
+        '    title ${System context diagram}\n' +
+        '    Person(person1, "Person 1", "A user of the system.")\n' +
+        '    System(system1, "System 1", "Does the main thing.")\n' +
+        '    Rel(person1, system1, "Uses")\n',
+    },
+    {
+      id: 'block',
+      label: 'Block diagram',
+      description: 'Simple connected blocks',
+      body:
+        'block-beta\n' +
+        '    columns 3\n' +
+        '    a["${Block 1}"] b["Block 2"] c["Block 3"]\n' +
+        '    a --> b\n' +
+        '    b --> c\n',
+    },
+    {
+      id: 'sankey',
+      label: 'Sankey diagram',
+      description: 'Flow quantities between nodes',
+      body:
+        'sankey-beta\n' +
+        '\n' +
+        'Source 1,Target 1,45\n' +
+        'Source 1,${Target 2},35\n' +
+        'Source 2,Target 1,20\n',
+    },
+    {
+      id: 'xychart',
+      label: 'XY chart',
+      description: 'Bar and line chart over categories',
+      body:
+        'xychart-beta\n' +
+        '    title "${XY chart}"\n' +
+        '    x-axis [Category 1, Category 2, Category 3, Category 4]\n' +
+        '    y-axis "Value" 0 --> 100\n' +
+        '    bar [50, 60, 75, 82]\n' +
+        '    line [50, 60, 75, 82]\n',
+    },
+    {
+      id: 'radar',
+      label: 'Radar chart',
+      description: 'Multi-axis comparison',
+      body:
+        'radar-beta\n' +
+        '    title ${Radar chart}\n' +
+        '    axis axis1, axis2, axis3, axis4, axis5\n' +
+        '    curve curve1["Item 1"]{85, 90, 70, 60, 75}\n',
+    },
+    {
+      id: 'packet',
+      label: 'Packet diagram',
+      description: 'Byte-level protocol layout',
+      body:
+        'packet-beta\n' +
+        'title ${Packet diagram}\n' +
+        '0-7: "Field 1"\n' +
+        '8-15: "Field 2"\n' +
+        '16-31: "Field 3"\n',
+    },
+    {
+      id: 'architecture',
+      label: 'Architecture diagram',
+      description: 'Services, groups and connections',
+      body:
+        'architecture-beta\n' +
+        '    group group1(cloud)[${Group 1}]\n' +
+        '    service service1(database)[Service 1] in group1\n' +
+        '    service service2(server)[Service 2] in group1\n' +
+        '    service2:R -- L:service1\n',
+    },
+    {
+      id: 'treemap',
+      label: 'Treemap',
+      description: 'Nested proportional rectangles',
+      body:
+        'treemap-beta\n' +
+        '"${Category 1}"\n' +
+        '    "Subcategory 1"\n' +
+        '        "Item 1": 40\n' +
+        '        "Item 2": 30\n' +
+        '    "Subcategory 2"\n' +
+        '        "Item 3": 20\n' +
+        '        "Item 4": 10\n',
     },
   ];
 
@@ -194,6 +388,8 @@
     'flowchart TD', 'flowchart LR', 'graph TD', 'graph LR', 'sequenceDiagram',
     'classDiagram', 'stateDiagram-v2', 'erDiagram', 'journey', 'gantt', 'pie',
     'gitGraph', 'mindmap', 'timeline', 'quadrantChart', 'requirementDiagram',
+    'kanban', 'C4Context', 'block-beta', 'sankey-beta', 'xychart-beta',
+    'radar-beta', 'packet-beta', 'architecture-beta', 'treemap-beta',
   ];
 
   const DIRECTIONS = ['TD', 'TB', 'BT', 'LR', 'RL'];

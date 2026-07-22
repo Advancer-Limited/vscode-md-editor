@@ -2,6 +2,14 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.1.0] - 2026-07-20
+
+### Added
+
+- **New activity bar icon** — a monochrome Advancer 'A' mark, matching the brand icon already on the editor toolbars, replacing the generic link icon.
+- **Mermaid template dropdown expanded from 8 to 22 diagram types** — nearly every official Mermaid diagram type is now available (flowchart, sequence, class, state, ER, gantt, pie, mind map, user journey, git graph, kanban, timeline, quadrant chart, requirement diagram, C4 context, block, sankey, XY chart, radar, packet, architecture, treemap), each verified to render correctly and using generic example content (`Box 1`, `Task 2`...) that's obviously meant to be edited. The dropdown is now searchable, so the longer list stays easy to scan.
+- **Smarter template insertion** — templates now insert at your cursor instead of always replacing the whole document. If the cursor is in the middle of an existing diagram, you're asked to confirm first (since Mermaid only supports one diagram per file); at the very start or end, it inserts immediately.
+
 ## [1.0.0] - 2026-07-19
 
 First stable release.
