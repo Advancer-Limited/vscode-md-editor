@@ -6,6 +6,63 @@ export function escapeHtml(str: string): string {
 }
 
 /**
+ * Wrap toolbar icon path/shape markup in a shared 16x16 <svg> shell — same
+ * convention as the .mmd editor's snippet-palette icons (viewBox 0 0 16 16,
+ * stroke=currentColor so it themes automatically), so a button is icon-only
+ * with its label carried entirely by `title`/`aria-label` instead.
+ */
+export function toolbarIcon(inner: string): string {
+  return `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`;
+}
+
+/**
+ * Build a standalone page containing the live preview's current rendered
+ * HTML, for printing in an external browser (window.print() is suppressed
+ * inside VS Code's sandboxed webview — no allow-modals — so this hands the
+ * content to a real browser instead, where Print and "Save as PDF" work).
+ * Embeds the editor's own stylesheet (`css`, the actual contents of
+ * editor.css) so headings/tables/code blocks/embedded Mermaid diagrams etc.
+ * render the same as they do in the live preview.
+ */
+export function buildMarkdownPrintHtml(title: string, bodyHtml: string, css: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; form-action 'none';">
+<title>${escapeHtml(title)}</title>
+<style>
+${css}
+/* editor.css above is the whole webview app shell, not just the preview
+   styles — its html/body rules (height:100%, overflow:hidden, and colors
+   resolved from --vscode-* theme variables that don't exist in a real
+   browser) would otherwise clip the printed page to one screenful and
+   render low-contrast dark-theme-fallback text on the page's white
+   background. Override them explicitly rather than relying on cascade
+   order, since !important pins this regardless of source order. */
+html, body {
+  height: auto !important;
+  overflow: visible !important;
+  background: #ffffff !important;
+  color: #1f1f1f !important;
+}
+body { margin: 0; padding: 24px; }
+/* Grammar-check decoration is an editing aid, not part of the document. */
+.grammar-error { text-decoration: none !important; }
+@media print {
+  @page { margin: 12mm; }
+  body { padding: 0; }
+}
+</style>
+</head>
+<body>
+<div class="markdown-body">${bodyHtml}</div>
+</body>
+</html>`;
+}
+
+/**
  * Generate a random nonce for Content Security Policy in webviews.
  * Uses a cryptographically secure RNG, as the CSP spec requires — a
  * predictable nonce (e.g. Math.random) would weaken the policy.

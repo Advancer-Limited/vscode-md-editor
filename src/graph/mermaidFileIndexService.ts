@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { getFileStem, isMermaidFile } from '../utils.js';
 
 /** Metadata for a single .mmd/.mermaid file in the index. */
@@ -10,7 +9,7 @@ export interface MermaidFileEntry {
   uri: vscode.Uri;
   /** Filename without extension */
   stem: string;
-  /** Immediate parent folder name */
+  /** Full folder path (all segments before the filename) */
   folder: string;
 }
 
@@ -126,18 +125,20 @@ export class MermaidFileIndexService implements vscode.Disposable {
 
   /**
    * Workspace-relative path (forward-slash separated), or undefined if the
-   * URI isn't inside any open workspace folder. Uses path.relative() rather
-   * than a manual startsWith()/slice() — see FileIndexService.getRelativePath
-   * for why a plain string comparison is unsafe (case mismatch between
-   * URIs from different VS Code APIs, even on Windows).
+   * URI isn't inside any open workspace folder. Slices by folder.uri.fsPath's
+   * character length rather than a manual startsWith()/slice()-with-check
+   * or path.relative() — see FileIndexService.getRelativePath for why: both
+   * of those re-derive containment via a string comparison that has to
+   * reimplement VS Code's own platform-specific case sensitivity rules,
+   * where getWorkspaceFolder() above has already made that determination.
    */
   private getRelativePath(uri: vscode.Uri): string | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) {
       return undefined;
     }
-    const relative = path.relative(folder.uri.fsPath, uri.fsPath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
+    if (!relative) {
       return undefined;
     }
     return relative.replace(/\\/g, '/');

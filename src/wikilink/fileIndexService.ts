@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { parseWikilinks, resolveWikilinkTarget, parseTags, WikilinkOccurrence } from './wikilinkParser.js';
 import { getFileStem, isMarkdownFile } from '../utils.js';
 
@@ -15,7 +14,7 @@ export interface FileEntry {
   outgoingLinks: WikilinkOccurrence[];
   /** Tags extracted from frontmatter or inline #tags */
   tags: string[];
-  /** Parent folder name (for graph coloring) */
+  /** Full folder path (all segments before the filename); used for graph coloring, search matching, and (via the full-graph panel) folder filters */
   folder: string;
   /** Raw text content (cached for unlinked mentions) */
   content: string;
@@ -323,25 +322,27 @@ export class FileIndexService implements vscode.Disposable {
    * Workspace-relative path (forward-slash separated), or undefined if the
    * URI isn't inside any open workspace folder.
    *
-   * Uses path.relative() rather than a manual startsWith()/slice() — a
-   * plain string comparison is case-SENSITIVE even on Windows, where two
-   * URIs for the same file can carry differently-cased path segments
-   * depending on which VS Code API produced them (the initial findFiles()
-   * scan vs. a later onDidSaveTextDocument/onDidChangeTextDocument for a
-   * document opened via a differently-cased path). A startsWith() mismatch
-   * there silently fell through to returning the full absolute path AS the
-   * "relative" path — indexed as a second, bogus entry for an
-   * already-indexed file. path.relative() (case-insensitive on Windows)
-   * resolves this, and a result escaping the root (starting with '..')
-   * means the URI isn't actually under this folder.
+   * Slices by folder.uri.fsPath's character length rather than a manual
+   * startsWith()/slice() with an equality check, or path.relative() — both
+   * of those re-derive containment via their own string comparison, which
+   * has to reimplement VS Code's platform-specific case sensitivity rules
+   * (case-insensitive path matching on Windows AND macOS, case-sensitive on
+   * Linux) to avoid rejecting a real match. getWorkspaceFolder() above has
+   * ALREADY determined uri belongs under folder using those exact rules —
+   * a case difference never changes string length, so slicing by length
+   * trusts that determination instead of redundantly (and inconsistently)
+   * re-checking it. The original bug was exactly a startsWith() mismatch —
+   * on a document opened via a differently-cased path — silently returning
+   * the full absolute path AS the "relative" path, indexed as a second,
+   * bogus entry for an already-indexed file.
    */
   private getRelativePath(uri: vscode.Uri): string | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) {
       return undefined;
     }
-    const relative = path.relative(folder.uri.fsPath, uri.fsPath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
+    if (!relative) {
       return undefined;
     }
     return relative.replace(/\\/g, '/');

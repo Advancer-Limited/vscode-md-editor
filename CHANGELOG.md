@@ -10,7 +10,7 @@ All notable changes to the VS Code MD Editor extension will be documented in thi
 
 ### Changed
 
-- **Sidebar flat view is now a plain alphabetical file list**, with no folder tag — the tag only ever showed the immediate parent folder, so files sharing a name and immediate folder in different parent projects (e.g. `serviceA/docs/00-overview.md` and `serviceB/docs/00-overview.md`) looked like duplicates. Switch to folder view (the toggle button) to see where a file actually lives.
+- **Sidebar flat view is now a plain alphabetical file list**, with no folder tag — the tag only ever showed the immediate parent folder, so files sharing a name and immediate folder in different parent projects (e.g. `serviceA/docs/00-overview.md` and `serviceB/docs/00-overview.md`) looked like duplicates. Switch to folder view (the toggle button) to see where a file actually lives. Folder path now also used in full — this affects the full-graph panel's node coloring/tooltips and sidebar search matching too, not just the (now-removed) tag.
 - **Sidebar tabs renamed and given icons** — "Markdown Links" is now just "Markdown", both tabs show a small file-type icon to the left of their label, and the panel header reads "MD & MMD Editor".
 - **Several Markdown editor toolbar buttons converted from text labels to icons** (Link, Image, Code, Code Block, Unordered/Ordered List, Blockquote, Horizontal Rule, and the new Print button) with tooltips, saving toolbar space. Bold/Italic/Strikethrough, headings, Grammar (its label shows check progress), and the Edit/Split/Raw view toggle stay as text.
 

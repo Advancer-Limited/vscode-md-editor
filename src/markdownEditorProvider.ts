@@ -1,53 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getNonce, computeMinimalEdit, getBrandButtonHtml, escapeHtml } from './utils.js';
+import { getNonce, computeMinimalEdit, getBrandButtonHtml, toolbarIcon, buildMarkdownPrintHtml } from './utils.js';
 import { WebviewToExtensionMessage, GrammarMatch } from './types.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
 import { showAboutDialog } from './about.js';
 import { sweepOldPrintFiles } from './printFiles.js';
 
 const MD_PRINT_FILE_PATTERN = /^md-print-(\d+)\.html$/;
-
-/**
- * Wrap toolbar icon path/shape markup in a shared 16x16 <svg> shell — same
- * convention as the .mmd editor's snippet-palette icons (viewBox 0 0 16 16,
- * stroke=currentColor so it themes automatically), so a button is icon-only
- * with its label carried entirely by `title`/`aria-label` instead.
- */
-function toolbarIcon(inner: string): string {
-  return `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`;
-}
-
-/**
- * Build a standalone page containing the live preview's current rendered
- * HTML, for printing in an external browser (window.print() is suppressed
- * inside VS Code's sandboxed webview — no allow-modals — so this hands the
- * content to a real browser instead, where Print and "Save as PDF" work).
- * Embeds the editor's own stylesheet so headings/tables/code blocks/embedded
- * Mermaid diagrams etc. render the same as they do in the live preview.
- */
-function buildMarkdownPrintHtml(title: string, bodyHtml: string, css: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:;">
-<title>${escapeHtml(title)}</title>
-<style>
-${css}
-body { margin: 0; padding: 24px; }
-@media print {
-  @page { margin: 12mm; }
-  body { padding: 0; }
-}
-</style>
-</head>
-<body>
-<div class="markdown-body">${bodyHtml}</div>
-</body>
-</html>`;
-}
 
 export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly viewType = 'vscodeMdEditor.editor';

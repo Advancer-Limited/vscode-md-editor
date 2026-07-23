@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { MarkdownEditorProvider } from './markdownEditorProvider.js';
 import { MermaidEditorProvider } from './mermaidEditorProvider.js';
 import { GltfEditorProvider } from './gltfEditorProvider.js';
@@ -204,14 +203,15 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!folder) {
       return undefined;
     }
-    // path.relative() rather than a blind slice() by prefix length — a
-    // casing mismatch between this URI and the workspace folder's URI
-    // (reachable even on Windows; see FileIndexService.getRelativePath)
-    // would otherwise slice off the wrong number of characters and produce
-    // a relativePath that never matches anything in the index, silently
-    // breaking "active file" highlighting rather than erroring.
-    const relative = path.relative(folder.uri.fsPath, uri.fsPath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    // Slice by folder.uri.fsPath's character length rather than re-deriving
+    // containment with a startsWith()/path.relative() comparison — see
+    // FileIndexService.getRelativePath for why: getWorkspaceFolder() above
+    // has already determined uri belongs under folder using VS Code's own
+    // platform-specific case rules, and a case difference never changes
+    // string length, so trusting that determination and slicing by length
+    // is correct regardless of platform.
+    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
+    if (!relative) {
       return undefined;
     }
     const relativePath = relative.replace(/\\/g, '/');
