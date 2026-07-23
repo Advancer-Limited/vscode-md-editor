@@ -9,7 +9,7 @@ export interface MermaidFileEntry {
   uri: vscode.Uri;
   /** Filename without extension */
   stem: string;
-  /** Immediate parent folder name */
+  /** Full folder path (all segments before the filename) */
   folder: string;
 }
 
@@ -123,23 +123,36 @@ export class MermaidFileIndexService implements vscode.Disposable {
     return this.files.get(relativePath);
   }
 
+  /**
+   * Workspace-relative path (forward-slash separated), or undefined if the
+   * URI isn't inside any open workspace folder. Slices by folder.uri.fsPath's
+   * character length rather than a manual startsWith()/slice()-with-check
+   * or path.relative() — see FileIndexService.getRelativePath for why: both
+   * of those re-derive containment via a string comparison that has to
+   * reimplement VS Code's own platform-specific case sensitivity rules,
+   * where getWorkspaceFolder() above has already made that determination.
+   */
   private getRelativePath(uri: vscode.Uri): string | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) {
       return undefined;
     }
-    const folderPath = folder.uri.fsPath;
-    let filePath = uri.fsPath;
-    if (filePath.startsWith(folderPath)) {
-      filePath = filePath.slice(folderPath.length);
-      filePath = filePath.replace(/\\/g, '/').replace(/^\//, '');
+    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
+    if (!relative) {
+      return undefined;
     }
-    return filePath;
+    return relative.replace(/\\/g, '/');
   }
 
+  /**
+   * Full folder path (all segments before the filename), not just the
+   * immediate parent — see FileIndexService.getFolder for why: otherwise
+   * two files with the same name and immediate parent folder in different
+   * parent projects are indistinguishable in the flat sidebar list.
+   */
   private getFolder(relativePath: string): string {
     const parts = relativePath.split('/');
-    return parts.length > 1 ? parts[parts.length - 2] : '';
+    return parts.length > 1 ? parts.slice(0, -1).join('/') : '';
   }
 
   public dispose(): void {

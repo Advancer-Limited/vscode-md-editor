@@ -51,6 +51,10 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken,
   ): void {
     this.view = webviewView;
+    // Overrides the package.json-contributed "Markdown Links: Graph" — set
+    // at runtime rather than fought over in package.json, since this is a
+    // documented, writable property specifically meant for this.
+    webviewView.title = 'MD & MMD Editor';
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -375,8 +379,22 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="tab-bar" role="tablist">
-    <button class="tab-btn active" data-tab="links" role="tab" aria-selected="true">Markdown Links</button>
-    <button class="tab-btn" data-tab="mermaid" role="tab" aria-selected="false">Mermaid</button>
+    <button class="tab-btn active" data-tab="links" role="tab" aria-selected="true">
+      <svg class="tab-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+           stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M4 2 H9 L12 5 V14 H4 Z"/><path d="M9 2 V5 H12"/>
+        <line x1="6" y1="8.2" x2="10.5" y2="8.2"/><line x1="6" y1="10.6" x2="10.5" y2="10.6"/>
+      </svg>
+      <span class="tab-label">Markdown</span>
+    </button>
+    <button class="tab-btn" data-tab="mermaid" role="tab" aria-selected="false">
+      <svg class="tab-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+           stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <rect x="2" y="2.5" width="5.5" height="3.6" rx="0.6"/><rect x="8.5" y="10" width="5.5" height="3.6" rx="0.6"/>
+        <path d="M4.75 6.1 V9 H11.25 V10"/>
+      </svg>
+      <span class="tab-label">Mermaid</span>
+    </button>
   </div>
 
   <div id="tab-panel-links" class="tab-panel active" data-panel="links">

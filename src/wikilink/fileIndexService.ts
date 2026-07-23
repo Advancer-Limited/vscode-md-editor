@@ -14,7 +14,7 @@ export interface FileEntry {
   outgoingLinks: WikilinkOccurrence[];
   /** Tags extracted from frontmatter or inline #tags */
   tags: string[];
-  /** Parent folder name (for graph coloring) */
+  /** Full folder path (all segments before the filename); used for graph coloring, search matching, and (via the full-graph panel) folder filters */
   folder: string;
   /** Raw text content (cached for unlinked mentions) */
   content: string;
@@ -318,24 +318,46 @@ export class FileIndexService implements vscode.Disposable {
   // Helpers
   // ========================================
 
+  /**
+   * Workspace-relative path (forward-slash separated), or undefined if the
+   * URI isn't inside any open workspace folder.
+   *
+   * Slices by folder.uri.fsPath's character length rather than a manual
+   * startsWith()/slice() with an equality check, or path.relative() — both
+   * of those re-derive containment via their own string comparison, which
+   * has to reimplement VS Code's platform-specific case sensitivity rules
+   * (case-insensitive path matching on Windows AND macOS, case-sensitive on
+   * Linux) to avoid rejecting a real match. getWorkspaceFolder() above has
+   * ALREADY determined uri belongs under folder using those exact rules —
+   * a case difference never changes string length, so slicing by length
+   * trusts that determination instead of redundantly (and inconsistently)
+   * re-checking it. The original bug was exactly a startsWith() mismatch —
+   * on a document opened via a differently-cased path — silently returning
+   * the full absolute path AS the "relative" path, indexed as a second,
+   * bogus entry for an already-indexed file.
+   */
   private getRelativePath(uri: vscode.Uri): string | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) {
       return undefined;
     }
-    const folderPath = folder.uri.fsPath;
-    let filePath = uri.fsPath;
-    if (filePath.startsWith(folderPath)) {
-      filePath = filePath.slice(folderPath.length);
-      // Normalize separators and remove leading separator
-      filePath = filePath.replace(/\\/g, '/').replace(/^\//, '');
+    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
+    if (!relative) {
+      return undefined;
     }
-    return filePath;
+    return relative.replace(/\\/g, '/');
   }
 
+  /**
+   * Full folder path (all segments before the filename), not just the
+   * immediate parent — two files with the same name and immediate parent
+   * (e.g. "serviceA/docs/00-overview.md" and "serviceB/docs/00-overview.md"
+   * both have an immediate parent of "docs") are otherwise indistinguishable
+   * in the flat sidebar list, which only shows label + folder.
+   */
   private getFolder(relativePath: string): string {
     const parts = relativePath.split('/');
-    return parts.length > 1 ? parts[parts.length - 2] : '';
+    return parts.length > 1 ? parts.slice(0, -1).join('/') : '';
   }
 
   public dispose(): void {

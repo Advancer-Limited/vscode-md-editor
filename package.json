@@ -2,7 +2,7 @@
   "name": "vscode-md-editor",
   "displayName": "VS Code MD Editor",
   "description": "A rich Markdown editor with live preview, Mermaid diagrams, task checklists, wikilinks, graph visualizer, version diff, and LanguageTool grammar checking",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "license": "MIT",
   "author": {
     "name": "Advancer Limited",
@@ -31,7 +31,7 @@
       "activitybar": [
         {
           "id": "vscodeMdEditorSidebar",
-          "title": "Markdown Links",
+          "title": "MD & MMD Editor",
           "icon": "media/activity-icon.svg"
         }
       ]
@@ -40,7 +40,7 @@
       "vscodeMdEditorSidebar": [
         {
           "id": "vscodeMdEditor.graph",
-          "name": "Graph",
+          "name": "MD & MMD Editor",
           "type": "webview"
         }
       ]

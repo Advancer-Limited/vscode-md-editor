@@ -1,42 +1,11 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getNonce, computeMinimalEdit, getBrandButtonHtml } from './utils.js';
+import { getNonce, computeMinimalEdit, getBrandButtonHtml, escapeHtml } from './utils.js';
 import { MermaidWebviewToExtensionMessage } from './types.js';
 import { showAboutDialog } from './about.js';
+import { sweepOldPrintFiles } from './printFiles.js';
 
-/** Escape text for safe interpolation into HTML text content. */
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/** How long a generated print page is kept before being swept. */
-const PRINT_FILE_TTL_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Delete previously generated print pages that are older than the TTL.
- *
- * They can't be removed immediately after opening — the browser loads them
- * asynchronously — so they're swept on the next print instead. Without this
- * they accumulate indefinitely, each holding a full copy of a diagram.
- */
-async function sweepOldPrintFiles(dir: vscode.Uri): Promise<void> {
-  try {
-    const cutoff = Date.now() - PRINT_FILE_TTL_MS;
-    const entries = await vscode.workspace.fs.readDirectory(dir);
-    for (const [name, type] of entries) {
-      if (type !== vscode.FileType.File) continue;
-      const match = /^mmd-print-(\d+)\.html$/.exec(name);
-      if (!match || Number(match[1]) >= cutoff) continue;
-      try {
-        await vscode.workspace.fs.delete(vscode.Uri.joinPath(dir, name));
-      } catch {
-        // A file we can't delete shouldn't block printing.
-      }
-    }
-  } catch {
-    // Sweeping is best-effort housekeeping — never fail a print over it.
-  }
-}
+const MMD_PRINT_FILE_PATTERN = /^mmd-print-(\d+)\.html$/;
 
 /**
  * Build a standalone page containing just the diagram, for printing in an
@@ -275,7 +244,7 @@ export class MermaidEditorProvider implements vscode.CustomTextEditorProvider {
             try {
               const dir = this.context.globalStorageUri;
               await vscode.workspace.fs.createDirectory(dir);
-              await sweepOldPrintFiles(dir);
+              await sweepOldPrintFiles(dir, MMD_PRINT_FILE_PATTERN);
               const file = vscode.Uri.joinPath(dir, `mmd-print-${Date.now()}.html`);
               await vscode.workspace.fs.writeFile(
                 file,
