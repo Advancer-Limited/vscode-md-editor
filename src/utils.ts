@@ -1,5 +1,10 @@
 import { randomBytes } from 'crypto';
 
+/** Escape text for safe interpolation into HTML text content. */
+export function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /**
  * Generate a random nonce for Content Security Policy in webviews.
  * Uses a cryptographically secure RNG, as the CSP spec requires — a

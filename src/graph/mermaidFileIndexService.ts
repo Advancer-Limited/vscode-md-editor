@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { getFileStem, isMermaidFile } from '../utils.js';
 
 /** Metadata for a single .mmd/.mermaid file in the index. */
@@ -123,23 +124,34 @@ export class MermaidFileIndexService implements vscode.Disposable {
     return this.files.get(relativePath);
   }
 
+  /**
+   * Workspace-relative path (forward-slash separated), or undefined if the
+   * URI isn't inside any open workspace folder. Uses path.relative() rather
+   * than a manual startsWith()/slice() — see FileIndexService.getRelativePath
+   * for why a plain string comparison is unsafe (case mismatch between
+   * URIs from different VS Code APIs, even on Windows).
+   */
   private getRelativePath(uri: vscode.Uri): string | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) {
       return undefined;
     }
-    const folderPath = folder.uri.fsPath;
-    let filePath = uri.fsPath;
-    if (filePath.startsWith(folderPath)) {
-      filePath = filePath.slice(folderPath.length);
-      filePath = filePath.replace(/\\/g, '/').replace(/^\//, '');
+    const relative = path.relative(folder.uri.fsPath, uri.fsPath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+      return undefined;
     }
-    return filePath;
+    return relative.replace(/\\/g, '/');
   }
 
+  /**
+   * Full folder path (all segments before the filename), not just the
+   * immediate parent — see FileIndexService.getFolder for why: otherwise
+   * two files with the same name and immediate parent folder in different
+   * parent projects are indistinguishable in the flat sidebar list.
+   */
   private getFolder(relativePath: string): string {
     const parts = relativePath.split('/');
-    return parts.length > 1 ? parts[parts.length - 2] : '';
+    return parts.length > 1 ? parts.slice(0, -1).join('/') : '';
   }
 
   public dispose(): void {

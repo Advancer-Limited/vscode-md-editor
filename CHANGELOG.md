@@ -2,6 +2,22 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.3.0] - 2026-07-23
+
+### Added
+
+- **Print/Save as PDF for the Markdown WYSIWYG editor** — a new Print button on the toolbar opens the current rendered document (including any embedded Mermaid diagrams) in your browser, where Print and its "Save as PDF" destination work properly.
+
+### Changed
+
+- **Sidebar flat view is now a plain alphabetical file list**, with no folder tag — the tag only ever showed the immediate parent folder, so files sharing a name and immediate folder in different parent projects (e.g. `serviceA/docs/00-overview.md` and `serviceB/docs/00-overview.md`) looked like duplicates. Switch to folder view (the toggle button) to see where a file actually lives.
+- **Sidebar tabs renamed and given icons** — "Markdown Links" is now just "Markdown", both tabs show a small file-type icon to the left of their label, and the panel header reads "MD & MMD Editor".
+- **Several Markdown editor toolbar buttons converted from text labels to icons** (Link, Image, Code, Code Block, Unordered/Ordered List, Blockquote, Horizontal Rule, and the new Print button) with tooltips, saving toolbar space. Bold/Italic/Strikethrough, headings, Grammar (its label shows check progress), and the Edit/Split/Raw view toggle stay as text.
+
+### Fixed
+
+- **A real (if rare) file-indexing bug**: the sidebar's file index computed a file's path relative to its workspace folder with a plain, case-sensitive string comparison — a document opened via a differently-cased path (possible even on Windows, mid-path, not just the drive letter) could silently produce a bogus second index entry instead of updating the existing one. Replaced with `path.relative()`, which resolves this correctly.
+
 ## [1.2.0] - 2026-07-22
 
 ### Added

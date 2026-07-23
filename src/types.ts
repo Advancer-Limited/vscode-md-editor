@@ -92,7 +92,9 @@ export type WebviewToExtensionMessage =
   | { type: 'openWikilink'; target: string }
   | { type: 'applyGrammarFix'; offset: number; length: number; replacement: string; expectedText?: string }
   /** Toolbar brand button — show the About dialog. */
-  | { type: 'showAbout' };
+  | { type: 'showAbout' }
+  /** Print/Save as PDF — carries the live preview's current rendered HTML. */
+  | { type: 'print'; html: string };
 
 export interface WikilinkSuggestion {
   stem: string;

@@ -252,13 +252,13 @@
         row.appendChild(badge);
       }
 
-      // The folder tag is redundant once the tree itself groups by folder.
-      if (node.folder && effectiveMode !== 'folders') {
-        const folder = document.createElement('span');
-        folder.className = 'node-folder';
-        folder.textContent = node.folder;
-        row.appendChild(folder);
-      }
+      // Flat view is deliberately just an alphabetical file list, no folder
+      // info — folder view (the tree itself) is where that context lives.
+      // Two files sharing a name and immediate folder in different parent
+      // projects would otherwise look like duplicates even with a folder
+      // tag (it only ever showed the immediate parent, e.g. both would say
+      // "docs"); flat view not claiming to disambiguate at all is clearer
+      // than a half-disambiguating tag.
 
       frag.appendChild(row);
 
@@ -334,13 +334,6 @@
       label.className = 'node-label';
       label.textContent = node.label;
       row.appendChild(label);
-
-      if (node.folder && effectiveMode !== 'folders') {
-        const folder = document.createElement('span');
-        folder.className = 'node-folder';
-        folder.textContent = node.folder;
-        row.appendChild(folder);
-      }
 
       frag.appendChild(row);
     });
