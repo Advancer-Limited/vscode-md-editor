@@ -1,8 +1,12 @@
 import * as vscode from 'vscode';
-import { getNonce, computeMinimalEdit, getBrandButtonHtml } from './utils.js';
+import * as path from 'path';
+import { getNonce, computeMinimalEdit, getBrandButtonHtml, toolbarIcon, buildMarkdownPrintHtml } from './utils.js';
 import { WebviewToExtensionMessage, GrammarMatch } from './types.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
 import { showAboutDialog } from './about.js';
+import { sweepOldPrintFiles } from './printFiles.js';
+
+const MD_PRINT_FILE_PATTERN = /^md-print-(\d+)\.html$/;
 
 export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly viewType = 'vscodeMdEditor.editor';
@@ -208,6 +212,33 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             updateWebview();
             return;
           }
+
+          case 'print': {
+            try {
+              const dir = this.context.globalStorageUri;
+              await vscode.workspace.fs.createDirectory(dir);
+              await sweepOldPrintFiles(dir, MD_PRINT_FILE_PATTERN);
+              const cssUri = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'editor.css');
+              const cssBytes = await vscode.workspace.fs.readFile(cssUri);
+              const css = Buffer.from(cssBytes).toString('utf8');
+              const file = vscode.Uri.joinPath(dir, `md-print-${Date.now()}.html`);
+              await vscode.workspace.fs.writeFile(
+                file,
+                Buffer.from(buildMarkdownPrintHtml(path.basename(document.fileName), message.html, css), 'utf8')
+              );
+              // globalStorageUri can be a vscode-userdata: URI rather than
+              // file: (seen on Windows) — openExternal then hands that
+              // scheme straight to the OS shell, which has no app
+              // registered for it. Uri.file(fsPath) rebuilds a real file:
+              // URI the shell/browser can open.
+              await vscode.env.openExternal(vscode.Uri.file(file.fsPath));
+            } catch (err) {
+              vscode.window.showErrorMessage(
+                `Failed to open the document for printing: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
+            return;
+          }
         }
       }
     );
@@ -289,15 +320,15 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     <button id="btn-h2" title="Heading 2">H2</button>
     <button id="btn-h3" title="Heading 3">H3</button>
     <span class="toolbar-separator"></span>
-    <button id="btn-link" title="Insert Link">Link</button>
-    <button id="btn-image" title="Insert Image">Img</button>
-    <button id="btn-code" title="Inline Code">Code</button>
-    <button id="btn-codeblock" title="Code Block">Block</button>
+    <button id="btn-link" class="icon-btn" title="Insert Link" aria-label="Insert Link">${toolbarIcon('<path d="M6.5 9.5 L9.5 6.5"/><path d="M4.5 11.5 A3 3 0 0 1 4.5 7 L6.5 5"/><path d="M11.5 4.5 A3 3 0 0 1 11.5 9 L9.5 11"/>')}</button>
+    <button id="btn-image" class="icon-btn" title="Insert Image" aria-label="Insert Image">${toolbarIcon('<rect x="1.5" y="2.5" width="13" height="11" rx="1"/><circle cx="5.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><path d="M2 12.5 L6 8.5 L9 11 L11.5 8 L14.5 11.5"/>')}</button>
+    <button id="btn-code" class="icon-btn" title="Inline Code" aria-label="Inline Code">${toolbarIcon('<path d="M6 4 L2 8 L6 12"/><path d="M10 4 L14 8 L10 12"/>')}</button>
+    <button id="btn-codeblock" class="icon-btn" title="Code Block" aria-label="Code Block">${toolbarIcon('<rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M6.5 6 L4.5 8 L6.5 10"/><path d="M9.5 6 L11.5 8 L9.5 10"/>')}</button>
     <span class="toolbar-separator"></span>
-    <button id="btn-ul" title="Unordered List">&#8226; List</button>
-    <button id="btn-ol" title="Ordered List">1. List</button>
-    <button id="btn-quote" title="Blockquote">&gt; Quote</button>
-    <button id="btn-hr" title="Horizontal Rule">&mdash;</button>
+    <button id="btn-ul" class="icon-btn" title="Unordered List" aria-label="Unordered List">${toolbarIcon('<circle cx="2.5" cy="4" r="1" fill="currentColor" stroke="none"/><circle cx="2.5" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="2.5" cy="12" r="1" fill="currentColor" stroke="none"/><line x1="5.5" y1="4" x2="14" y2="4"/><line x1="5.5" y1="8" x2="14" y2="8"/><line x1="5.5" y1="12" x2="14" y2="12"/>')}</button>
+    <button id="btn-ol" class="icon-btn" title="Ordered List" aria-label="Ordered List">${toolbarIcon('<text x="0.5" y="5.3" font-size="4.2" fill="currentColor" stroke="none">1</text><text x="0.5" y="9.3" font-size="4.2" fill="currentColor" stroke="none">2</text><text x="0.5" y="13.3" font-size="4.2" fill="currentColor" stroke="none">3</text><line x1="5.5" y1="4" x2="14" y2="4"/><line x1="5.5" y1="8" x2="14" y2="8"/><line x1="5.5" y1="12" x2="14" y2="12"/>')}</button>
+    <button id="btn-quote" class="icon-btn" title="Blockquote" aria-label="Blockquote">${toolbarIcon('<path d="M2 4.5 H4.5 V7.5 Q4.5 9.5 2 9.5"/><path d="M9 4.5 H11.5 V7.5 Q11.5 9.5 9 9.5"/>')}</button>
+    <button id="btn-hr" class="icon-btn" title="Horizontal Rule" aria-label="Horizontal Rule">${toolbarIcon('<line x1="2" y1="8" x2="14" y2="8"/>')}</button>
     <span class="spacer"></span>
     <button id="btn-check-grammar" title="Check Grammar" class="grammar-btn">&#10003; Grammar</button>
     <span class="toolbar-separator"></span>
@@ -306,6 +337,8 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       <button id="btn-split" title="Split View">Split</button>
       <button id="btn-editor-only" title="Raw Markdown">Raw</button>
     </div>
+    <span class="toolbar-separator"></span>
+    <button id="btn-print" class="icon-btn" title="Print or Save as PDF" aria-label="Print or Save as PDF">${toolbarIcon('<rect x="3" y="6" width="10" height="5" rx="0.5"/><path d="M4.5 6 V2.5 H11.5 V6"/><rect x="5" y="10.5" width="6" height="3.5"/>')}</button>
     <span class="toolbar-separator"></span>
     ${getBrandButtonHtml()}
   </div>

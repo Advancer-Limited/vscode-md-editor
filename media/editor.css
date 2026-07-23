@@ -67,6 +67,22 @@ html, body {
   background: var(--button-hover-bg);
 }
 
+/* Icon-only toolbar buttons — label/description live in the title tooltip
+   instead of visible text, matching the .mmd editor's snippet-palette
+   convention (used where the action has clear, common iconography; buttons
+   whose text also conveys state, like Grammar's "Checking...", stay text). */
+.toolbar button.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  padding: 3px 0;
+}
+
+.toolbar button.icon-btn svg {
+  display: block;
+}
+
 .toolbar-separator {
   width: 1px;
   height: 20px;

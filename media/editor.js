@@ -787,6 +787,14 @@
     vscode.postMessage({ type: 'showAbout' });
   });
 
+  // Toolbar: Print / Save as PDF — window.print() is suppressed inside VS
+  // Code's sandboxed webview (no allow-modals), so the host opens a
+  // standalone page in the real browser instead (see mermaidEditor.js's
+  // identical Print button for the same reason).
+  document.getElementById('btn-print')?.addEventListener('click', () => {
+    vscode.postMessage({ type: 'print', html: previewContent.innerHTML });
+  });
+
   // ================================================
   // View toggle
   // ================================================

@@ -28,14 +28,23 @@ html, body {
 
 .tab-btn {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
   background: transparent;
   color: var(--vscode-tab-inactiveForeground, #999);
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 7px 4px;
+  padding: 7px 10px;
   cursor: pointer;
   font-size: 11px;
   font-family: inherit;
+  text-align: left;
+}
+
+.tab-icon {
+  flex-shrink: 0;
 }
 
 .tab-btn:hover {
@@ -212,17 +221,6 @@ html, body {
 
 .file-node.active .node-badge {
   background: rgba(255, 255, 255, 0.2);
-}
-
-.node-folder {
-  flex-shrink: 0;
-  color: var(--vscode-descriptionForeground, #888);
-  font-size: 10px;
-  margin-left: 2px;
-}
-
-.file-node.active .node-folder {
-  color: rgba(255, 255, 255, 0.6);
 }
 
 /* Links sub-list */
