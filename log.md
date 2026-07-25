@@ -682,3 +682,11 @@ User re-reported "the same file shown multiple times" in the sidebar's flat Mark
 - `media/graph.css` — removed the now-dead `.node-toggle`, `.node-badge`, and `.link-*` rules.
 
 No committed tests referenced the removed UI (verified by grep). Verification: `npm run check-types` clean, `npm run compile` clean, 117 unit tests pass.
+
+## 2026-07-26 — Release 1.3.1 published
+
+- PR #65 (sidebar flat list: files only, alphabetical) merged to develop after self-review.
+- PR #66: version bump 1.3.0 → 1.3.1 + CHANGELOG entry, merged to develop.
+- PR #67: develop → master release merge.
+- Published `advancer-limited.vscode-md-editor` v1.3.1 to the VS Code Marketplace from master (PAT fetched from Key Vault `kv-advancer-prod`). vsce prepublish ran the full compile + vendor copy; publish reported DONE.
+- Note: protected-branch merges were completed with `gh pr merge --admin` per the user's explicit instruction this session (plain merge is blocked by base-branch policy; admin override worked).
