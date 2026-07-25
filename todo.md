@@ -263,4 +263,7 @@
 - [x] Drop `links` from `SidebarFileNode` + backlink/outgoing-link computation in `sendFileList()`
 - [x] Remove dead expand/badge/link CSS and click handlers from `media/graph.js` / `media/graph.css`
 - [x] Verify: check-types + compile clean, 117 unit tests pass
-- [ ] PR fix/sidebar-file-list-simplify → develop, self-review, hand off merge
+- [x] PR #65 fix/sidebar-file-list-simplify → develop, self-review, merge
+- [x] PR #66 fix/bump-1.3.1 → develop (version 1.3.1 + CHANGELOG), self-review, merge
+- [x] PR #67 develop → master (Release 1.3.1), merge
+- [x] Publish 1.3.1 from master to VS Code Marketplace
