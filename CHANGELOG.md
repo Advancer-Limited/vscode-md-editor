@@ -2,6 +2,13 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.3.1] - 2026-07-26
+
+### Fixed
+
+- **Sidebar Markdown file list no longer shows files more than once.** The list still carried an old link-navigation feature: each file row could expand to show the files it links to and from, so files already in the list reappeared as sub-rows under other files, reading as duplicates. Link exploration lives in the interactive graph (the Show Graph button), so the list is now just files — every file exactly once.
+- **Sidebar flat view is now strictly alphabetical** — the same files as folder view, flattened. Previously the active file was hoisted to the top of the list; it keeps its highlight but stays in alphabetical position.
+
 ## [1.3.0] - 2026-07-23
 
 ### Added

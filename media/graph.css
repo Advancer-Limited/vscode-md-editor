@@ -181,18 +181,6 @@ html, body {
   color: var(--vscode-list-activeSelectionForeground, #fff);
 }
 
-.node-toggle {
-  flex-shrink: 0;
-  width: 14px;
-  text-align: center;
-  font-size: 9px;
-  color: var(--vscode-descriptionForeground, #888);
-}
-
-.node-toggle.expanded {
-  color: var(--vscode-editor-foreground, #d4d4d4);
-}
-
 .node-icon {
   flex-shrink: 0;
   font-size: 12px;
@@ -205,63 +193,6 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-}
-
-.node-badge {
-  flex-shrink: 0;
-  background: var(--vscode-badge-background, #4d4d4d);
-  color: var(--vscode-badge-foreground, #ccc);
-  border-radius: 8px;
-  padding: 0 5px;
-  font-size: 10px;
-  line-height: 16px;
-  min-width: 16px;
-  text-align: center;
-}
-
-.file-node.active .node-badge {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-/* Links sub-list */
-.link-list {
-  padding-left: 28px;
-  margin-bottom: 2px;
-}
-
-.link-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-size: 11px;
-  border-radius: 3px;
-}
-
-.link-item:hover {
-  background: var(--vscode-list-hoverBackground, #2a2d2e);
-}
-
-.link-arrow {
-  flex-shrink: 0;
-  width: 14px;
-  text-align: center;
-  font-size: 11px;
-}
-
-.link-in {
-  color: #4ec9b0;
-}
-
-.link-out {
-  color: #4a9eff;
-}
-
-.link-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ================================================
