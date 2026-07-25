@@ -20,7 +20,6 @@ interface SidebarFileNode {
   relativePath: string;
   label: string;
   folder: string;
-  links: Array<{ relativePath: string; label: string; direction: 'in' | 'out' }>;
   isActive: boolean;
 }
 
@@ -271,51 +270,17 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
         }
       }
 
-      const links: SidebarFileNode['links'] = [];
-
-      // Outgoing links
-      for (const link of file.outgoingLinks) {
-        const resolved = this.fileIndexService.resolveWikilink(link.target);
-        if (resolved) {
-          const target = this.fileIndexService.getFileEntry(resolved);
-          if (target) {
-            links.push({
-              relativePath: resolved,
-              label: target.stem,
-              direction: 'out',
-            });
-          }
-        }
-      }
-
-      // Incoming links (backlinks)
-      const backlinks = this.fileIndexService.getBacklinksFor(file.stem);
-      for (const bl of backlinks) {
-        // Avoid duplicates (if A links to B and B links to A)
-        if (!links.some(l => l.relativePath === bl.relativePath)) {
-          links.push({
-            relativePath: bl.relativePath,
-            label: bl.stem,
-            direction: 'in',
-          });
-        }
-      }
-
       nodes.push({
         relativePath: file.relativePath,
         label: file.stem,
         folder: file.folder,
-        links,
         isActive: file.relativePath === activePath,
       });
     }
 
-    // Sort: active file first, then alphabetically
-    nodes.sort((a, b) => {
-      if (a.isActive && !b.isActive) return -1;
-      if (!a.isActive && b.isActive) return 1;
-      return a.label.localeCompare(b.label);
-    });
+    // Plain alphabetical order — the same files as folder view, flattened.
+    // The active file keeps its highlight but is not hoisted to the top.
+    nodes.sort((a, b) => a.label.localeCompare(b.label));
 
     this.view.webview.postMessage({
       type: 'fileList',

@@ -12,10 +12,6 @@
   const mermaidSearchInput = /** @type {HTMLInputElement} */ (document.getElementById('mermaid-search-input'));
   const btnToggleMermaidView = document.getElementById('btn-toggle-mermaid-view');
 
-  // Track which nodes are expanded (Markdown Links tab only — its backlink
-  // sub-lists are the one thing that still needs per-node expand state).
-  const expandedNodes = new Set();
-
   // ================================================
   // Persisted per-tab state (view mode survives a webview reload)
   // ================================================
@@ -221,19 +217,10 @@
     const fragment = document.createDocumentFragment();
 
     renderGrouped(fragment, nodes, effectiveMode, (frag, node, depth) => {
-      const hasLinks = node.links && node.links.length > 0;
-      const isExpanded = expandedNodes.has(node.relativePath);
-
       const row = document.createElement('div');
       row.className = 'file-node' + (node.isActive ? ' active' : '');
       row.dataset.path = node.relativePath;
       row.style.paddingLeft = (8 + depth * 14) + 'px';
-
-      const toggle = document.createElement('span');
-      toggle.className = 'node-toggle' + (isExpanded ? ' expanded' : '');
-      toggle.textContent = hasLinks ? (isExpanded ? '▼' : '▶') : '•';
-      toggle.style.cursor = hasLinks ? 'pointer' : 'default';
-      row.appendChild(toggle);
 
       const icon = document.createElement('span');
       icon.className = 'node-icon';
@@ -245,48 +232,12 @@
       label.textContent = node.label;
       row.appendChild(label);
 
-      if (hasLinks) {
-        const badge = document.createElement('span');
-        badge.className = 'node-badge';
-        badge.textContent = String(node.links.length);
-        row.appendChild(badge);
-      }
-
       // Flat view is deliberately just an alphabetical file list, no folder
       // info — folder view (the tree itself) is where that context lives.
-      // Two files sharing a name and immediate folder in different parent
-      // projects would otherwise look like duplicates even with a folder
-      // tag (it only ever showed the immediate parent, e.g. both would say
-      // "docs"); flat view not claiming to disambiguate at all is clearer
-      // than a half-disambiguating tag.
+      // Link navigation lives in the interactive graph (Show Graph button),
+      // not here — files appear exactly once, same set as folder view.
 
       frag.appendChild(row);
-
-      if (hasLinks && isExpanded) {
-        const linkList = document.createElement('div');
-        linkList.className = 'link-list';
-        linkList.style.paddingLeft = (28 + depth * 14) + 'px';
-
-        for (const link of node.links) {
-          const linkRow = document.createElement('div');
-          linkRow.className = 'link-item';
-          linkRow.dataset.path = link.relativePath;
-
-          const arrow = document.createElement('span');
-          arrow.className = 'link-arrow ' + (link.direction === 'in' ? 'link-in' : 'link-out');
-          arrow.innerHTML = link.direction === 'in' ? '&#8592;' : '&#8594;';
-          linkRow.appendChild(arrow);
-
-          const linkLabel = document.createElement('span');
-          linkLabel.className = 'link-label';
-          linkLabel.textContent = link.label;
-          linkRow.appendChild(linkLabel);
-
-          linkList.appendChild(linkRow);
-        }
-
-        frag.appendChild(linkList);
-      }
     });
 
     fileList.innerHTML = '';
@@ -439,32 +390,9 @@
 
   fileList?.addEventListener('click', (e) => {
     const target = /** @type {HTMLElement} */ (e.target);
-
-    const toggle = target.closest('.node-toggle');
-    if (toggle) {
-      const row = toggle.closest('.file-node');
-      if (row) {
-        const path = row.dataset.path;
-        if (expandedNodes.has(path)) {
-          expandedNodes.delete(path);
-        } else {
-          expandedNodes.add(path);
-        }
-        renderFileList(lastLinksNodes);
-      }
-      return;
-    }
-
     const fileNode = target.closest('.file-node');
-    if (fileNode && !target.closest('.node-toggle')) {
+    if (fileNode) {
       vscode.postMessage({ type: 'openFile', relativePath: fileNode.dataset.path });
-      return;
-    }
-
-    const linkItem = target.closest('.link-item');
-    if (linkItem) {
-      vscode.postMessage({ type: 'openFile', relativePath: linkItem.dataset.path });
-      return;
     }
   });
 

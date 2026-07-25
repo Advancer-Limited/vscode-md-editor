@@ -672,3 +672,13 @@ A Fable adversarial review of PR #63 found a genuine "ships broken" bug in the h
 **NIT — `getFolder()`'s full-path change has an unadvertised ripple effect.** Since the sidebar's flat view no longer displays `node.folder` at all (per the user's steer earlier this session), the full-vs-immediate-parent question was almost moot for THAT purpose — but `getFolder()` is also used by the full-graph panel's node coloring/tooltips and by sidebar search matching, both of which silently got more granular (folder colors now cluster by full path instead of just the leaf folder name; searching now also matches ancestor folder names). Not a regression — arguably an improvement — but wasn't called out. Added a CHANGELOG line and corrected two stale doc comments that still said "immediate parent"/"parent folder name" instead of "full folder path".
 
 Verification after all fixes: 117 unit tests (7 new), 56 Playwright checks (31 sidebar-tabs + 9 sidebar-fable-fix + 16 editor-toolbar) all re-run clean, `check-types`/compile clean.
+
+## 2026-07-26 — Sidebar flat list: files only, alphabetical (no link sub-rows)
+
+User re-reported "the same file shown multiple times" in the sidebar's flat Markdown view and asked that the list be exactly the folder view's files, flattened alphabetically. Root cause of the perceived duplication: the list still carried the old link-navigation feature — every file row computed its incoming/outgoing wikilinks (`sendFileList` in `graphViewProvider.ts`) and rendered them as expandable sub-rows in the webview, so files already present in the list reappeared as link children under other files (expand state persisted across re-renders via `expandedNodes`). Separately, the flat sort hoisted the active file to the top, so the list wasn't purely alphabetical either. Link navigation now lives in the interactive graph (Show Graph), so the feature was removed rather than patched:
+
+- `src/graph/graphViewProvider.ts` — `SidebarFileNode` dropped its `links` field; `sendFileList()` no longer computes outgoing links/backlinks per file; sort is plain `label.localeCompare` (active file keeps its highlight but is no longer pinned first).
+- `media/graph.js` — removed `expandedNodes`, the ▶/▼ toggle, the link-count badge, the expanded link sub-list rendering, and the `node-toggle`/`link-item` click handling; a file row is now just icon + label, identical in shape to the Mermaid tab's rows.
+- `media/graph.css` — removed the now-dead `.node-toggle`, `.node-badge`, and `.link-*` rules.
+
+No committed tests referenced the removed UI (verified by grep). Verification: `npm run check-types` clean, `npm run compile` clean, 117 unit tests pass.

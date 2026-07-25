@@ -255,3 +255,12 @@
 - [x] Converted 8 Markdown toolbar buttons (Link, Image, Code, Code Block, Unordered/Ordered List, Blockquote, Horizontal Rule) plus the new Print button from text labels to icons with tooltips — left Bold/Italic/Strikethrough and headings as text (already compact, and a generic heading icon can't convey which level), left Grammar as text (its label communicates "Checking..." progress mid-request, which an icon-only button would lose), left the Edit/Split/Raw view toggle as text (mode names, not standard recognizable icon actions)
 - [x] Verified with a new Playwright harness for the main Markdown editor webview (previously untested) — 16 checks covering icon rendering, that formatting actions still work after the HTML restructure, and the Print button posting the live preview's actual rendered HTML — plus updated the existing sidebar test harness (which had gone stale relative to the tab rename/icons, so it was silently not exercising them) with 5 new checks, for 56 total Playwright checks across both webviews, all green
 - [x] Version bumped 1.2.0 -> 1.3.0 (minor: new Print feature, alongside fixes and UI polish)
+
+## 2026-07-26 Sidebar flat list simplification (fix/sidebar-file-list-simplify)
+
+- [x] Remove link-navigation sub-rows from the sidebar Markdown file list (expandable in/out wikilink rows made files appear multiple times; link navigation now lives in the Show Graph panel)
+- [x] Flat view sorts purely alphabetically (active file no longer hoisted to the top; still highlighted)
+- [x] Drop `links` from `SidebarFileNode` + backlink/outgoing-link computation in `sendFileList()`
+- [x] Remove dead expand/badge/link CSS and click handlers from `media/graph.js` / `media/graph.css`
+- [x] Verify: check-types + compile clean, 117 unit tests pass
+- [ ] PR fix/sidebar-file-list-simplify → develop, self-review, hand off merge
