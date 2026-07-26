@@ -277,4 +277,7 @@
 - [x] Exclusion enforced at the single choke point every path funnels through (`indexFile` / `addFile`), covering the initial scan and all four watchers; index rebuilds on an exclude-settings change
 - [x] Flat view now shows a dimmed folder path ONLY on files whose name is shared by another file (8 real `README.md` in that workspace) — uniquely-named files stay tag-free per the earlier steer
 - [x] Verified: 11 new unit tests (128 total, all green); simulated the real workspace end-to-end (502 → 35 entries); rendered `graph.js` against a DOM shim to confirm one row per file and tags only on genuine collisions
-- [ ] PR fix/exclude-nested-worktrees → develop, self-review, merge
+- [x] PR #70 fix/exclude-nested-worktrees → develop, self-review (found + fixed the Mermaid sort tie-break), merge
+- [x] PR #71 fix/bump-1.3.2 → develop (version 1.3.2 + CHANGELOG), self-review, merge
+- [x] PR #72 develop → master (Release 1.3.2), merge
+- [x] Publish 1.3.2 from master to VS Code Marketplace
