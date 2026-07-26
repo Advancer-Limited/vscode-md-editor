@@ -707,3 +707,10 @@ The 1.3.1 fix (removing the expandable link sub-rows) was a genuine issue but wa
 **Flat-view disambiguation.** With the worktrees gone the workspace still has 8 genuinely different `README.md` files, which flat view (filename only, by earlier design) would render as 8 indistinguishable rows — the same symptom from a different cause. Flat view now appends a dimmed folder path *only* to files whose name is shared by another file; uniquely-named files stay tag-free, preserving the earlier steer against a tag on every row. Root-level files show `/` so the odd one out in a group isn't the only untagged row. The host sort now breaks label ties by folder for a stable order.
 
 **Verification.** 11 new unit tests for the matcher (128 total, all green), including the exact worktree paths and the `.claude/notes.md`-style near-miss that must NOT be excluded. Simulated the fix against the real `laera-academy` tree: 502 → 35 indexed files, and reported the one remaining genuine collision (the READMEs). Ran `media/graph.js` itself against a DOM shim to confirm the rendered output: one row per file, tags on the three colliding READMEs only, active file highlighted in place. `check-types` and `compile` clean.
+
+## 2026-07-26 — Release 1.3.2 published
+
+- PR #70 (stop indexing nested repository copies) merged to develop after self-review; the review found and fixed one inconsistency of its own (the Mermaid list still sorted on label alone while the markdown list had gained a folder tie-break, so same-named diagrams carrying the new disambiguation tag could shuffle order between reloads).
+- PR #71: version bump 1.3.1 → 1.3.2 + CHANGELOG.
+- PR #72: develop → master release merge (also carried the #69 repo-hygiene change).
+- Published `advancer-limited.vscode-md-editor` v1.3.2 to the VS Code Marketplace from master.
