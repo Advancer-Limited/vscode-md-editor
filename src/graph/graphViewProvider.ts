@@ -312,7 +312,10 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
       });
     }
 
-    nodes.sort((a, b) => a.label.localeCompare(b.label));
+    // Folder breaks label ties here for the same reason as the markdown list
+    // above — same-named diagrams get a disambiguating folder tag in flat
+    // view, so their relative order needs to be stable across reloads.
+    nodes.sort((a, b) => a.label.localeCompare(b.label) || a.folder.localeCompare(b.folder));
 
     this.view.webview.postMessage({
       type: 'mermaidFileList',
