@@ -682,3 +682,28 @@ User re-reported "the same file shown multiple times" in the sidebar's flat Mark
 - `media/graph.css` — removed the now-dead `.node-toggle`, `.node-badge`, and `.link-*` rules.
 
 No committed tests referenced the removed UI (verified by grep). Verification: `npm run check-types` clean, `npm run compile` clean, 117 unit tests pass.
+
+## 2026-07-26 — Release 1.3.1 published
+
+- PR #65 (sidebar flat list: files only, alphabetical) merged to develop after self-review.
+- PR #66: version bump 1.3.0 → 1.3.1 + CHANGELOG entry, merged to develop.
+- PR #67: develop → master release merge.
+- Published `advancer-limited.vscode-md-editor` v1.3.1 to the VS Code Marketplace from master (PAT fetched from Key Vault `kv-advancer-prod`). vsce prepublish ran the full compile + vendor copy; publish reported DONE.
+- Note: protected-branch merges were completed with `gh pr merge --admin` per the user's explicit instruction this session (plain merge is blocked by base-branch policy; admin override worked).
+
+## 2026-07-26 — The real duplicate-file bug: nested repository copies were indexed
+
+The 1.3.1 fix (removing the expandable link sub-rows) was a genuine issue but was NOT the cause of the user's duplicate-filename report — they re-reported it against 1.3.1 with a screenshot showing ~10 identical rows for every file in a `docs/` folder, with no expand toggles (confirming they were on the fixed build). Note also that a previous session's investigation had concluded "not a bug, just different files sharing a name" — that conclusion was wrong, and re-deriving it from the code alone would have missed this again. Evidence from the actual filesystem settled it.
+
+**Root cause.** Both `FileIndexService` and `MermaidFileIndexService` called `findFiles('**/*.{md,markdown}', '**/node_modules/**')`. Passing an explicit exclude *replaces* VS Code's default `files.exclude` handling rather than adding to it — so everything except `node_modules` was fair game, including nested copies of the repository itself. In the user's `laera-academy` workspace, Claude Code had created 24 per-agent git worktrees under `.claude/worktrees/`, each a full copy of the repo: **502 markdown files indexed where only 35 are real**. Every `docs/*.md` therefore appeared once per worktree — exactly the ×10 pattern in the screenshot. Two knock-on effects worth noting: `resolveWikilink()` could resolve a link to a copy inside a worktree instead of the real file (last-indexed wins), and `getUnlinkedMentions()` was scanning ~14× more cached file content than necessary.
+
+**Fix.**
+- `src/globMatch.ts` (new) — a compact glob→RegExp matcher supporting `**`, `*`, `?` and `{a,b}`. Needed because VS Code applies excludes inside `findFiles` only; the four file watchers that also feed the index get none, so patterns have to be testable locally against an already-computed relative path. A folder pattern matches its whole subtree, so `**/.git` and `**/.git/**` behave identically (VS Code's own settings use the former spelling). A malformed pattern compiles to a never-matching regex rather than throwing — a bad entry in user settings shouldn't take indexing down.
+- `src/fileExclusions.ts` (new) — default excludes (`**/node_modules/**`, `**/.git/**`, `**/.claude/worktrees/**`) merged with the `true` entries of the user's own `files.exclude` and `search.exclude`, so "hidden in VS Code" and "absent from these file lists" agree without configuring the same folder twice. Entries with a `when` clause are skipped (resolving them needs a per-file filesystem probe).
+- New `vscodeMdEditor.exclude` setting (array of globs) overrides the defaults.
+- The check lives at the single choke point every path into each index funnels through (`FileIndexService.indexFile` / `MermaidFileIndexService.addFile`), rather than being repeated at the scan plus each of the four watchers and eventually missed at one. Both indexes rebuild from scratch when the exclude settings change (a relaxed pattern adds files as readily as a tightened one removes them).
+- `buildFindFilesExclude()` brace-joins patterns for `findFiles`, deliberately dropping any containing braces or commas — those can't be nested safely inside a `{a,b}` list. They're still enforced by the local matcher, so the only cost is that their folders get walked and filtered afterwards rather than skipped outright.
+
+**Flat-view disambiguation.** With the worktrees gone the workspace still has 8 genuinely different `README.md` files, which flat view (filename only, by earlier design) would render as 8 indistinguishable rows — the same symptom from a different cause. Flat view now appends a dimmed folder path *only* to files whose name is shared by another file; uniquely-named files stay tag-free, preserving the earlier steer against a tag on every row. Root-level files show `/` so the odd one out in a group isn't the only untagged row. The host sort now breaks label ties by folder for a stable order.
+
+**Verification.** 11 new unit tests for the matcher (128 total, all green), including the exact worktree paths and the `.claude/notes.md`-style near-miss that must NOT be excluded. Simulated the fix against the real `laera-academy` tree: 502 → 35 indexed files, and reported the one remaining genuine collision (the READMEs). Ran `media/graph.js` itself against a DOM shim to confirm the rendered output: one row per file, tags on the three colliding READMEs only, active file highlighted in place. `check-types` and `compile` clean.

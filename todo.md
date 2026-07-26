@@ -263,4 +263,18 @@
 - [x] Drop `links` from `SidebarFileNode` + backlink/outgoing-link computation in `sendFileList()`
 - [x] Remove dead expand/badge/link CSS and click handlers from `media/graph.js` / `media/graph.css`
 - [x] Verify: check-types + compile clean, 117 unit tests pass
-- [ ] PR fix/sidebar-file-list-simplify → develop, self-review, hand off merge
+- [x] PR #65 fix/sidebar-file-list-simplify → develop, self-review, merge
+- [x] PR #66 fix/bump-1.3.1 → develop (version 1.3.1 + CHANGELOG), self-review, merge
+- [x] PR #67 develop → master (Release 1.3.1), merge
+- [x] Publish 1.3.1 from master to VS Code Marketplace
+
+## 2026-07-26 Real duplicate-file bug found: nested repo copies were indexed (fix/exclude-nested-worktrees)
+
+- [x] Root-caused the *actual* duplicate-filename report (the 1.3.1 link-sub-row removal was a separate, real issue but not this one): both file indexes passed `'**/node_modules/**'` as findFiles' exclude, which REPLACES VS Code's default `files.exclude` handling — so nested copies of the repo were fully indexed. In the user's `laera-academy` workspace, 24 Claude Code agent worktrees under `.claude/worktrees/` turned 35 real markdown files into 502 index entries (~10 visible copies of every `docs/*.md`, exactly matching the screenshot)
+- [x] `src/globMatch.ts` — small glob→RegExp matcher (`**`, `*`, `?`, `{a,b}`), because watchers get no exclude handling from VS Code at all and need to test paths locally; malformed patterns compile to a never-matching regex instead of throwing
+- [x] `src/fileExclusions.ts` — default excludes (`node_modules`, `.git`, `.claude/worktrees`) plus the user's own `files.exclude`/`search.exclude` `true` entries, so "hidden in VS Code" and "absent from these lists" stay in agreement
+- [x] New `vscodeMdEditor.exclude` setting (array of globs) to override the defaults
+- [x] Exclusion enforced at the single choke point every path funnels through (`indexFile` / `addFile`), covering the initial scan and all four watchers; index rebuilds on an exclude-settings change
+- [x] Flat view now shows a dimmed folder path ONLY on files whose name is shared by another file (8 real `README.md` in that workspace) — uniquely-named files stay tag-free per the earlier steer
+- [x] Verified: 11 new unit tests (128 total, all green); simulated the real workspace end-to-end (502 → 35 entries); rendered `graph.js` against a DOM shim to confirm one row per file and tags only on genuine collisions
+- [ ] PR fix/exclude-nested-worktrees → develop, self-review, merge

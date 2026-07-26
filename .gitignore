@@ -3,6 +3,9 @@ dist/
 *.vsix
 .vscode-test/
 
+# Personal editor settings (Peacock colors etc.)
+.vscode/settings.json
+
 # Claude Code
 .claude/
 

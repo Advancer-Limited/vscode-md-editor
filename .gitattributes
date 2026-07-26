@@ -1,0 +1,8 @@
+# Vendored/generated bundles (rewritten by scripts/copy-vendor.js and esbuild
+# on every compile) — disable line-ending conversion so they don't show as
+# perpetually "modified" on Windows after each build.
+media/force-graph.min.js -text
+media/markdown-it.min.js -text
+media/mermaid.min.js -text
+media/three-bundle.js -text
+media/turndown.browser.umd.js -text

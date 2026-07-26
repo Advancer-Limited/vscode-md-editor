@@ -2,7 +2,7 @@
   "name": "vscode-md-editor",
   "displayName": "VS Code MD Editor",
   "description": "A rich Markdown editor with live preview, Mermaid diagrams, task checklists, wikilinks, graph visualizer, version diff, and LanguageTool grammar checking",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "license": "MIT",
   "author": {
     "name": "Advancer Limited",
@@ -169,6 +169,18 @@
           "minimum": 500,
           "maximum": 10000,
           "description": "Delay in milliseconds before triggering a grammar check after typing"
+        },
+        "vscodeMdEditor.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/.claude/worktrees/**"
+          ],
+          "description": "Glob patterns for folders the Markdown and Mermaid file lists (and the link graph) should ignore. Your files.exclude and search.exclude settings are honoured on top of these. Nested copies of a repository — such as the git worktrees Claude Code creates under .claude/worktrees — otherwise make every document appear once per copy."
         },
         "vscodeMdEditor.graph.defaultMode": {
           "type": "string",

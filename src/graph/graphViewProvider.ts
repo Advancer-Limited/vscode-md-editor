@@ -280,7 +280,9 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 
     // Plain alphabetical order — the same files as folder view, flattened.
     // The active file keeps its highlight but is not hoisted to the top.
-    nodes.sort((a, b) => a.label.localeCompare(b.label));
+    // Folder breaks ties so files sharing a name (several README.md, say)
+    // keep a stable, predictable order rather than index insertion order.
+    nodes.sort((a, b) => a.label.localeCompare(b.label) || a.folder.localeCompare(b.folder));
 
     this.view.webview.postMessage({
       type: 'fileList',
@@ -310,7 +312,10 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
       });
     }
 
-    nodes.sort((a, b) => a.label.localeCompare(b.label));
+    // Folder breaks label ties here for the same reason as the markdown list
+    // above — same-named diagrams get a disambiguating folder tag in flat
+    // view, so their relative order needs to be stable across reloads.
+    nodes.sort((a, b) => a.label.localeCompare(b.label) || a.folder.localeCompare(b.folder));
 
     this.view.webview.postMessage({
       type: 'mermaidFileList',

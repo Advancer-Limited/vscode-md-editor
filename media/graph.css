@@ -195,6 +195,24 @@ html, body {
   font-size: 12px;
 }
 
+/* Folder path, shown only on files whose name is shared by another file
+   (flat view only) — the minimum needed to tell two same-named rows apart. */
+.node-folder {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.file-node.active .node-folder {
+  color: var(--vscode-list-activeSelectionForeground, #fff);
+  opacity: 0.75;
+}
+
 /* ================================================
    Folder tree (folder view mode)
    ================================================ */
