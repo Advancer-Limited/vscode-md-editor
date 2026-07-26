@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { getFileStem, isMermaidFile } from '../utils.js';
+import { getExcludePatterns, affectsExcludeSettings } from '../fileExclusions.js';
+import { matchesAnyGlob, buildFindFilesExclude } from '../globMatch.js';
 
 /** Metadata for a single .mmd/.mermaid file in the index. */
 export interface MermaidFileEntry {
@@ -26,6 +28,8 @@ export class MermaidFileIndexService implements vscode.Disposable {
   public readonly onDidUpdateIndex = this._onDidUpdateIndex.event;
 
   private disposables: vscode.Disposable[] = [];
+  /** Exclude globs, re-read whenever the relevant settings change. */
+  private excludePatterns: string[] = [];
 
   constructor() {
     this.disposables.push(this._onDidUpdateIndex);
@@ -33,19 +37,47 @@ export class MermaidFileIndexService implements vscode.Disposable {
 
   /** Full workspace scan. Call once on activation. */
   public async initialize(): Promise<void> {
+    this.excludePatterns = getExcludePatterns();
+
     // Register watchers BEFORE the initial scan so files created while
     // scanning aren't missed — re-adding a file is idempotent.
     this.registerWatchers();
 
-    const uris = await vscode.workspace.findFiles('**/*.{mmd,mermaid}', '**/node_modules/**');
-    for (const uri of uris) {
-      this.addFile(uri);
-    }
+    await this.scan();
 
     this._onDidUpdateIndex.fire();
   }
 
+  /** Walk the workspace and add every diagram file that isn't excluded. */
+  private async scan(): Promise<void> {
+    const uris = await vscode.workspace.findFiles(
+      '**/*.{mmd,mermaid}',
+      buildFindFilesExclude(this.excludePatterns),
+    );
+    for (const uri of uris) {
+      this.addFile(uri);
+    }
+  }
+
+  /** Re-read the exclude settings and rebuild the index from scratch. */
+  private async refreshExclusions(): Promise<void> {
+    this.excludePatterns = getExcludePatterns();
+    this.files.clear();
+    await this.scan();
+    this._onDidUpdateIndex.fire();
+  }
+
   private registerWatchers(): void {
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (affectsExcludeSettings(e)) {
+          this.refreshExclusions().catch(err => {
+            console.warn('[MermaidFileIndex] Failed to rebuild after exclude change:', err);
+          });
+        }
+      })
+    );
+
     this.disposables.push(
       vscode.workspace.onDidCreateFiles(e => {
         let changed = false;
@@ -99,6 +131,11 @@ export class MermaidFileIndexService implements vscode.Disposable {
   private addFile(uri: vscode.Uri): void {
     const relativePath = this.getRelativePath(uri);
     if (!relativePath) {
+      return;
+    }
+    // Single choke point for the scan and every watcher — see the matching
+    // guard in FileIndexService.indexFile for why it belongs here.
+    if (matchesAnyGlob(relativePath, this.excludePatterns)) {
       return;
     }
     const stem = getFileStem(relativePath);
