@@ -2,6 +2,17 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.3.2] - 2026-07-26
+
+### Fixed
+
+- **Nested copies of your repository are no longer indexed** — this was the real cause of the same file appearing many times in the sidebar. Tools that create a full working copy inside your project (notably the per-agent git worktrees Claude Code writes to `.claude/worktrees/`) meant every document was indexed once per copy: in one real workspace, 35 markdown files became 502 entries. It could also make a `[[wikilink]]` resolve to a copy inside a worktree instead of the real file.
+
+### Added
+
+- **New `vscodeMdEditor.exclude` setting** — glob patterns the Markdown and Mermaid file lists (and the link graph) should ignore. Defaults to `**/node_modules/**`, `**/.git/**` and `**/.claude/worktrees/**`. Your existing `files.exclude` and `search.exclude` settings are now honoured on top of these, so anything hidden from the Explorer or search is hidden here too.
+- **Flat view tells same-named files apart** — a file whose name is shared by another file (the several `README.md` most repos have) now shows its folder path in dimmed text. Files with a unique name stay as a plain name, as before.
+
 ## [1.3.1] - 2026-07-26
 
 ### Fixed
