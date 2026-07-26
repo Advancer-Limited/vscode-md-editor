@@ -165,6 +165,38 @@
     }
   }
 
+  /**
+   * Labels shared by two or more files. Flat view shows only the filename, so
+   * genuinely different files that happen to share one (the eight separate
+   * README.md files a repo typically has) would otherwise be indistinguishable
+   * rows. Only these get a folder path appended — a tag on every row was
+   * deliberately dropped, and re-adding it wholesale would undo that.
+   */
+  function findAmbiguousLabels(nodes) {
+    /** @type {Map<string, number>} */
+    const counts = new Map();
+    for (const node of nodes) {
+      counts.set(node.label, (counts.get(node.label) || 0) + 1);
+    }
+    /** @type {Set<string>} */
+    const ambiguous = new Set();
+    for (const [label, count] of counts) {
+      if (count > 1) ambiguous.add(label);
+    }
+    return ambiguous;
+  }
+
+  /** Append the dimmed folder path that tells two same-named files apart. */
+  function appendFolderTag(row, node) {
+    const tag = document.createElement('span');
+    tag.className = 'node-folder';
+    // Root-level files have no folder — '/' rather than nothing, so the
+    // odd one out in an ambiguous group isn't the only row without a tag.
+    tag.textContent = node.folder || '/';
+    tag.title = node.relativePath;
+    row.appendChild(tag);
+  }
+
   /** Render `nodes` flat (sorted, as given) or grouped into a folder tree. */
   function renderGrouped(fragment, nodes, viewMode, renderRow) {
     if (viewMode === 'folders') {
@@ -215,6 +247,11 @@
     }
 
     const fragment = document.createDocumentFragment();
+    // Folder view already shows where each file lives, so only flat view
+    // needs the disambiguating tag.
+    const ambiguous = effectiveMode === 'flat'
+      ? findAmbiguousLabels(nodes)
+      : new Set();
 
     renderGrouped(fragment, nodes, effectiveMode, (frag, node, depth) => {
       const row = document.createElement('div');
@@ -232,10 +269,13 @@
       label.textContent = node.label;
       row.appendChild(label);
 
-      // Flat view is deliberately just an alphabetical file list, no folder
-      // info — folder view (the tree itself) is where that context lives.
-      // Link navigation lives in the interactive graph (Show Graph button),
-      // not here — files appear exactly once, same set as folder view.
+      // Flat view is a plain alphabetical file list — no folder info except
+      // where two files share a name. Link navigation lives in the
+      // interactive graph (Show Graph), not here, so every file appears
+      // exactly once: the same set as folder view, flattened.
+      if (ambiguous.has(node.label)) {
+        appendFolderTag(row, node);
+      }
 
       frag.appendChild(row);
     });
@@ -269,6 +309,9 @@
     }
 
     const fragment = document.createDocumentFragment();
+    const ambiguous = effectiveMode === 'flat'
+      ? findAmbiguousLabels(nodes)
+      : new Set();
 
     renderGrouped(fragment, nodes, effectiveMode, (frag, node, depth) => {
       const row = document.createElement('div');
@@ -285,6 +328,10 @@
       label.className = 'node-label';
       label.textContent = node.label;
       row.appendChild(label);
+
+      if (ambiguous.has(node.label)) {
+        appendFolderTag(row, node);
+      }
 
       frag.appendChild(row);
     });

@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { parseWikilinks, resolveWikilinkTarget, parseTags, WikilinkOccurrence } from './wikilinkParser.js';
 import { getFileStem, isMarkdownFile } from '../utils.js';
+import { getExcludePatterns, affectsExcludeSettings } from '../fileExclusions.js';
+import { matchesAnyGlob, buildFindFilesExclude } from '../globMatch.js';
 
 /** Metadata for a single .md file in the index. */
 export interface FileEntry {
@@ -37,6 +39,8 @@ export class FileIndexService implements vscode.Disposable {
    * would drop a pending update for file A when file B is edited within the
    * debounce window. */
   private updateTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  /** Exclude globs, re-read whenever the relevant settings change. */
+  private excludePatterns: string[] = [];
 
   constructor() {
     this.disposables.push(this._onDidUpdateIndex);
@@ -44,12 +48,24 @@ export class FileIndexService implements vscode.Disposable {
 
   /** Full workspace scan. Call once on activation. */
   public async initialize(): Promise<void> {
+    this.excludePatterns = getExcludePatterns();
+
     // Register watchers BEFORE the (potentially slow) initial scan so files
     // created/saved/renamed while scanning are not missed. Re-indexing a file
     // is idempotent, so any overlap with the scan is harmless.
     this.registerWatchers();
 
-    const uris = await vscode.workspace.findFiles('**/*.{md,markdown}', '**/node_modules/**');
+    await this.scan();
+
+    this._onDidUpdateIndex.fire();
+  }
+
+  /** Walk the workspace and index every markdown file that isn't excluded. */
+  private async scan(): Promise<void> {
+    const uris = await vscode.workspace.findFiles(
+      '**/*.{md,markdown}',
+      buildFindFilesExclude(this.excludePatterns),
+    );
 
     // Process in batches to avoid overwhelming the file system
     const batchSize = 50;
@@ -57,7 +73,19 @@ export class FileIndexService implements vscode.Disposable {
       const batch = uris.slice(i, i + batchSize);
       await Promise.all(batch.map(uri => this.indexFile(uri)));
     }
+  }
 
+  /**
+   * Re-read the exclude settings and rebuild the index from scratch. A full
+   * rebuild rather than an incremental pass because a relaxed pattern can add
+   * files just as easily as a tightened one removes them.
+   */
+  private async refreshExclusions(): Promise<void> {
+    this.excludePatterns = getExcludePatterns();
+    this.fileIndex.clear();
+    this.backlinkIndex.clear();
+    this.stemToPath.clear();
+    await this.scan();
     this._onDidUpdateIndex.fire();
   }
 
@@ -121,6 +149,17 @@ export class FileIndexService implements vscode.Disposable {
       })
     );
 
+    // Exclude settings changed — rebuild against the new patterns
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (affectsExcludeSettings(e)) {
+          this.refreshExclusions().catch(err => {
+            console.warn('[FileIndex] Failed to rebuild after exclude change:', err);
+          });
+        }
+      })
+    );
+
     // Debounced update on text change (for live backlink updates before save)
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument(e => {
@@ -151,6 +190,15 @@ export class FileIndexService implements vscode.Disposable {
   private async indexFile(uri: vscode.Uri, content?: string): Promise<void> {
     const relativePath = this.getRelativePath(uri);
     if (!relativePath) {
+      return;
+    }
+
+    // The single choke point every path into the index funnels through —
+    // the initial scan and all four watchers — so the exclude check lives
+    // here rather than being repeated (and eventually missed) at each one.
+    // findFiles already applies the excludes during the scan; watchers get
+    // no exclude handling at all, which is what this actually guards.
+    if (matchesAnyGlob(relativePath, this.excludePatterns)) {
       return;
     }
 
