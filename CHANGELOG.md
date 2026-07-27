@@ -2,6 +2,17 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.4.0] - 2026-07-26
+
+### Fixed
+
+- **New files now appear in the sidebar straight away.** Adding a `.md` or `.mmd` file outside VS Code — from a terminal, a `git checkout` or branch switch, or a script — didn't show up until you reloaded the window. The file lists only listened for file operations VS Code itself performed, so anything created by another program went unnoticed. They now watch the filesystem directly, and deletions are picked up the same way.
+- **A file created by another program is re-read once its content is written**, so its `[[wikilinks]]` are picked up. Previously an externally created file could be indexed while still empty, leaving it out of backlinks and the graph. Content changed entirely outside VS Code (a `git checkout` rewriting files, for instance) is now noticed too.
+
+### Added
+
+- **Refresh button on both sidebar tabs** — forces a rescan. Normally unnecessary now that new files are detected automatically, but file watching legitimately misses things: paths under `files.watcherExclude`, network and remote filesystems, and very large trees that exhaust the OS watcher limit. The icon spins briefly so you can tell the rescan ran even when nothing changed.
+
 ## [1.3.2] - 2026-07-26
 
 ### Fixed
