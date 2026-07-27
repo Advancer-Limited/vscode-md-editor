@@ -289,4 +289,7 @@
 - [x] Made `refresh()` public on both services; new `refresh` sidebar message
 - [x] Refresh button on both tabs (icon-only, 600ms spin for feedback, disabled under prefers-reduced-motion) as the escape hatch for what file watching can legitimately miss
 - [x] Verified: check-types/compile clean, 128 tests green, DOM-shim check of both buttons (icon, handler, spin lifecycle, message payload)
-- [ ] PR feature/auto-refresh-file-lists → develop, self-review, merge
+- [x] PR #74 feature/auto-refresh-file-lists → develop, self-review (found + fixed the empty-content-on-external-create gap), merge
+- [x] PR #75 fix/bump-1.4.0 → develop (version 1.4.0 + CHANGELOG), self-review, merge
+- [x] PR #76 develop → master (Release 1.4.0), merge
+- [x] Publish 1.4.0 from master to VS Code Marketplace
