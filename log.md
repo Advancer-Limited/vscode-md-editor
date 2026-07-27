@@ -728,3 +728,10 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 **Verification.** `check-types`/compile clean, 128 unit tests green. Ran `media/graph.js` against a DOM shim to confirm both buttons render their icon, attach a click handler, add and then clear the `spinning` class, and post `{type:'refresh', kind:'markdown'|'mermaid'}` with the right kind.
 
 **Self-review follow-up (PR #74).** The new `onDidCreate` handler indexes a file the moment it appears on disk — but a program that creates a file and *then* writes it (a script, a `git checkout`) would leave us having read an empty body. The file would show up in the sidebar (the reported symptom fixed) while its `[[wikilinks]]` silently went unparsed, contributing nothing to backlinks or the graph until something re-saved it. Added `watcher.onDidChange`, which skips documents currently open in the editor (`workspace.textDocuments`) because the existing save/text-change handlers already cover those with the in-memory text — without that skip, every in-editor save would index twice and re-render the sidebar twice. As a side benefit it also picks up content changed entirely outside VS Code, which previously went unnoticed until a reload. The Mermaid index needs no equivalent: it tracks filenames only, never content.
+
+## 2026-07-26 — Release 1.4.0 published
+
+- PR #74 (filesystem watchers + Refresh button) merged to develop after self-review; the review found and fixed a real gap of its own (an externally created file could be indexed before its content was written, so its wikilinks went unparsed — `watcher.onDidChange` now covers that, skipping documents open in the editor so in-editor saves don't index twice).
+- PR #75: version bump 1.3.2 → 1.4.0 (minor — the Refresh button is a new user-facing control) + CHANGELOG.
+- PR #76: develop → master release merge.
+- Published `advancer-limited.vscode-md-editor` v1.4.0 to the VS Code Marketplace from master.
