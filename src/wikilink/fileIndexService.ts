@@ -193,6 +193,33 @@ export class FileIndexService implements vscode.Disposable {
     );
 
     this.disposables.push(
+      watcher.onDidChange(uri => {
+        const relativePath = this.getRelativePath(uri);
+        if (!relativePath) {
+          return;
+        }
+        // Documents open in the editor are already covered by the save and
+        // text-change handlers, which have the in-memory text — re-reading
+        // from disk here would double the work on every save. This is for
+        // content that changed outside VS Code entirely (a git checkout,
+        // another program), and for the content that lands a moment AFTER
+        // an external create, which would otherwise leave the file indexed
+        // with the empty body it had when it first appeared.
+        const isOpenInEditor = vscode.workspace.textDocuments.some(
+          doc => doc.uri.toString() === uri.toString()
+        );
+        if (isOpenInEditor) {
+          return;
+        }
+        this.indexFile(uri).then(() => {
+          this._onDidUpdateIndex.fire();
+        }).catch(err => {
+          console.warn(`[FileIndex] Failed to re-index changed file ${relativePath}:`, err);
+        });
+      })
+    );
+
+    this.disposables.push(
       watcher.onDidDelete(uri => {
         const relativePath = this.getRelativePath(uri);
         if (!relativePath || !this.fileIndex.has(relativePath)) {
