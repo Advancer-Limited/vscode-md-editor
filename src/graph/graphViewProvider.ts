@@ -9,7 +9,7 @@ type FileKind = 'markdown' | 'mermaid';
 
 interface SidebarMessage {
   type: 'ready' | 'openFile' | 'openMermaidFile' | 'openFullGraph' | 'searchChanged'
-    | 'mermaidSearchChanged' | 'createFile' | 'revealInExplorer';
+    | 'mermaidSearchChanged' | 'createFile' | 'revealInExplorer' | 'refresh';
   relativePath?: string;
   query?: string;
   folderPath?: string;
@@ -120,6 +120,19 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
               this.handleRevealInExplorer(msg.folderPath || '', msg.kind);
             }
             break;
+          case 'refresh': {
+            // Each index fires onDidUpdateIndex when it finishes, which is
+            // what re-sends the list — no explicit send needed here.
+            const rescan = msg.kind === 'mermaid'
+              ? this.mermaidFileIndexService.refresh()
+              : this.fileIndexService.refresh();
+            rescan.catch(err => {
+              vscode.window.showErrorMessage(
+                `Failed to refresh the file list: ${err instanceof Error ? err.message : String(err)}`
+              );
+            });
+            break;
+          }
         }
       },
     );
@@ -372,6 +385,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
       <div class="control-row">
         <input type="text" id="search-input" placeholder="Search files..." />
         <button id="btn-toggle-links-view" class="icon-btn" title="Show folder structure" aria-label="Show folder structure"></button>
+        <button id="btn-refresh-links" class="icon-btn" title="Rescan for Markdown files" aria-label="Rescan for Markdown files"></button>
         <button id="btn-show-graph" title="Open interactive graph">Show Graph</button>
       </div>
     </div>
@@ -383,6 +397,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
       <div class="control-row">
         <input type="text" id="mermaid-search-input" placeholder="Search diagrams..." />
         <button id="btn-toggle-mermaid-view" class="icon-btn" title="Show folder structure" aria-label="Show folder structure"></button>
+        <button id="btn-refresh-mermaid" class="icon-btn" title="Rescan for Mermaid diagrams" aria-label="Rescan for Mermaid diagrams"></button>
       </div>
     </div>
     <div id="mermaid-file-list"></div>

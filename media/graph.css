@@ -143,6 +143,24 @@ html, body {
   cursor: default;
 }
 
+/* Brief spin on the Refresh button. A rescan that finds nothing new leaves
+   the list identical, so the animation is the only signal the click landed. */
+@keyframes icon-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.icon-btn.spinning svg {
+  animation: icon-spin 0.6s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn.spinning svg {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
 /* ================================================
    File list
    ================================================ */

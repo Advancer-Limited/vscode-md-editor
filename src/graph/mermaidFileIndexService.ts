@@ -59,8 +59,14 @@ export class MermaidFileIndexService implements vscode.Disposable {
     }
   }
 
-  /** Re-read the exclude settings and rebuild the index from scratch. */
-  private async refreshExclusions(): Promise<void> {
+  /**
+   * Re-read the exclude settings and rebuild the index from scratch. Public
+   * so the sidebar's Refresh button can force a rescan — file watchers can
+   * legitimately miss things (a path under `files.watcherExclude`, a network
+   * or remote filesystem, a watcher-limit exhaustion on very large trees),
+   * and a rescan is the guaranteed way back to an accurate list.
+   */
+  public async refresh(): Promise<void> {
     this.excludePatterns = getExcludePatterns();
     this.files.clear();
     await this.scan();
@@ -71,10 +77,45 @@ export class MermaidFileIndexService implements vscode.Disposable {
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         if (affectsExcludeSettings(e)) {
-          this.refreshExclusions().catch(err => {
+          this.refresh().catch(err => {
             console.warn('[MermaidFileIndex] Failed to rebuild after exclude change:', err);
           });
         }
+      })
+    );
+
+    // Disk-level watcher. The workspace.onDidCreateFiles/onDidDeleteFiles
+    // events below only fire for operations VS Code itself performs (the
+    // Explorer, or a WorkspaceEdit) — a diagram written by a terminal
+    // command, a git checkout, or any other program never reaches them, so
+    // it stayed missing from the list until the window was reloaded.
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{mmd,mermaid}');
+    this.disposables.push(watcher);
+
+    this.disposables.push(
+      watcher.onDidCreate(uri => {
+        const relativePath = this.getRelativePath(uri);
+        // Already indexed means the user-gesture event below got there
+        // first — firing again would re-render the sidebar for nothing.
+        if (!relativePath || this.files.has(relativePath)) {
+          return;
+        }
+        this.addFile(uri);
+        // addFile skips excluded paths, so only announce a real addition.
+        if (this.files.has(relativePath)) {
+          this._onDidUpdateIndex.fire();
+        }
+      })
+    );
+
+    this.disposables.push(
+      watcher.onDidDelete(uri => {
+        const relativePath = this.getRelativePath(uri);
+        if (!relativePath || !this.files.has(relativePath)) {
+          return;
+        }
+        this.files.delete(relativePath);
+        this._onDidUpdateIndex.fire();
       })
     );
 
