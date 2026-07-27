@@ -79,8 +79,13 @@ export class FileIndexService implements vscode.Disposable {
    * Re-read the exclude settings and rebuild the index from scratch. A full
    * rebuild rather than an incremental pass because a relaxed pattern can add
    * files just as easily as a tightened one removes them.
+   *
+   * Public so the sidebar's Refresh button can force a rescan — file watchers
+   * can legitimately miss things (a path under `files.watcherExclude`, a
+   * network or remote filesystem, watcher-limit exhaustion on a very large
+   * tree), and a rescan is the guaranteed way back to an accurate list.
    */
-  private async refreshExclusions(): Promise<void> {
+  public async refresh(): Promise<void> {
     this.excludePatterns = getExcludePatterns();
     this.fileIndex.clear();
     this.backlinkIndex.clear();
@@ -153,10 +158,48 @@ export class FileIndexService implements vscode.Disposable {
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         if (affectsExcludeSettings(e)) {
-          this.refreshExclusions().catch(err => {
+          this.refresh().catch(err => {
             console.warn('[FileIndex] Failed to rebuild after exclude change:', err);
           });
         }
+      })
+    );
+
+    // Disk-level watcher. The onDidCreateFiles/onDidDeleteFiles events above
+    // only fire for operations VS Code itself performs (the Explorer, or a
+    // WorkspaceEdit) — a file written by a terminal command, a git checkout,
+    // or any other program never reaches them, so a newly added document
+    // stayed missing from the sidebar until the window was reloaded.
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{md,markdown}');
+    this.disposables.push(watcher);
+
+    this.disposables.push(
+      watcher.onDidCreate(uri => {
+        const relativePath = this.getRelativePath(uri);
+        // Already indexed means the user-gesture event above got there
+        // first — firing again would re-render the sidebar for nothing.
+        if (!relativePath || this.fileIndex.has(relativePath)) {
+          return;
+        }
+        this.indexFile(uri).then(() => {
+          // indexFile skips excluded paths, so only announce a real addition.
+          if (this.fileIndex.has(relativePath)) {
+            this._onDidUpdateIndex.fire();
+          }
+        }).catch(err => {
+          console.warn(`[FileIndex] Failed to index new file ${relativePath}:`, err);
+        });
+      })
+    );
+
+    this.disposables.push(
+      watcher.onDidDelete(uri => {
+        const relativePath = this.getRelativePath(uri);
+        if (!relativePath || !this.fileIndex.has(relativePath)) {
+          return;
+        }
+        this.removeFromIndex(uri);
+        this._onDidUpdateIndex.fire();
       })
     );
 

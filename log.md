@@ -714,3 +714,15 @@ The 1.3.1 fix (removing the expandable link sub-rows) was a genuine issue but wa
 - PR #71: version bump 1.3.1 → 1.3.2 + CHANGELOG.
 - PR #72: develop → master release merge (also carried the #69 repo-hygiene change).
 - Published `advancer-limited.vscode-md-editor` v1.3.2 to the VS Code Marketplace from master.
+
+## 2026-07-26 — New files now appear in the sidebar without a reload
+
+User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show up in the left pane until the window was reloaded.
+
+**Root cause.** Both indexes relied on `vscode.workspace.onDidCreateFiles` / `onDidDeleteFiles` / `onDidRenameFiles`. Those are *user-gesture* events: per the API contract they fire only for file operations VS Code itself performs — the Explorer, or a `WorkspaceEdit`. A file written by a terminal command, a `git checkout`/branch switch, a scaffolding script, or any other program never reaches them. (For markdown there was partial cover by accident: creating the file inside VS Code and saving it fired `onDidSaveTextDocument`, which re-indexes — which is probably why this surfaced against `.mmd` first, where no such fallback exists.)
+
+**Fix.** Added a `vscode.workspace.createFileSystemWatcher('**/*.{md,markdown}')` (and `'**/*.{mmd,mermaid}'`) to each service — these watch actual disk activity regardless of what caused it. The existing user-gesture handlers are kept rather than replaced: they still give the fastest path for in-VS-Code operations, and `onDidDeleteFiles` reports folder deletions, which a file-glob watcher can't. To avoid the redundancy causing a double re-render, each watcher callback checks the index first and returns early if the path is already present (create) or already absent (delete), so only a genuine change fires `onDidUpdateIndex`. The watcher is registered before the initial scan, so nothing slips through the gap.
+
+**Refresh button.** Both tabs also get an icon-only Refresh button, wired to a new `refresh` message that calls each service's now-public `refresh()` (re-reads exclude settings, clears, rescans). Not redundant with the watcher: VS Code's file watching legitimately misses things — paths under `files.watcherExclude`, network/remote filesystems, and watcher-limit exhaustion on very large trees — and a rescan is the guaranteed way back to an accurate list. It also covers the one gap deliberately left alone: external *content* changes (e.g. a `git checkout` rewriting many files) still don't re-index, so backlinks can go stale until a refresh. The icon spins for 600ms on click, because a rescan that finds nothing new leaves the list identical and the button would otherwise look broken when it had actually worked; the animation is disabled under `prefers-reduced-motion`.
+
+**Verification.** `check-types`/compile clean, 128 unit tests green. Ran `media/graph.js` against a DOM shim to confirm both buttons render their icon, attach a click handler, add and then clear the `spinning` class, and post `{type:'refresh', kind:'markdown'|'mermaid'}` with the right kind.

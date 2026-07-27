@@ -8,9 +8,12 @@
   const btnShowGraph = document.getElementById('btn-show-graph');
   const btnToggleLinksView = document.getElementById('btn-toggle-links-view');
 
+  const btnRefreshLinks = document.getElementById('btn-refresh-links');
+
   const mermaidFileList = document.getElementById('mermaid-file-list');
   const mermaidSearchInput = /** @type {HTMLInputElement} */ (document.getElementById('mermaid-search-input'));
   const btnToggleMermaidView = document.getElementById('btn-toggle-mermaid-view');
+  const btnRefreshMermaid = document.getElementById('btn-refresh-mermaid');
 
   // ================================================
   // Persisted per-tab state (view mode survives a webview reload)
@@ -34,14 +37,19 @@
   // ================================================
   const LIST_ICON = '<line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/>';
   const FOLDER_ICON = '<path d="M2 4.5 H6.5 L8 6.5 H14 V12.5 H2 Z"/>';
+  const REFRESH_ICON = '<path d="M13.2 8 A5.2 5.2 0 1 1 11.6 4.2"/><path d="M13.6 2 V4.8 H10.8"/>';
+
+  /** Wrap icon path markup in the shared 14x14 stroked SVG shell. */
+  function iconSvg(paths) {
+    return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+      paths +
+      '</svg>';
+  }
 
   function renderToggleButton(btn, viewMode) {
     if (!btn) return;
-    const svg =
-      '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" ' +
-      'stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
-      (viewMode === 'folders' ? FOLDER_ICON : LIST_ICON) +
-      '</svg>';
+    const svg = iconSvg(viewMode === 'folders' ? FOLDER_ICON : LIST_ICON);
     btn.innerHTML = svg;
     const nextLabel = viewMode === 'folders' ? 'Show flat list' : 'Show folder structure';
     btn.title = nextLabel;
@@ -64,6 +72,30 @@
 
   renderToggleButton(btnToggleLinksView, state.linksViewMode);
   renderToggleButton(btnToggleMermaidView, state.mermaidViewMode);
+
+  // ================================================
+  // Refresh buttons — a manual rescan for the cases a file watcher can
+  // legitimately miss (paths under files.watcherExclude, network/remote
+  // filesystems, watcher limits on very large trees). Normally the host
+  // picks new files up on its own.
+  // ================================================
+  /**
+   * Spin the icon briefly on click. A rescan that finds nothing new leaves
+   * the list identical, so without this the button looks broken when it
+   * actually worked.
+   */
+  function wireRefreshButton(btn, kind) {
+    if (!btn) return;
+    btn.innerHTML = iconSvg(REFRESH_ICON);
+    btn.addEventListener('click', () => {
+      btn.classList.add('spinning');
+      setTimeout(() => btn.classList.remove('spinning'), 600);
+      vscode.postMessage({ type: 'refresh', kind });
+    });
+  }
+
+  wireRefreshButton(btnRefreshLinks, 'markdown');
+  wireRefreshButton(btnRefreshMermaid, 'mermaid');
 
   btnToggleLinksView?.addEventListener('click', () => {
     state.linksViewMode = state.linksViewMode === 'folders' ? 'flat' : 'folders';

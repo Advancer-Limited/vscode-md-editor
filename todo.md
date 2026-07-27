@@ -281,3 +281,12 @@
 - [x] PR #71 fix/bump-1.3.2 → develop (version 1.3.2 + CHANGELOG), self-review, merge
 - [x] PR #72 develop → master (Release 1.3.2), merge
 - [x] Publish 1.3.2 from master to VS Code Marketplace
+
+## 2026-07-26 New files now appear without a reload (feature/auto-refresh-file-lists)
+
+- [x] Root-caused: `onDidCreateFiles`/`onDidDeleteFiles`/`onDidRenameFiles` are user-gesture events that fire only for file operations VS Code itself performs — files created by a terminal, git checkout, or any external tool never reached either index
+- [x] Added `createFileSystemWatcher` to both FileIndexService and MermaidFileIndexService (watches real disk activity); kept the user-gesture handlers for in-VS-Code speed and folder-delete coverage, with an index check in each watcher callback so the redundancy can't double-fire a re-render
+- [x] Made `refresh()` public on both services; new `refresh` sidebar message
+- [x] Refresh button on both tabs (icon-only, 600ms spin for feedback, disabled under prefers-reduced-motion) as the escape hatch for what file watching can legitimately miss
+- [x] Verified: check-types/compile clean, 128 tests green, DOM-shim check of both buttons (icon, handler, spin lifecycle, message payload)
+- [ ] PR feature/auto-refresh-file-lists → develop, self-review, merge
