@@ -13,6 +13,27 @@
 - The extension uses a `CustomTextEditorProvider` for `.md` files with a webview (textarea + markdown-it preview).
 - Webview communication uses typed message protocol defined in `src/types.ts`.
 
+## Code Search: LSP first for symbols
+
+The `LSP` tool is **deferred** — load it with `ToolSearch` for `LSP` at the **first symbol lookup of the session**, not eventually. The failure mode is drift, not disagreement: grep is already in context, so it stays the path of least resistance for the whole session unless LSP is loaded early.
+
+**Use LSP when the question is about a symbol** — a function, type, class, method or interface:
+
+- "where is this defined" → `goToDefinition`
+- "who actually calls this" → `findReferences` / `incomingCalls`
+- "what implements this interface" → `goToImplementation`
+- "what's in this file" / "where does X live" → `documentSymbol` / `workspaceSymbol`
+- "what type is this" → `hover`
+
+**Keep grep for text-shaped searches**: prose, comments, docs, config values, log output, markdown, and deliberately-greppable lists you want to read as plain text.
+
+Grep doesn't understand the symbol graph. It misses call sites that indirection creates (implicit interface implementations, inherited members, re-exports) and returns noise from strings and comments that happen to share a name. One `workspaceSymbol` call typically replaces several greps plus the follow-up reads needed to work out which hits were real. Grep is not obsolete — it's the right tool for plain text. This is a per-task judgment, not a blanket swap.
+
+### What LSP covers in this repo
+
+- **`src/**/*.ts` and `media/**/*.js`** — both, via the `typescript-lsp` plugin. The webview scripts get full symbol support, not just the extension host, and `findReferences` resolves across files workspace-wide.
+- **`media/*.css` and `*.json` have no language server** (none exists in the official plugin marketplace), so selectors and config keys are grep-only by necessity.
+- **`src/` ↔ `media/` communicate through `postMessage` string literals** (`'refresh'`, `'fileList'`) — a union type on the host side, plain strings in the webview. No symbol tool spans that boundary: use LSP for the host half and grep for the webview half.
 
 ## Git Workflow
 

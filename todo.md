@@ -289,4 +289,17 @@
 - [x] Made `refresh()` public on both services; new `refresh` sidebar message
 - [x] Refresh button on both tabs (icon-only, 600ms spin for feedback, disabled under prefers-reduced-motion) as the escape hatch for what file watching can legitimately miss
 - [x] Verified: check-types/compile clean, 128 tests green, DOM-shim check of both buttons (icon, handler, spin lifecycle, message payload)
-- [ ] PR feature/auto-refresh-file-lists → develop, self-review, merge
+- [x] PR #74 feature/auto-refresh-file-lists → develop, self-review (found + fixed the empty-content-on-external-create gap), merge
+- [x] PR #75 fix/bump-1.4.0 → develop (version 1.4.0 + CHANGELOG), self-review, merge
+- [x] PR #76 develop → master (Release 1.4.0), merge
+- [x] Publish 1.4.0 from master to VS Code Marketplace
+
+## 2026-10-13 Find & Replace + dependency updates (feature/find-replace)
+
+- [x] Update dependencies (in-range via `npm update`; mermaid 11 → 12; markdown-it stays on 14.x — 15 is ESM-only, no UMD bundle for the webview)
+- [x] Find/Replace bar (Ctrl/Cmd+F, Ctrl/Cmd+H, toolbar button), case-sensitive toggle, Edit (rendered text) + Raw/Split (markdown source)
+- [x] Unit tests for match logic + textarea-mode controller (tests/findBar.test.js)
+- [ ] PR feature/find-replace → develop, self-review, merge
+- [ ] Manual F5 check of Edit-mode (WYSIWYG) highlight/replace in a real VS Code window
+- [x] PR #79 feature/find-replace → develop (independent review fixes applied), merge
+- [ ] PR fix/bump-1.5.0 → develop; PR develop → master (Release 1.5.0); publish 1.5.0

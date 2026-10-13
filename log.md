@@ -728,3 +728,22 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 **Verification.** `check-types`/compile clean, 128 unit tests green. Ran `media/graph.js` against a DOM shim to confirm both buttons render their icon, attach a click handler, add and then clear the `spinning` class, and post `{type:'refresh', kind:'markdown'|'mermaid'}` with the right kind.
 
 **Self-review follow-up (PR #74).** The new `onDidCreate` handler indexes a file the moment it appears on disk — but a program that creates a file and *then* writes it (a script, a `git checkout`) would leave us having read an empty body. The file would show up in the sidebar (the reported symptom fixed) while its `[[wikilinks]]` silently went unparsed, contributing nothing to backlinks or the graph until something re-saved it. Added `watcher.onDidChange`, which skips documents currently open in the editor (`workspace.textDocuments`) because the existing save/text-change handlers already cover those with the in-memory text — without that skip, every in-editor save would index twice and re-render the sidebar twice. As a side benefit it also picks up content changed entirely outside VS Code, which previously went unnoticed until a reload. The Mermaid index needs no equivalent: it tracks filenames only, never content.
+
+## 2026-07-26 — Release 1.4.0 published
+
+- PR #74 (filesystem watchers + Refresh button) merged to develop after self-review; the review found and fixed a real gap of its own (an externally created file could be indexed before its content was written, so its wikilinks went unparsed — `watcher.onDidChange` now covers that, skipping documents open in the editor so in-editor saves don't index twice).
+- PR #75: version bump 1.3.2 → 1.4.0 (minor — the Refresh button is a new user-facing control) + CHANGELOG.
+- PR #76: develop → master release merge.
+- Published `advancer-limited.vscode-md-editor` v1.4.0 to the VS Code Marketplace from master.
+
+## 2026-10-13 — Find & Replace (feature/find-replace)
+
+**Decisions (user):** Edit mode searches the rendered text; Raw/Split search the markdown source. Ctrl/Cmd+F opens find, Ctrl/Cmd+H opens find with replace. Case-sensitive is the only extra option.
+
+**Dependencies.** `npm update` (esbuild 0.28.2, force-graph 1.52, markdown-it 14.3.2, @types/markdown-it 14.2). Bumped mermaid 11.16 → 12.1 (same `globalThis.mermaid` bundle shape; compile + 128 tests clean). Tried markdown-it 15: it ships ESM only (no `dist/markdown-it.min.js`), which breaks `copy-vendor.js` and the webview `<script>` load, so it stays on 14.x. Left alone: `@types/vscode` (must not exceed `engines.vscode ^1.85`), `@types/node` 26 (extension targets Node 20), TypeScript 7 (major toolchain jump). `npm audit` still reports 2 low (katex prototype pollution via mermaid); the only "fix" offered is downgrading mermaid to 10.8, so it was not applied.
+
+**Files.** New `media/findBar.js` (pure `findMatches` + `initFindBar` controller); `src/markdownEditorProvider.ts` (bar markup, toolbar button, script tag); `media/editor.js` (init call); `media/editor.css` (bar + `::highlight` styles); `tests/findBar.test.js`.
+
+**Design.** Edit mode paints matches with the CSS Custom Highlight API so the contenteditable DOM is never touched (no caret jumps, no spurious HTML→markdown sync — see the WYSIWYG cursor-fix note). Replace goes through `execCommand('insertText')` so it fires a normal `input` event and native undo works. Matches can span inline elements (`foo **bar**`); '\n' is inserted between blocks so a match can't leak across paragraphs; mermaid SVG text is skipped. After Replace the cursor resumes *after* the replacement so a replacement containing the query can't loop. Results re-run on document change (MutationObserver / textarea input) and on view-mode switch. The shortcut is only intercepted while the webview has focus.
+
+**Not verified:** the Edit-mode (real DOM/highlight) path has no automated test — no browser harness in the repo — only the pure logic and textarea path are covered.
