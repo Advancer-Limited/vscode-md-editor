@@ -2,6 +2,16 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [1.5.0] - 2026-10-13
+
+### Added
+
+- **Find and Replace.** Press **Ctrl+F** (find) or **Ctrl+H** (find and replace) — **Cmd** on macOS — or use the new toolbar button. Includes a case-sensitive toggle, a match count, next/previous (Enter, Shift+Enter, F3), Replace and Replace All. In Edit mode it searches the text as rendered, highlighting matches without disturbing your cursor; in Raw and Split it searches the markdown source. The shortcut only applies while the editor has focus, so VS Code's own Ctrl+F elsewhere is unaffected.
+
+### Changed
+
+- Updated dependencies, including Mermaid 11 → 12.
+
 ## [1.4.0] - 2026-07-26
 
 ### Fixed
