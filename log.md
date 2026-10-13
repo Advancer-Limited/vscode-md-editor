@@ -747,3 +747,11 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 **Design.** Edit mode paints matches with the CSS Custom Highlight API so the contenteditable DOM is never touched (no caret jumps, no spurious HTML→markdown sync — see the WYSIWYG cursor-fix note). Replace goes through `execCommand('insertText')` so it fires a normal `input` event and native undo works. Matches can span inline elements (`foo **bar**`); '\n' is inserted between blocks so a match can't leak across paragraphs; mermaid SVG text is skipped. After Replace the cursor resumes *after* the replacement so a replacement containing the query can't loop. Results re-run on document change (MutationObserver / textarea input) and on view-mode switch. The shortcut is only intercepted while the webview has focus.
 
 **Not verified:** the Edit-mode (real DOM/highlight) path has no automated test — no browser harness in the repo — only the pure logic and textarea path are covered.
+
+## 2026-10-13 — Release 1.5.0 published
+
+- PR #79 (Find & Replace + dependency updates) merged to develop. An independent code-review pass found and fixed: mermaid text wasn't actually excluded from search (a `SHOW_TEXT` TreeWalker never passes elements to its filter — editor.js has the same pre-existing pattern), stale matches in Raw mode when `textarea.value` changed without an `input` event, O(n) range lookup per match, textarea scroll-mirror border double-count, Esc not closing from the document, and a stale anchor on reopen. Known limitation: Replace All in Edit mode is one undo step per match.
+- PR #80: version bump 1.4.0 → 1.5.0 (minor — new user-facing feature) + CHANGELOG.
+- PR #81: develop → master release merge.
+- Published `advancer-limited.vscode-md-editor` v1.5.0 from master (vsce reported DONE; Marketplace listing lags a few minutes).
+- Dev-host testing tip: the default profile's other markdown extensions claim `.md`; launch with an isolated `--user-data-dir`/`--extensions-dir` and a `workbench.editorAssociations` setting for `vscodeMdEditor.editor`.
