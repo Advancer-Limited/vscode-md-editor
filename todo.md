@@ -299,7 +299,9 @@
 - [x] Update dependencies (in-range via `npm update`; mermaid 11 → 12; markdown-it stays on 14.x — 15 is ESM-only, no UMD bundle for the webview)
 - [x] Find/Replace bar (Ctrl/Cmd+F, Ctrl/Cmd+H, toolbar button), case-sensitive toggle, Edit (rendered text) + Raw/Split (markdown source)
 - [x] Unit tests for match logic + textarea-mode controller (tests/findBar.test.js)
-- [ ] PR feature/find-replace → develop, self-review, merge
-- [ ] Manual F5 check of Edit-mode (WYSIWYG) highlight/replace in a real VS Code window
+- [x] PR #79 feature/find-replace → develop, independent review, fixes, merge
+- [x] Manual check of Edit-mode (WYSIWYG) highlight/replace in an Extension Development Host (user confirmed)
 - [x] PR #79 feature/find-replace → develop (independent review fixes applied), merge
-- [ ] PR fix/bump-1.5.0 → develop; PR develop → master (Release 1.5.0); publish 1.5.0
+- [x] PR #80 fix/bump-1.5.0 → develop (version 1.5.0 + CHANGELOG), merge
+- [x] PR #81 develop → master (Release 1.5.0), merge
+- [x] Publish 1.5.0 from master to VS Code Marketplace
