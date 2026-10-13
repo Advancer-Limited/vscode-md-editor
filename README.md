@@ -43,6 +43,7 @@ Then press `F5` in VS Code to launch the Extension Development Host.
 2. Use the toolbar to format text, or write markdown directly in the textarea.
 3. Type `[[` to get autocomplete suggestions for linking to other markdown files.
 4. Open the **Markdown Links** sidebar to see backlinks and the link graph.
+5. Press **Ctrl+F** (find) or **Ctrl+H** (find and replace) — **Cmd** on macOS — to search the document, with an optional case-sensitive match. In Edit mode it searches the rendered text; in Raw/Split it searches the markdown source.
 
 ### Mermaid Diagrams
 
