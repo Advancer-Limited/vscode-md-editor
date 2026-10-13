@@ -735,3 +735,15 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 - PR #75: version bump 1.3.2 → 1.4.0 (minor — the Refresh button is a new user-facing control) + CHANGELOG.
 - PR #76: develop → master release merge.
 - Published `advancer-limited.vscode-md-editor` v1.4.0 to the VS Code Marketplace from master.
+
+## 2026-10-13 — Find & Replace (feature/find-replace)
+
+**Decisions (user):** Edit mode searches the rendered text; Raw/Split search the markdown source. Ctrl/Cmd+F opens find, Ctrl/Cmd+H opens find with replace. Case-sensitive is the only extra option.
+
+**Dependencies.** `npm update` (esbuild 0.28.2, force-graph 1.52, markdown-it 14.3.2, @types/markdown-it 14.2). Bumped mermaid 11.16 → 12.1 (same `globalThis.mermaid` bundle shape; compile + 128 tests clean). Tried markdown-it 15: it ships ESM only (no `dist/markdown-it.min.js`), which breaks `copy-vendor.js` and the webview `<script>` load, so it stays on 14.x. Left alone: `@types/vscode` (must not exceed `engines.vscode ^1.85`), `@types/node` 26 (extension targets Node 20), TypeScript 7 (major toolchain jump). `npm audit` still reports 2 low (katex prototype pollution via mermaid); the only "fix" offered is downgrading mermaid to 10.8, so it was not applied.
+
+**Files.** New `media/findBar.js` (pure `findMatches` + `initFindBar` controller); `src/markdownEditorProvider.ts` (bar markup, toolbar button, script tag); `media/editor.js` (init call); `media/editor.css` (bar + `::highlight` styles); `tests/findBar.test.js`.
+
+**Design.** Edit mode paints matches with the CSS Custom Highlight API so the contenteditable DOM is never touched (no caret jumps, no spurious HTML→markdown sync — see the WYSIWYG cursor-fix note). Replace goes through `execCommand('insertText')` so it fires a normal `input` event and native undo works. Matches can span inline elements (`foo **bar**`); '\n' is inserted between blocks so a match can't leak across paragraphs; mermaid SVG text is skipped. After Replace the cursor resumes *after* the replacement so a replacement containing the query can't loop. Results re-run on document change (MutationObserver / textarea input) and on view-mode switch. The shortcut is only intercepted while the webview has focus.
+
+**Not verified:** the Edit-mode (real DOM/highlight) path has no automated test — no browser harness in the repo — only the pure logic and textarea path are covered.

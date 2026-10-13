@@ -1745,6 +1745,12 @@
   });
 
   // ================================================
+  // Find / Replace (Ctrl+F / Ctrl+H) — see media/findBar.js
+  // ================================================
+  // @ts-ignore - initFindBar is a global from findBar.js
+  initFindBar({ textarea, previewContent, editorContainer, isPreviewMode });
+
+  // ================================================
   // Signal ready
   // ================================================
   vscode.postMessage({ type: 'ready' });

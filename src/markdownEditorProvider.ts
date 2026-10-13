@@ -292,6 +292,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const tableRulesUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'turndownTableRules.js')
     );
+    const findBarUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'findBar.js')
+    );
     const mermaidUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'mermaid.min.js')
     );
@@ -330,6 +333,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     <button id="btn-quote" class="icon-btn" title="Blockquote" aria-label="Blockquote">${toolbarIcon('<path d="M2 4.5 H4.5 V7.5 Q4.5 9.5 2 9.5"/><path d="M9 4.5 H11.5 V7.5 Q11.5 9.5 9 9.5"/>')}</button>
     <button id="btn-hr" class="icon-btn" title="Horizontal Rule" aria-label="Horizontal Rule">${toolbarIcon('<line x1="2" y1="8" x2="14" y2="8"/>')}</button>
     <span class="spacer"></span>
+    <button id="btn-find" class="icon-btn" title="Find and Replace (Ctrl+F / Ctrl+H)" aria-label="Find and Replace">${toolbarIcon('<circle cx="6.5" cy="6.5" r="4"/><line x1="9.5" y1="9.5" x2="14" y2="14"/>')}</button>
     <button id="btn-check-grammar" title="Check Grammar" class="grammar-btn">&#10003; Grammar</button>
     <span class="toolbar-separator"></span>
     <div class="view-toggle">
@@ -341,6 +345,24 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     <button id="btn-print" class="icon-btn" title="Print or Save as PDF" aria-label="Print or Save as PDF">${toolbarIcon('<rect x="3" y="6" width="10" height="5" rx="0.5"/><path d="M4.5 6 V2.5 H11.5 V6"/><rect x="5" y="10.5" width="6" height="3.5"/>')}</button>
     <span class="toolbar-separator"></span>
     ${getBrandButtonHtml()}
+  </div>
+  <div class="find-bar" id="find-bar" role="search" hidden>
+    <button id="find-toggle-replace" class="find-btn find-toggle" title="Toggle Replace" aria-label="Toggle Replace" aria-expanded="false">&#9656;</button>
+    <div class="find-rows">
+      <div class="find-row">
+        <input id="find-input" type="text" placeholder="Find" aria-label="Find" spellcheck="false">
+        <button id="find-case" class="find-btn" title="Match Case" aria-label="Match Case" aria-pressed="false">Aa</button>
+        <span id="find-count" class="find-count" aria-live="polite"></span>
+        <button id="find-prev" class="find-btn" title="Previous Match (Shift+Enter)" aria-label="Previous Match">&#8593;</button>
+        <button id="find-next" class="find-btn" title="Next Match (Enter)" aria-label="Next Match">&#8595;</button>
+        <button id="find-close" class="find-btn" title="Close (Esc)" aria-label="Close">&#10005;</button>
+      </div>
+      <div class="find-row" id="find-replace-row" hidden>
+        <input id="replace-input" type="text" placeholder="Replace" aria-label="Replace" spellcheck="false">
+        <button id="replace-one" class="find-btn" title="Replace (Enter)">Replace</button>
+        <button id="replace-all" class="find-btn" title="Replace All">All</button>
+      </div>
+    </div>
   </div>
   <div class="editor-container preview-only" id="editor-container">
     <div class="editor-pane" id="editor-pane">
@@ -362,6 +384,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   <script nonce="${nonce}" src="${turndownUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${tableRulesUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${mermaidUri}?v=${cacheBust}"></script>
+  <script nonce="${nonce}" src="${findBarUri}?v=${cacheBust}"></script>
   <script nonce="${nonce}" src="${scriptUri}?v=${cacheBust}"></script>
 </body>
 </html>`;
