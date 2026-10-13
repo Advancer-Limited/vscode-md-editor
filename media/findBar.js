@@ -384,7 +384,7 @@
         e.preventDefault();
         e.stopPropagation();
         close();
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' && (e.target === findInput || e.target === replaceInput)) {
         e.preventDefault();
         if (e.target === replaceInput) {
           replaceCurrent();
