@@ -301,3 +301,5 @@
 - [x] Unit tests for match logic + textarea-mode controller (tests/findBar.test.js)
 - [ ] PR feature/find-replace → develop, self-review, merge
 - [ ] Manual F5 check of Edit-mode (WYSIWYG) highlight/replace in a real VS Code window
+- [x] PR #79 feature/find-replace → develop (independent review fixes applied), merge
+- [ ] PR fix/bump-1.5.0 → develop; PR develop → master (Release 1.5.0); publish 1.5.0
