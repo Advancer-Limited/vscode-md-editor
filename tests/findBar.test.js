@@ -78,8 +78,7 @@ function setup(initial) {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../media/findBar.js'), 'utf8'), ctx);
-  ctx.initFindBar({ textarea, previewContent, editorContainer, isPreviewMode: () => false,
-    rejectMermaidBlocks: () => 1 });
+  ctx.initFindBar({ textarea, previewContent, editorContainer, isPreviewMode: () => false });
   const press = (key, mods = {}) => {
     let prevented = false;
     docListeners.keydown.forEach((f) => f({ key, preventDefault() { prevented = true; }, ...mods }));
@@ -129,4 +128,15 @@ test('Replace advances past the replacement', () => {
   els['replace-one'].click();
   assert.strictEqual(textarea.value, 'xx x x');
   assert.strictEqual(els['find-count'].textContent, '3 of 4');
+});
+
+test('Replace re-searches first when the textarea changed without an input event', () => {
+  const { els, textarea, press } = setup('foo bar');
+  press('f', { ctrlKey: true });
+  els['find-input'].value = 'bar';
+  els['find-input'].fire('input');
+  textarea.value = 'xxxxxxxx bar'; // e.g. external update: no input event
+  els['replace-input'].value = 'Z';
+  els['replace-one'].click();
+  assert.strictEqual(textarea.value, 'xxxxxxxx Z');
 });

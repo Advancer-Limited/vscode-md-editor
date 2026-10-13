@@ -44,11 +44,10 @@
    *   previewContent: HTMLElement,
    *   editorContainer: HTMLElement,
    *   isPreviewMode: () => boolean,
-   *   rejectMermaidBlocks: (node: Node) => number,
    * }} deps
    */
   function initFindBar(deps) {
-    const { textarea, previewContent, editorContainer, isPreviewMode, rejectMermaidBlocks } = deps;
+    const { textarea, previewContent, editorContainer, isPreviewMode } = deps;
 
     const bar = document.getElementById('find-bar');
     const findInput = document.getElementById('find-input');
@@ -71,6 +70,7 @@
     let anchor = 0; // start offset of the current match; survives text changes
     let segments = []; // preview mode: [{node, start, length}] text-node map
     let refreshTimer = null;
+    let searchedText = null; // text the current matches were computed against
 
     // ---------- Text collection ----------
 
@@ -79,11 +79,14 @@
       segments = [];
       let text = '';
       let lastBlock = null;
-      const walker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT, {
-        acceptNode: rejectMermaidBlocks,
-      });
+      const walker = document.createTreeWalker(previewContent, NodeFilter.SHOW_TEXT);
       let node;
       while ((node = walker.nextNode())) {
+        // A SHOW_TEXT walker never offers element nodes to its filter, so
+        // rejectMermaidBlocks can't be used here — test the ancestry instead.
+        if (node.parentElement && node.parentElement.closest('.mermaid-block')) {
+          continue;
+        }
         const block = node.parentElement ? node.parentElement.closest(BLOCK_SELECTOR) : null;
         if (lastBlock !== null && block !== lastBlock) {
           text += '\n';
@@ -101,17 +104,23 @@
 
     /** Preview mode: build a DOM Range for an offset span of the collected text. */
     function toRange(start, end) {
-      let startSeg = null;
-      let endSeg = null;
-      for (const seg of segments) {
-        if (!startSeg && start < seg.start + seg.length) {
-          startSeg = seg;
+      // Binary search for the first segment ending past (or, if inclusive, at) `from`.
+      function firstSegment(from, inclusive) {
+        let lo = 0;
+        let hi = segments.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          const segEnd = segments[mid].start + segments[mid].length;
+          if (inclusive ? segEnd >= from : segEnd > from) {
+            hi = mid;
+          } else {
+            lo = mid + 1;
+          }
         }
-        if (end <= seg.start + seg.length) {
-          endSeg = seg;
-          break;
-        }
+        return segments[lo] || null;
       }
+      const startSeg = firstSegment(start, false);
+      const endSeg = firstSegment(end, true);
       if (!startSeg || !endSeg) {
         return null;
       }
@@ -145,6 +154,8 @@
       mirror.style.position = 'absolute';
       mirror.style.visibility = 'hidden';
       mirror.style.boxSizing = 'border-box';
+      // clientWidth already excludes the borders, so the mirror must have none.
+      mirror.style.border = '0';
       mirror.style.width = textarea.clientWidth + 'px';
       mirror.style.whiteSpace = 'pre-wrap';
       mirror.textContent = textarea.value.substring(0, index);
@@ -216,7 +227,8 @@
       if (!isOpen) {
         return;
       }
-      matches = findMatches(searchText(), findInput.value, caseSensitive);
+      searchedText = searchText();
+      matches = findMatches(searchedText, findInput.value, caseSensitive);
       if (matches.length === 0) {
         current = -1;
       } else {
@@ -236,7 +248,15 @@
       refreshTimer = setTimeout(() => refresh(false), 120);
     }
 
+    /** Re-run the search if the document changed without us hearing about it. */
+    function ensureFresh() {
+      if (searchText() !== searchedText) {
+        refresh(false);
+      }
+    }
+
     function step(dir) {
+      ensureFresh();
       if (matches.length === 0) {
         return;
       }
@@ -257,6 +277,7 @@
     }
 
     function replaceCurrent() {
+      ensureFresh();
       if (current < 0 || matches.length === 0) {
         return;
       }
@@ -285,6 +306,7 @@
     }
 
     function replaceAll() {
+      ensureFresh();
       if (matches.length === 0) {
         return;
       }
@@ -341,6 +363,7 @@
 
     function open(showReplace) {
       const seed = selectedSeed();
+      anchor = 0;
       const toolbar = document.querySelector('.toolbar');
       bar.style.top = (toolbar ? toolbar.getBoundingClientRect().bottom : 0) + 4 + 'px';
       bar.hidden = false;
@@ -350,7 +373,6 @@
       }
       if (seed && !/[\r\n]/.test(seed)) {
         findInput.value = seed;
-        anchor = 0;
       }
       findInput.focus();
       findInput.select();
@@ -428,6 +450,15 @@
       },
       true
     );
+
+    // Esc closes the bar even when focus has moved back into the document
+    // (bubble phase + defaultPrevented so the wikilink autocomplete, which
+    // handles its own Esc, keeps priority).
+    document.addEventListener('keydown', (e) => {
+      if (isOpen && e.key === 'Escape' && !e.defaultPrevented) {
+        close();
+      }
+    });
 
     // Keep results current as the document changes (typing, external edits,
     // grammar highlight spans) and when the view mode flips.
