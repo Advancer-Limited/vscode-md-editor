@@ -381,6 +381,20 @@ html, body {
   text-decoration: underline;
 }
 
+/* A link the host found no file for */
+.markdown-body .wikilink.wikilink-broken {
+  color: var(--vscode-errorForeground, #f14c4c);
+  border-bottom-style: dotted;
+  opacity: 0.85;
+}
+
+@media print {
+  .markdown-body .wikilink.wikilink-broken {
+    color: inherit;
+    opacity: 1;
+  }
+}
+
 /* Remove default focus outline on contenteditable preview */
 #preview-content:focus,
 #preview-content:focus-visible {

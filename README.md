@@ -1,6 +1,6 @@
 # VS Code MD Editor
 
-A rich Markdown editor extension for Visual Studio Code with split preview, [[wikilinks]], Mermaid diagrams, task checklists, a force-directed link graph, version diff, and LanguageTool grammar checking.
+A rich Markdown editor extension for Visual Studio Code with split preview, [[wikilinks]], Mermaid diagrams, task checklists, a force-directed link graph, version diff, and LanguageTool grammar checking. It also supports the [Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo) format, so you can browse, edit and tidy the memory your AI agents keep in git.
 
 ## Features
 
@@ -9,12 +9,13 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 - **3D Model Viewer** — open a `.gltf` file to get its JSON source alongside a live 3D preview rendered with three.js, with orbit, pan and zoom. The preview updates as you edit and keeps your camera position.
 - **Task Checklists** — GFM `- [ ] task` / `- [x] task` checkboxes render as clickable checkboxes in the preview and toggle directly in the markdown source. Handy for spec-driven workflows (e.g. GitHub Spec Kit `tasks.md` files).
 - **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
-- **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
+- **[[Wikilinks]]** — Link between markdown files using `[[filename]]`, `[[folder/filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions. Links to other file types (`[[queries/report.sql]]`) open the file. Links that don't resolve are marked in the preview.
+- **Agent Memory Repo Support** — Open an [Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo) (the git-backed memory format for AI agents such as Devin, Claude Code and Cursor) and its `[[path]]` links, backlinks and graph just work. Any folder with a `MEMORY.md` at its root is treated as a memory repo; links resolve from that root, several memory repos can sit side by side, and broken links show in the Problems panel. See [Agent Memory Repos](#agent-memory-repos).
 - **Markdown Links Sidebar** — File list showing all markdown files with their incoming/outgoing links, plus a "Show Graph" button.
 - **Interactive Link Graph** — Full-screen force-directed graph with Obsidian-style controls (filters, display options, force tuning), drag-to-pin, and zoom.
 - **LanguageTool Integration** — Grammar and spelling checking powered by LanguageTool, with inline highlights and quick-fix suggestions. Works with the free API or a Premium account.
 - **Version Diff** — Compare your markdown file against previous git commits in a rendered diff viewer with green/red change highlighting. Fenced code blocks (including Mermaid diagrams) always diff as a whole block, never split mid-fence.
-- **Rename Propagation** — Renaming a `.md`/`.markdown` file automatically updates all wikilink references across your workspace.
+- **Rename Propagation** — Renaming or moving a `.md`/`.markdown` file, or a whole folder, automatically updates all wikilink references across your workspace — `[[filename]]` links on a rename, `[[folder/filename]]` links on a move — in the style each link was written.
 
 ## Installation
 
@@ -44,6 +45,18 @@ Then press `F5` in VS Code to launch the Extension Development Host.
 3. Type `[[` to get autocomplete suggestions for linking to other markdown files.
 4. Open the **Markdown Links** sidebar to see backlinks and the link graph.
 5. Press **Ctrl+F** (find) or **Ctrl+H** (find and replace) — **Cmd** on macOS — to search the document, with an optional case-sensitive match. In Edit mode it searches the rendered text; in Raw/Split it searches the markdown source.
+
+### Agent Memory Repos
+
+[Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo) is an open format, originally from Cognition, for keeping an AI agent's memory in a git repository: a `MEMORY.md` entry point, one-line bullet entries with `[source: …; added: …]` metadata, and `[[path]]` links between files. Agents read and write it; this extension gives you a way to read, edit and reorganise it.
+
+1. Open the memory repo as a folder, or add it to a multi-root workspace. A memory repo can also sit inside a larger workspace, and several can sit side by side (`memory-alice/`, `memory-bob/`).
+2. Any folder with a `MEMORY.md` at its root is a memory repo. Inside it, `[[projects/payments]]` resolves from the repo's root, wherever the linking file is. `.md` is optional, and links to other files, such as `[[metrics/keep_rate.sql]]`, open that file.
+3. Typing `[[` suggests links in the spec's style: the path from the memory repo's root.
+4. Renaming or moving a file or folder rewrites the links to it. Renaming the memory repo's own folder changes nothing, because its links are relative to it.
+5. Links that don't resolve are marked in the preview and listed in the Problems panel (see `vscodeMdEditor.wikilinks.brokenLinkDiagnostics`).
+
+Outside a memory repo, links work as before: `[[filename]]` by file name, and `[[folder/filename]]` from the workspace root.
 
 ### Mermaid Diagrams
 
@@ -116,6 +129,12 @@ Grammar checking works out of the box with the free LanguageTool API (1500 chara
 | `vscodeMdEditor.languageTool.language` | `"auto"` | Language code (e.g., `en-US`, `de-DE`) |
 | `vscodeMdEditor.languageTool.motherTongue` | `""` | Your native language code for better error detection |
 | `vscodeMdEditor.languageTool.checkDelayMs` | `1500` | Delay (ms) before triggering check after typing |
+
+### Wikilink Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `vscodeMdEditor.wikilinks.brokenLinkDiagnostics` | `"memoryRepos"` | Where to report `[[links]]` that don't resolve as Problems-panel warnings: `memoryRepos` (only inside Agent Memory Repo folders, where every link should resolve — if your workspace itself has a `MEMORY.md` at its root, that's the whole workspace), `all`, or `off` |
 
 ### Graph Settings
 

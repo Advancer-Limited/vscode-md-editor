@@ -8,6 +8,7 @@ import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
 import { LanguageToolCodeActionProvider } from './codeActionsProvider.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
 import { handleWillRenameFiles } from './wikilink/renamePropagation.js';
+import { BrokenLinkDiagnostics } from './wikilink/brokenLinkDiagnostics.js';
 import { GraphDataService } from './graph/graphDataService.js';
 import { GraphViewProvider } from './graph/graphViewProvider.js';
 import { MermaidFileIndexService } from './graph/mermaidFileIndexService.js';
@@ -22,6 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
   fileIndexService.initialize().catch(err => {
     console.error('[MarkdownEditor] FileIndexService initialization failed:', err);
   });
+  context.subscriptions.push(new BrokenLinkDiagnostics(fileIndexService));
 
   // 1b. Mermaid file index (sidebar's Mermaid tab) — lightweight sibling to
   // the file index above, just filenames, no wikilink/backlink graph.

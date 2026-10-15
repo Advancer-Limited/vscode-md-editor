@@ -15,7 +15,7 @@ export class GraphDataService {
     for (const file of files) {
       let outgoing = 0;
       for (const link of file.outgoingLinks) {
-        const resolved = this.fileIndexService.resolveWikilink(link.target);
+        const resolved = this.fileIndexService.resolveWikilink(link.target, file.relativePath);
         if (!resolved) {
           continue;
         }
@@ -38,7 +38,7 @@ export class GraphDataService {
 
     const nodes: GraphNode[] = files.map(file => {
       const outgoing = outCount.get(file.relativePath) || 0;
-      const incoming = this.fileIndexService.getBacklinksFor(file.stem).length;
+      const incoming = this.fileIndexService.getBacklinksFor(file).length;
       const connectionCount = outgoing + incoming;
 
       return {
@@ -121,7 +121,7 @@ export class GraphDataService {
 
     // Seed depth-1: direct outgoing links
     for (const link of entry.outgoingLinks) {
-      const resolved = this.fileIndexService.resolveWikilink(link.target);
+      const resolved = this.fileIndexService.resolveWikilink(link.target, entry.relativePath);
       if (resolved && !visited.has(resolved)) {
         visited.add(resolved);
         queue.push({ path: resolved, depth: 1, direction: 'outgoing' });
@@ -129,7 +129,7 @@ export class GraphDataService {
     }
 
     // Seed depth-1: direct incoming links (backlinks)
-    const backlinks = this.fileIndexService.getBacklinksFor(entry.stem);
+    const backlinks = this.fileIndexService.getBacklinksFor(entry);
     for (const bl of backlinks) {
       if (!visited.has(bl.relativePath)) {
         visited.add(bl.relativePath);
@@ -157,14 +157,14 @@ export class GraphDataService {
       if (depth < maxDepth) {
         // Outgoing from this neighbor
         for (const link of neighbor.outgoingLinks) {
-          const resolved = this.fileIndexService.resolveWikilink(link.target);
+          const resolved = this.fileIndexService.resolveWikilink(link.target, neighbor.relativePath);
           if (resolved && !visited.has(resolved)) {
             visited.add(resolved);
             queue.push({ path: resolved, depth: depth + 1, direction });
           }
         }
         // Incoming to this neighbor
-        const nBacklinks = this.fileIndexService.getBacklinksFor(neighbor.stem);
+        const nBacklinks = this.fileIndexService.getBacklinksFor(neighbor);
         for (const bl of nBacklinks) {
           if (!visited.has(bl.relativePath)) {
             visited.add(bl.relativePath);

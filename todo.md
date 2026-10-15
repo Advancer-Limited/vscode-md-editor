@@ -305,3 +305,15 @@
 - [x] PR #80 fix/bump-1.5.0 → develop (version 1.5.0 + CHANGELOG), merge
 - [x] PR #81 develop → master (Release 1.5.0), merge
 - [x] Publish 1.5.0 from master to VS Code Marketplace
+
+## 2026-10-15 Agent Memory Repo link compatibility (feature/memory-repo-links)
+
+- [x] Root-relative `[[path]]` resolution with stem fallback; memory roots detected by `MEMORY.md` (new pure `src/wikilink/linkResolution.ts`)
+- [x] Backlinks keyed by normalised target, filtered by actual resolution (`getBacklinksFor(entry)`)
+- [x] Rename/move/folder-rename propagation rewrites path-style links in the style they were written
+- [x] Autocomplete + link picker insert spec-style links (`linkText`)
+- [x] Non-markdown targets (`[[metrics/x.sql]]`) open from disk; unresolved links styled in the preview; broken-link diagnostics (setting)
+- [x] Docs: README section, package.json description/keywords, CHANGELOG
+- [x] Tests: test memory repo + node:test cases
+- [ ] PR feature/memory-repo-links → develop, self-review
+- [ ] fix/multi-root-index-keys: index keys collide across workspace folders (stacked PR)

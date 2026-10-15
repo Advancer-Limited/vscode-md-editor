@@ -2,6 +2,20 @@
 
 All notable changes to the VS Code MD Editor extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Agent Memory Repo support.** [Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo) is a git-backed memory format for AI agents. Any folder with a `MEMORY.md` at its root is now treated as a memory repo, and its `[[path]]` links resolve from that root wherever the linking file sits. That makes links, backlinks and the graph work for memory repos, including several side by side in one workspace.
+- **Path links everywhere.** `[[folder/note]]` resolves from the workspace root in any workspace, a `.md` extension in a link is optional, and links to other file types (`[[queries/report.sql]]`) open the file.
+- **Broken links are visible.** Links that resolve to nothing are marked in the preview, clicking one says so instead of doing nothing, and inside memory repos they're listed in the Problems panel. The new `vscodeMdEditor.wikilinks.brokenLinkDiagnostics` setting controls where they're reported: `memoryRepos` (default), `all` or `off`.
+- **Link autocomplete writes the right kind of link**: the path from the memory repo's root inside a memory repo, the bare file name when it's unique, and otherwise the path. Typing a path (`[[projects/pa`) now finds matches too.
+
+### Fixed
+
+- **Moving a file or renaming a folder now updates links to it.** Previously only renaming a file updated `[[filename]]` links. Moves and folder renames left path links broken, and a renamed folder wasn't re-indexed.
+- **Two files with the same name no longer share backlinks.** Each now lists only the files whose links actually point at it, and a name shared by several files resolves to the same one every time.
+
 ## [1.5.0] - 2026-10-13
 
 ### Added

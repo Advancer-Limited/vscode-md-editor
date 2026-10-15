@@ -1,0 +1,1 @@
+- Cause: the price cache refresh rebuilds a 2 GB table every 10 seconds; see [[swarms/slow-checkout/README]] [source: https://example.com/sessions/301]
