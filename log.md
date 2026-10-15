@@ -774,3 +774,23 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 **Not verified.** No Extension Development Host run, so the real VS Code ordering of `onWillRenameFiles` edits vs. the rename (edits target pre-rename URIs, as the old code did) and the preview styling are untested by hand. `npm run lint` can't run — eslint isn't installed (pre-existing).
 
 **Known limitation.** Two memory repos opened as separate workspace roots collide in the index (keys omit the folder name) — fixed separately on fix/multi-root-index-keys.
+
+## 2026-10-15 Multi-root index keys (fix/multi-root-index-keys, stacked on #83)
+
+**Bug.** Both file indexes keyed files by their path inside their workspace folder, without the folder. In a multi-root workspace, `memory-alice/MEMORY.md` and `memory-bob/MEMORY.md` (each its own workspace folder) both became `MEMORY.md` and the second overwrote the first. Adding a workspace folder also never indexed its existing files.
+
+**Fix.** New `src/workspacePaths.ts`: in a multi-root workspace an index path is prefixed with the workspace folder's name (duplicate folder names get ` (n)`); single-folder workspaces are unchanged. Exclude globs still match the path inside the folder. Used by FileIndexService, MermaidFileIndexService, `getActiveFilePath` (extension.ts) and the sidebar's create/reveal folder lookup (`splitIndexPath`, which replaces the old find-a-file-under-it heuristic). Both indexes rescan on `onDidChangeWorkspaceFolders`. `linkResolution.ts` gains `folderRoots` and a resolution step between memory root and workspace root, so `[[docs/x]]` keeps resolving inside the linking file's own workspace folder; stem ties prefer that folder; autocomplete and rename rewrites use folder-relative paths.
+
+**Verification.** check-types/compile clean; 160 tests (6 new multi-root cases). Host check with a two-folder mock workspace (memory-john + memory-bob as separate roots): 10 files indexed with prefixes, per-repo backlinks, `.sql` link resolves to the right folder, no cross-repo graph edges. Single-root host check re-run unchanged.
+
+## 2026-10-15 Real VS Code verification of #83/#84
+
+Ran the extension in VS Code 1.105 via `@vscode/test-electron` (installed in the session scratchpad, not the repo) against copies of `tests/fixtures/memory-workspace`, single-folder and as a two-folder `.code-workspace` (memory-john + memory-bob). All pass:
+- Broken-link diagnostics: exactly the planted link, only inside the memory repo; the `.sql` link resolves from disk.
+- Folder rename `memory-john/projects` → `work` via `WorkspaceEdit.renameFile` (fires onWillRenameFiles): MEMORY.md, team_structure.md, archive/payments.md and the moved `work/payments.md` itself rewritten. **Answers the open ordering question:** edits targeted at the pre-rename URI end up in the dirty buffer at the new path, nothing remains at the old path, and saving writes the rewritten link to the new file on disk. Diagnostics follow the moved file.
+- Stem rename keeps spacing/display text; a pure move leaves `[[stem]]` links alone; the custom editor opens a memory file.
+- Multi-root: both MEMORY.md roots indexed (broken links reported in each folder); renaming Bob's `team_structure.md` rewrites only Bob's links although John has a same-named file; folder rename inside a workspace-folder memory repo works.
+
+Harness notes: this shell inherits `ELECTRON_RUN_AS_NODE` from VS Code — delete it before launching or Code.exe runs as plain Node. `workspace.saveAll()` returned true but left background (never-shown) documents dirty; `TextDocument.save()` per document works. A disk-watcher change event for a just-moved file's old path logs a caught `[FileIndex] Failed to read` warning — harmless, pre-existing pattern.
+
+Not covered: the preview's `.wikilink-broken` styling (webview DOM isn't reachable from the test API) — checked only via the DOM shim.

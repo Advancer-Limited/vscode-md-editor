@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { getFileStem, isMermaidFile } from '../utils.js';
 import { getExcludePatterns, affectsExcludeSettings } from '../fileExclusions.js';
 import { matchesAnyGlob, buildFindFilesExclude } from '../globMatch.js';
+import { getWorkspacePath } from '../workspacePaths.js';
 
 /** Metadata for a single .mmd/.mermaid file in the index. */
 export interface MermaidFileEntry {
@@ -74,6 +75,15 @@ export class MermaidFileIndexService implements vscode.Disposable {
   }
 
   private registerWatchers(): void {
+    // Workspace folders added or removed: keys gain or lose their folder-name
+    // prefix, and an added folder's files fire no create events.
+    this.disposables.push(
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.refresh().catch(err => {
+          console.warn('[MermaidFileIndex] Failed to rebuild after workspace folder change:', err);
+        });
+      })
+    );
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         if (affectsExcludeSettings(e)) {
@@ -170,13 +180,14 @@ export class MermaidFileIndexService implements vscode.Disposable {
   }
 
   private addFile(uri: vscode.Uri): void {
-    const relativePath = this.getRelativePath(uri);
-    if (!relativePath) {
+    const workspacePath = getWorkspacePath(uri);
+    if (!workspacePath) {
       return;
     }
+    const relativePath = workspacePath.indexPath;
     // Single choke point for the scan and every watcher — see the matching
     // guard in FileIndexService.indexFile for why it belongs here.
-    if (matchesAnyGlob(relativePath, this.excludePatterns)) {
+    if (matchesAnyGlob(workspacePath.folderRelativePath, this.excludePatterns)) {
       return;
     }
     const stem = getFileStem(relativePath);
@@ -201,25 +212,9 @@ export class MermaidFileIndexService implements vscode.Disposable {
     return this.files.get(relativePath);
   }
 
-  /**
-   * Workspace-relative path (forward-slash separated), or undefined if the
-   * URI isn't inside any open workspace folder. Slices by folder.uri.fsPath's
-   * character length rather than a manual startsWith()/slice()-with-check
-   * or path.relative() — see FileIndexService.getRelativePath for why: both
-   * of those re-derive containment via a string comparison that has to
-   * reimplement VS Code's own platform-specific case sensitivity rules,
-   * where getWorkspaceFolder() above has already made that determination.
-   */
+  /** The file's index key — see workspacePaths.getWorkspacePath. */
   private getRelativePath(uri: vscode.Uri): string | undefined {
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (!folder) {
-      return undefined;
-    }
-    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
-    if (!relative) {
-      return undefined;
-    }
-    return relative.replace(/\\/g, '/');
+    return getWorkspacePath(uri)?.indexPath;
   }
 
   /**

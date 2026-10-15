@@ -315,5 +315,7 @@
 - [x] Non-markdown targets (`[[metrics/x.sql]]`) open from disk; unresolved links styled in the preview; broken-link diagnostics (setting)
 - [x] Docs: README section, package.json description/keywords, CHANGELOG
 - [x] Tests: test memory repo + node:test cases
-- [ ] PR feature/memory-repo-links → develop, self-review
-- [ ] fix/multi-root-index-keys: index keys collide across workspace folders (stacked PR)
+- [x] PR #83 feature/memory-repo-links → develop, self-review (2 fixes: stale link-status post after dispose; suggestion filtering)
+- [x] fix/multi-root-index-keys: index keys collide across workspace folders (stacked PR)
+- [x] Real VS Code run (@vscode/test-electron 1.105): folder rename in a memory repo, diagnostics, stem rename, pure move, custom editor open, multi-root with two memory repos — all pass. Preview broken-link styling only checked via DOM shim
+- [ ] Merge #83 then the stacked fix PR; version bump + release

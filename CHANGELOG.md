@@ -14,6 +14,7 @@ All notable changes to the VS Code MD Editor extension will be documented in thi
 ### Fixed
 
 - **Moving a file or renaming a folder now updates links to it.** Previously only renaming a file updated `[[filename]]` links. Moves and folder renames left path links broken, and a renamed folder wasn't re-indexed.
+- **Multi-root workspaces: files at the same path in different workspace folders no longer overwrite each other.** With two memory repos (or any two folders) added as separate workspace folders, `memory-alice/MEMORY.md` and `memory-bob/MEMORY.md` were both indexed as just `MEMORY.md`, so one vanished from the sidebar, the graph and link resolution. Paths in a multi-root workspace now start with the workspace folder's name, `[[folder/note]]` links resolve within the linking file's own workspace folder first, and adding or removing a workspace folder rescans.
 - **Two files with the same name no longer share backlinks.** Each now lists only the files whose links actually point at it, and a name shared by several files resolves to the same one every time.
 
 ## [1.5.0] - 2026-10-13
