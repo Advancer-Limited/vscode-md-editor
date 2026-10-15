@@ -291,3 +291,60 @@ test('renaming one of two same-stem files does not touch links to the other', ()
   assert.strictEqual(changed['memory-bob/MEMORY.md'], undefined);
   assert.match(changed['memory-john/MEMORY.md'], /- \[\[people\]\]/);
 });
+
+// ---------------------------------------------------------------------------
+// Multi-root workspaces: every index path starts with its workspace folder's
+// name, so two memory repos opened as separate roots no longer collide.
+// ---------------------------------------------------------------------------
+
+const MULTI_PATHS = [
+  'memory-alice/MEMORY.md',
+  'memory-alice/team.md',
+  'memory-bob/MEMORY.md',
+  'memory-bob/team.md',
+  'docs-site/guide/intro.md',
+  'docs-site/notes/todo.md',
+  'other/guide/intro.md',
+];
+const MULTI = buildLinkIndex(MULTI_PATHS, ['memory-alice', 'memory-bob', 'docs-site', 'other']);
+
+test('multi-root: each memory repo root resolves its own links', () => {
+  assert.strictEqual(resolve('team', 'memory-alice/MEMORY.md', MULTI), 'memory-alice/team.md');
+  assert.strictEqual(resolve('team', 'memory-bob/MEMORY.md', MULTI), 'memory-bob/team.md');
+});
+
+test('multi-root: a path link resolves inside the linking file\'s own workspace folder first', () => {
+  assert.strictEqual(resolve('guide/intro', 'docs-site/notes/todo.md', MULTI), 'docs-site/guide/intro.md');
+  assert.strictEqual(resolveWikilinkTarget('guide/intro', 'docs-site/notes/todo.md', MULTI).via, 'folderRoot');
+  // Another folder is reachable by naming it.
+  assert.strictEqual(resolve('other/guide/intro', 'docs-site/notes/todo.md', MULTI), 'other/guide/intro.md');
+});
+
+test('multi-root: a shared stem prefers the linking file\'s workspace folder', () => {
+  assert.strictEqual(resolve('intro', 'docs-site/notes/todo.md', MULTI), 'docs-site/guide/intro.md');
+  assert.strictEqual(resolve('intro', 'other/guide/intro.md', MULTI), 'other/guide/intro.md');
+});
+
+test('multi-root: autocomplete writes a path inside the folder, not the folder name', () => {
+  assert.strictEqual(preferredLinkText('docs-site/guide/intro.md', 'docs-site/notes/todo.md', MULTI), 'guide/intro');
+  assert.strictEqual(preferredLinkText('memory-bob/team.md', 'memory-bob/MEMORY.md', MULTI), 'team');
+});
+
+test('multi-root: moving a folder rewrites folder-relative links in the same style', () => {
+  const moved = new Map([['docs-site/guide/intro.md', 'docs-site/start/intro.md']]);
+  const after = buildLinkIndex(MULTI_PATHS.map(p => moved.get(p) ?? p), MULTI.folderRoots.values());
+  const text = '- read [[guide/intro]] first';
+  const rewrites = computeLinkRewrites(parseWikilinks(text), 'docs-site/notes/todo.md', 'docs-site/notes/todo.md', moved, MULTI, after);
+  assert.strictEqual(applyRewrites(text, rewrites), '- read [[start/intro]] first');
+});
+
+test('multi-root: non-markdown candidates include the workspace folder', () => {
+  assert.deepStrictEqual(
+    linkCandidatePaths('assets/a.sql', 'docs-site/notes/todo.md', MULTI),
+    ['docs-site/assets/a.sql', 'assets/a.sql'],
+  );
+  assert.deepStrictEqual(
+    linkCandidatePaths('q.sql', 'memory-alice/MEMORY.md', MULTI),
+    ['memory-alice/q.sql', 'q.sql'],
+  );
+});

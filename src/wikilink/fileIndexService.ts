@@ -10,12 +10,14 @@ import {
   linkKey,
   pathKey,
   memoryRootsContaining,
+  findFolderRoot,
   linkCandidatePaths,
   preferredLinkText,
 } from './linkResolution.js';
 import { getFileStem, isMarkdownFile } from '../utils.js';
 import { getExcludePatterns, affectsExcludeSettings } from '../fileExclusions.js';
 import { matchesAnyGlob, buildFindFilesExclude } from '../globMatch.js';
+import { getWorkspacePath, allWorkspaceFolderPrefixes, uriForIndexPath } from '../workspacePaths.js';
 
 /** Metadata for a single .md file in the index. */
 export interface FileEntry {
@@ -63,6 +65,7 @@ export class FileIndexService implements vscode.Disposable {
   /** Full workspace scan. Call once on activation. */
   public async initialize(): Promise<void> {
     this.excludePatterns = getExcludePatterns();
+    this.linkIndex = createLinkIndex(allWorkspaceFolderPrefixes());
 
     // Register watchers BEFORE the (potentially slow) initial scan so files
     // created/saved/renamed while scanning are not missed. Re-indexing a file
@@ -103,7 +106,7 @@ export class FileIndexService implements vscode.Disposable {
     this.excludePatterns = getExcludePatterns();
     this.fileIndex.clear();
     this.backlinkIndex.clear();
-    this.linkIndex = createLinkIndex();
+    this.linkIndex = createLinkIndex(allWorkspaceFolderPrefixes());
     await this.scan();
     this._onDidUpdateIndex.fire();
   }
@@ -181,6 +184,17 @@ export class FileIndexService implements vscode.Disposable {
             this._onDidUpdateIndex.fire();
           });
         }
+      })
+    );
+
+    // Workspace folders added or removed — every index key can change (the
+    // folder-name prefix appears or disappears), and an added folder's
+    // existing files fire no create events, so rebuild.
+    this.disposables.push(
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.refresh().catch(err => {
+          console.warn('[FileIndex] Failed to rebuild after workspace folder change:', err);
+        });
       })
     );
 
@@ -288,17 +302,19 @@ export class FileIndexService implements vscode.Disposable {
 
   /** Index a single file. Optionally pass content to avoid re-reading. */
   private async indexFile(uri: vscode.Uri, content?: string): Promise<void> {
-    const relativePath = this.getRelativePath(uri);
-    if (!relativePath) {
+    const workspacePath = getWorkspacePath(uri);
+    if (!workspacePath) {
       return;
     }
+    const relativePath = workspacePath.indexPath;
 
     // The single choke point every path into the index funnels through —
     // the initial scan and all four watchers — so the exclude check lives
     // here rather than being repeated (and eventually missed) at each one.
     // findFiles already applies the excludes during the scan; watchers get
     // no exclude handling at all, which is what this actually guards.
-    if (matchesAnyGlob(relativePath, this.excludePatterns)) {
+    // Globs are relative to the workspace folder, so match the path inside it.
+    if (matchesAnyGlob(workspacePath.folderRelativePath, this.excludePatterns)) {
       return;
     }
 
@@ -413,7 +429,12 @@ export class FileIndexService implements vscode.Disposable {
    */
   public getBacklinksFor(target: FileEntry): FileEntry[] {
     const keys = new Set<string>([target.stem.toLowerCase(), pathKey(target.relativePath)]);
-    for (const root of memoryRootsContaining(target.relativePath, this.linkIndex)) {
+    const roots = memoryRootsContaining(target.relativePath, this.linkIndex);
+    const folderRoot = findFolderRoot(target.relativePath, this.linkIndex);
+    if (folderRoot !== undefined) {
+      roots.push(folderRoot);
+    }
+    for (const root of roots) {
       keys.add(pathKey(root ? target.relativePath.slice(root.length + 1) : target.relativePath));
     }
 
@@ -497,12 +518,14 @@ export class FileIndexService implements vscode.Disposable {
     if (resolved) {
       return this.fileIndex.get(resolved)?.uri;
     }
-    const folder = vscode.workspace.getWorkspaceFolder(fromUri);
-    if (!folder) {
+    if (fromPath === undefined) {
       return undefined;
     }
     for (const candidate of linkCandidatePaths(target, fromPath, this.linkIndex)) {
-      const uri = vscode.Uri.joinPath(folder.uri, candidate);
+      const uri = uriForIndexPath(candidate);
+      if (!uri) {
+        continue;
+      }
       try {
         const stat = await vscode.workspace.fs.stat(uri);
         if (stat.type & vscode.FileType.File) {
@@ -546,33 +569,12 @@ export class FileIndexService implements vscode.Disposable {
   // ========================================
 
   /**
-   * Workspace-relative path (forward-slash separated), or undefined if the
-   * URI isn't inside any open workspace folder.
-   *
-   * Slices by folder.uri.fsPath's character length rather than a manual
-   * startsWith()/slice() with an equality check, or path.relative() — both
-   * of those re-derive containment via their own string comparison, which
-   * has to reimplement VS Code's platform-specific case sensitivity rules
-   * (case-insensitive path matching on Windows AND macOS, case-sensitive on
-   * Linux) to avoid rejecting a real match. getWorkspaceFolder() above has
-   * ALREADY determined uri belongs under folder using those exact rules —
-   * a case difference never changes string length, so slicing by length
-   * trusts that determination instead of redundantly (and inconsistently)
-   * re-checking it. The original bug was exactly a startsWith() mismatch —
-   * on a document opened via a differently-cased path — silently returning
-   * the full absolute path AS the "relative" path, indexed as a second,
-   * bogus entry for an already-indexed file.
+   * The file's index key (forward-slash separated; prefixed with its
+   * workspace folder's name in a multi-root workspace — see workspacePaths),
+   * or undefined if the URI isn't inside any open workspace folder.
    */
   public getRelativePath(uri: vscode.Uri): string | undefined {
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (!folder) {
-      return undefined;
-    }
-    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
-    if (!relative) {
-      return undefined;
-    }
-    return relative.replace(/\\/g, '/');
+    return getWorkspacePath(uri)?.indexPath;
   }
 
   /**

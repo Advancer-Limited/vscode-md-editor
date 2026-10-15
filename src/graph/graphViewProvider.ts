@@ -4,6 +4,7 @@ import { FileIndexService } from '../wikilink/fileIndexService.js';
 import { MermaidFileIndexService } from './mermaidFileIndexService.js';
 import { GraphDataService } from './graphDataService.js';
 import { getNonce, isMarkdownFile, isMermaidFile } from '../utils.js';
+import { splitIndexPath } from '../workspacePaths.js';
 
 type FileKind = 'markdown' | 'mermaid';
 
@@ -117,7 +118,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
             break;
           case 'revealInExplorer':
             if (msg.kind) {
-              this.handleRevealInExplorer(msg.folderPath || '', msg.kind);
+              this.handleRevealInExplorer(msg.folderPath || '');
             }
             break;
           case 'refresh': {
@@ -199,7 +200,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
       fileName += ext;
     }
 
-    const folderUri = this.resolveWorkspaceFolderUri(folderPath, kind);
+    const folderUri = this.resolveWorkspaceFolderUri(folderPath);
     if (!folderUri) {
       vscode.window.showErrorMessage('Could not resolve the target folder.');
       return;
@@ -222,38 +223,28 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
     await vscode.commands.executeCommand('vscode.open', fileUri);
   }
 
-  private handleRevealInExplorer(folderPath: string, kind: FileKind): void {
-    const folderUri = this.resolveWorkspaceFolderUri(folderPath, kind);
+  private handleRevealInExplorer(folderPath: string): void {
+    const folderUri = this.resolveWorkspaceFolderUri(folderPath);
     if (folderUri) {
       vscode.commands.executeCommand('revealInExplorer', folderUri);
     }
   }
 
   /**
-   * Resolve a workspace-relative folder path ('' for the root) to a URI.
-   *
-   * A bare `folderPath` string doesn't say which workspace folder it belongs
-   * to in a multi-root workspace — `relativePath` is computed per-file
-   * against that file's OWN root (see FileIndexService/MermaidFileIndexService
-   * getRelativePath), so two roots can produce identical-looking relative
-   * paths. Resolve the root from an actual indexed file under this folder
-   * instead of always assuming workspaceFolders[0].
+   * Resolve an index folder path ('' for the root) to a URI. In a multi-root
+   * workspace index paths start with the workspace folder's name (see
+   * workspacePaths), so that prefix picks the folder; '' falls back to the
+   * first workspace folder.
    */
-  private resolveWorkspaceFolderUri(folderPath: string, kind: FileKind): vscode.Uri | undefined {
-    const files = kind === 'markdown'
-      ? this.fileIndexService.getAllFiles()
-      : this.mermaidFileIndexService.getAllFiles();
-    const prefix = folderPath ? folderPath + '/' : '';
-    const match = files.find(f => f.relativePath.startsWith(prefix));
-
-    const root = match
-      ? vscode.workspace.getWorkspaceFolder(match.uri)
-      : vscode.workspace.workspaceFolders?.[0];
+  private resolveWorkspaceFolderUri(folderPath: string): vscode.Uri | undefined {
+    const split = folderPath ? splitIndexPath(folderPath) : undefined;
+    const root = split?.folder ?? vscode.workspace.workspaceFolders?.[0];
     if (!root) {
       return undefined;
     }
 
-    const folderUri = folderPath ? vscode.Uri.joinPath(root.uri, folderPath) : root.uri;
+    const rest = split ? split.rest : folderPath;
+    const folderUri = rest ? vscode.Uri.joinPath(root.uri, rest) : root.uri;
 
     // Defense in depth: joinPath normalizes '..' segments, so a crafted
     // folderPath could otherwise resolve outside the workspace root.

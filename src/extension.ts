@@ -9,6 +9,7 @@ import { LanguageToolCodeActionProvider } from './codeActionsProvider.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
 import { handleWillRenameFiles } from './wikilink/renamePropagation.js';
 import { BrokenLinkDiagnostics } from './wikilink/brokenLinkDiagnostics.js';
+import { getWorkspacePath } from './workspacePaths.js';
 import { GraphDataService } from './graph/graphDataService.js';
 import { GraphViewProvider } from './graph/graphViewProvider.js';
 import { MermaidFileIndexService } from './graph/mermaidFileIndexService.js';
@@ -201,23 +202,9 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!uri) {
       return undefined;
     }
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (!folder) {
-      return undefined;
-    }
-    // Slice by folder.uri.fsPath's character length rather than re-deriving
-    // containment with a startsWith()/path.relative() comparison — see
-    // FileIndexService.getRelativePath for why: getWorkspaceFolder() above
-    // has already determined uri belongs under folder using VS Code's own
-    // platform-specific case rules, and a case difference never changes
-    // string length, so trusting that determination and slicing by length
-    // is correct regardless of platform.
-    const relative = uri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]/, '');
-    if (!relative) {
-      return undefined;
-    }
-    const relativePath = relative.replace(/\\/g, '/');
-    return relativePath;
+    // Must match the index keys exactly (folder-name prefix included in a
+    // multi-root workspace), since the sidebar and graph compare against them.
+    return getWorkspacePath(uri)?.indexPath;
   };
 
   // 9. Register the graph sidebar panel

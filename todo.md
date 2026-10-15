@@ -315,5 +315,7 @@
 - [x] Non-markdown targets (`[[metrics/x.sql]]`) open from disk; unresolved links styled in the preview; broken-link diagnostics (setting)
 - [x] Docs: README section, package.json description/keywords, CHANGELOG
 - [x] Tests: test memory repo + node:test cases
-- [ ] PR feature/memory-repo-links → develop, self-review
-- [ ] fix/multi-root-index-keys: index keys collide across workspace folders (stacked PR)
+- [x] PR #83 feature/memory-repo-links → develop, self-review (2 fixes: stale link-status post after dispose; suggestion filtering)
+- [x] fix/multi-root-index-keys: index keys collide across workspace folders (stacked PR)
+- [ ] Manual Extension Development Host check: folder rename inside a memory repo, broken-link styling, multi-root with two memory repos
+- [ ] Merge #83 then the stacked fix PR; version bump + release

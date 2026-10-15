@@ -774,3 +774,11 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 **Not verified.** No Extension Development Host run, so the real VS Code ordering of `onWillRenameFiles` edits vs. the rename (edits target pre-rename URIs, as the old code did) and the preview styling are untested by hand. `npm run lint` can't run — eslint isn't installed (pre-existing).
 
 **Known limitation.** Two memory repos opened as separate workspace roots collide in the index (keys omit the folder name) — fixed separately on fix/multi-root-index-keys.
+
+## 2026-10-15 Multi-root index keys (fix/multi-root-index-keys, stacked on #83)
+
+**Bug.** Both file indexes keyed files by their path inside their workspace folder, without the folder. In a multi-root workspace, `memory-alice/MEMORY.md` and `memory-bob/MEMORY.md` (each its own workspace folder) both became `MEMORY.md` and the second overwrote the first. Adding a workspace folder also never indexed its existing files.
+
+**Fix.** New `src/workspacePaths.ts`: in a multi-root workspace an index path is prefixed with the workspace folder's name (duplicate folder names get ` (n)`); single-folder workspaces are unchanged. Exclude globs still match the path inside the folder. Used by FileIndexService, MermaidFileIndexService, `getActiveFilePath` (extension.ts) and the sidebar's create/reveal folder lookup (`splitIndexPath`, which replaces the old find-a-file-under-it heuristic). Both indexes rescan on `onDidChangeWorkspaceFolders`. `linkResolution.ts` gains `folderRoots` and a resolution step between memory root and workspace root, so `[[docs/x]]` keeps resolving inside the linking file's own workspace folder; stem ties prefer that folder; autocomplete and rename rewrites use folder-relative paths.
+
+**Verification.** check-types/compile clean; 160 tests (6 new multi-root cases). Host check with a two-folder mock workspace (memory-john + memory-bob as separate roots): 10 files indexed with prefixes, per-repo backlinks, `.sql` link resolves to the right folder, no cross-repo graph edges. Single-root host check re-run unchanged.

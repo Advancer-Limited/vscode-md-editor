@@ -43,6 +43,7 @@ export async function handleWillRenameFiles(
   const oldIndex = fileIndexService.getLinkIndex();
   const newIndex = buildLinkIndex(
     fileIndexService.getAllFiles().map(e => moved.get(e.relativePath) ?? e.relativePath),
+    oldIndex.folderRoots.values(),
   );
 
   // Files that might hold an affected link: everything linking to a moved

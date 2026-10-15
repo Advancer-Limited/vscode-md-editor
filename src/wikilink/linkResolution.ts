@@ -6,8 +6,10 @@
  *   1. From the source file's memory root: the nearest ancestor folder that
  *      contains a MEMORY.md (the Agent Memory Repo spec, where `[[path]]` is
  *      relative to the memory repo's root).
- *   2. From the workspace root, so `[[folder/note]]` works in any workspace.
- *   3. By filename stem (`[[note]]`), the original Obsidian-style lookup.
+ *   2. In a multi-root workspace, from the source file's workspace folder.
+ *   3. From the workspace root, so `[[folder/note]]` works in any workspace
+ *      (in a multi-root workspace, paths there start with the folder name).
+ *   4. By filename stem (`[[note]]`), the original Obsidian-style lookup.
  *
  * A `.md`/`.markdown` extension on the target is optional. Matching is
  * case-insensitive throughout, as it always has been for stems.
@@ -23,9 +25,14 @@ export interface LinkIndex {
   stemToPaths: Map<string, Set<string>>;
   /** Lowercase folder containing a MEMORY.md ('' = workspace root) -> folder as written. */
   memoryRoots: Map<string, string>;
+  /**
+   * Multi-root workspaces only: lowercase workspace folder prefix (the first
+   * path segment of every path) -> as written. Empty for a single folder.
+   */
+  folderRoots: Map<string, string>;
 }
 
-export type ResolvedVia = 'memoryRoot' | 'workspace' | 'stem';
+export type ResolvedVia = 'memoryRoot' | 'folderRoot' | 'workspace' | 'stem';
 
 export interface ResolvedLink {
   path: string;
@@ -46,12 +53,17 @@ export interface LinkRewrite {
   newText: string;
 }
 
-export function createLinkIndex(): LinkIndex {
-  return { pathKeyToPath: new Map(), stemToPaths: new Map(), memoryRoots: new Map() };
+/** `folderRoots`: the workspace folder prefixes of a multi-root workspace. */
+export function createLinkIndex(folderRoots: Iterable<string> = []): LinkIndex {
+  const roots = new Map<string, string>();
+  for (const root of folderRoots) {
+    roots.set(root.toLowerCase(), root);
+  }
+  return { pathKeyToPath: new Map(), stemToPaths: new Map(), memoryRoots: new Map(), folderRoots: roots };
 }
 
-export function buildLinkIndex(paths: Iterable<string>): LinkIndex {
-  const index = createLinkIndex();
+export function buildLinkIndex(paths: Iterable<string>, folderRoots: Iterable<string> = []): LinkIndex {
+  const index = createLinkIndex(folderRoots);
   for (const p of paths) {
     addToLinkIndex(index, p);
   }
@@ -175,6 +187,20 @@ export function findMemoryRoot(relativePath: string, index: LinkIndex): string |
   }
 }
 
+/**
+ * Lowercase key of the workspace folder `relativePath` is in, for a
+ * multi-root workspace (where every path starts with its folder's prefix);
+ * undefined in a single-folder workspace.
+ */
+export function findFolderRoot(relativePath: string, index: LinkIndex): string | undefined {
+  const slash = relativePath.indexOf('/');
+  if (slash === -1) {
+    return undefined;
+  }
+  const first = relativePath.slice(0, slash).toLowerCase();
+  return index.folderRoots.has(first) ? first : undefined;
+}
+
 /** Every memory root that contains `relativePath`, nearest first. */
 export function memoryRootsContaining(relativePath: string, index: LinkIndex): string[] {
   const roots: string[] = [];
@@ -212,6 +238,16 @@ export function resolveWikilinkTarget(
     }
   }
 
+  // In a multi-root workspace, a path is first tried inside the linking
+  // file's own workspace folder — `[[docs/x]]` means that folder's docs/.
+  const folderRoot = fromPath !== undefined ? findFolderRoot(fromPath, index) : undefined;
+  if (folderRoot !== undefined && folderRoot !== root) {
+    const p = index.pathKeyToPath.get(joinRoot(folderRoot, key));
+    if (p !== undefined) {
+      return { path: p, via: 'folderRoot' };
+    }
+  }
+
   const p = index.pathKeyToPath.get(key);
   if (p !== undefined) {
     return { path: p, via: 'workspace' };
@@ -224,7 +260,8 @@ export function resolveWikilinkTarget(
       // time, instead of to whichever file happened to be indexed last.
       const sorted = Array.from(candidates).sort();
       const inRoot = root !== undefined ? sorted.find(c => isUnder(c, root)) : undefined;
-      return { path: inRoot ?? sorted[0], via: 'stem' };
+      const inFolder = folderRoot !== undefined ? sorted.find(c => isUnder(c, folderRoot)) : undefined;
+      return { path: inRoot ?? inFolder ?? sorted[0], via: 'stem' };
     }
   }
 
@@ -251,8 +288,17 @@ export function linkCandidatePaths(
   if (root !== undefined && root !== '') {
     candidates.push(joinRoot(index.memoryRoots.get(root) ?? root, normalized));
   }
+  const folderRoot = fromPath !== undefined ? findFolderRoot(fromPath, index) : undefined;
+  if (folderRoot !== undefined && folderRoot !== root) {
+    candidates.push(joinRoot(index.folderRoots.get(folderRoot) ?? folderRoot, normalized));
+  }
   candidates.push(normalized);
   return candidates;
+}
+
+/** `targetPath` relative to the root `rootKey` (lowercase), without its markdown extension. */
+function pathFromRoot(targetPath: string, rootKey: string): string {
+  return stripMarkdownExtension(rootKey ? targetPath.slice(rootKey.length + 1) : targetPath);
 }
 
 /** True if the target names a non-markdown file (has some other extension). */
@@ -268,7 +314,8 @@ export function hasNonMarkdownExtension(target: string): boolean {
 /**
  * The link text to write for `targetPath` from `fromPath`: the path from the
  * shared memory root (spec style), else the bare stem when it's unambiguous,
- * else the workspace path. Always verified to resolve back to `targetPath`.
+ * else the path from the shared workspace folder, else the full path.
+ * Always verified to resolve back to `targetPath`.
  */
 export function preferredLinkText(
   targetPath: string,
@@ -280,7 +327,7 @@ export function preferredLinkText(
 
   const root = fromPath !== undefined ? findMemoryRoot(fromPath, index) : undefined;
   if (root !== undefined && isUnder(targetPath, root)) {
-    const rel = stripMarkdownExtension(root ? targetPath.slice(root.length + 1) : targetPath);
+    const rel = pathFromRoot(targetPath, root);
     if (resolvesBack(rel)) {
       return rel;
     }
@@ -289,6 +336,14 @@ export function preferredLinkText(
   const stem = stemOf(targetPath);
   if ((index.stemToPaths.get(stem.toLowerCase())?.size ?? 0) === 1 && resolvesBack(stem)) {
     return stem;
+  }
+
+  const folderRoot = fromPath !== undefined ? findFolderRoot(fromPath, index) : undefined;
+  if (folderRoot !== undefined && isUnder(targetPath, folderRoot)) {
+    const rel = pathFromRoot(targetPath, folderRoot);
+    if (resolvesBack(rel)) {
+      return rel;
+    }
   }
 
   return stripMarkdownExtension(targetPath);
@@ -337,10 +392,12 @@ export function computeLinkRewrites(
     let text: string | undefined;
     if (before.via === 'stem') {
       text = stemOf(newTarget);
-    } else if (before.via === 'memoryRoot') {
-      const root = findMemoryRoot(sourceNewPath, newIndex);
+    } else if (before.via === 'memoryRoot' || before.via === 'folderRoot') {
+      const root = before.via === 'memoryRoot'
+        ? findMemoryRoot(sourceNewPath, newIndex)
+        : findFolderRoot(sourceNewPath, newIndex);
       if (root !== undefined && isUnder(newTarget, root)) {
-        text = stripMarkdownExtension(root ? newTarget.slice(root.length + 1) : newTarget);
+        text = pathFromRoot(newTarget, root);
       }
     } else {
       text = stripMarkdownExtension(newTarget);
