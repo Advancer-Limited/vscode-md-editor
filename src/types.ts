@@ -77,6 +77,8 @@ export type ExtensionToWebviewMessage =
   | { type: 'update'; text: string }
   | { type: 'setTheme'; theme: 'light' | 'dark' | 'auto' }
   | { type: 'wikilinkSuggestions'; suggestions: WikilinkSuggestion[] }
+  /** Link targets (as written, trimmed) in this document that resolve to no file. */
+  | { type: 'wikilinkStatus'; unresolved: string[] }
   | { type: 'grammarResults'; matches: GrammarMatch[] }
   // Acknowledges a webview 'edit' message has been fully processed (applied
   // or rejected) by the host, so the webview knows when it's safe to stop
@@ -100,6 +102,8 @@ export interface WikilinkSuggestion {
   stem: string;
   relativePath: string;
   folder: string;
+  /** Text to put inside [[...]] — a path from the memory root, a unique stem, or a workspace path */
+  linkText: string;
 }
 
 // ========================================

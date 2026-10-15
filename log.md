@@ -755,3 +755,22 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 - PR #81: develop → master release merge.
 - Published `advancer-limited.vscode-md-editor` v1.5.0 from master (vsce reported DONE; Marketplace listing lags a few minutes).
 - Dev-host testing tip: the default profile's other markdown extensions claim `.md`; launch with an isolated `--user-data-dir`/`--extensions-dir` and a `workbench.editorAssociations` setting for `vscodeMdEditor.editor`.
+
+## 2026-10-15 Agent Memory Repo link compatibility (feature/memory-repo-links)
+
+**Why.** The [Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo) spec (Cognition, MIT) keeps agent memory in a git repo: `MEMORY.md` entry point, one-line bullets with `[key: value]` metadata, and `[[path]]` links relative to the repo root (`.md` omitted, other extensions kept). The extension resolved links by filename stem only, so `[[projects/payments]]` was unresolved, backlinks/graph missed it, and moves/folder renames broke links.
+
+**What changed.**
+- New pure module `src/wikilink/linkResolution.ts` (no imports, so node:test loads it directly): `LinkIndex` (path key, stem -> paths, memory roots), resolution order memory root -> workspace root -> stem (sorted, prefers the source's memory root), `..` rejected, `preferredLinkText` (autocomplete), `computeLinkRewrites` (rename planner: rewrites only links whose current text would stop reaching the same file, in the style written, keeping a typed `.md`; verified against a post-move index).
+- `wikilinkParser.ts`: occurrences carry `targetOffset`; `findWikilinkStemRanges` and `resolveWikilinkTarget` removed (moved/replaced). `tests/renameMatch.test.mjs` replaced by `tests/linkResolution.test.mjs` (26 tests) over a test memory workspace in `tests/fixtures/memory-workspace/` (memory-john from the spec README examples, memory-bob, Obsidian-style notes/).
+- `fileIndexService.ts`: link index replaces `stemToPath`; backlinks keyed by `linkKey` and `getBacklinksFor(entry)` filters by actual resolution (fixes same-stem files sharing backlinks); `resolveWikilink(target, fromPath)`, `resolveLinkUri` (index, else disk for `[[x.sql]]`), `getLinkText`, `getFilesUnder`; folder rename/delete events now expanded (VS Code sends one event per folder).
+- `renamePropagation.ts`: expands folder renames, handles pure moves, rewrites the moved files' own links too.
+- `brokenLinkDiagnostics.ts` + setting `vscodeMdEditor.wikilinks.brokenLinkDiagnostics` (`memoryRepos` default / `all` / `off`).
+- Editor: `wikilinkStatus` message marks unresolved links (`.wikilink-broken`, class toggle only — no DOM rebuild); clicking a broken link shows a message; autocomplete/link picker insert `linkText` and match on path.
+- Docs: README (feature bullet, "Agent Memory Repos" usage section, settings table), package.json description + new `keywords`, CHANGELOG [Unreleased].
+
+**Verification.** check-types/compile clean; 154 tests green. Webview functions run from the shipped editor.js in a vm DOM shim. Host side (FileIndexService, GraphDataService, handleWillRenameFiles) bundled with esbuild against a mock `vscode` and driven over a copy of the test workspace: backlinks, graph edges, `.sql` link, folder rename edits + re-index, folder delete. Cross-checked with the third-party `agent-memory-repo-lint`: agrees on the one deliberate broken link; it also flags `[[a|alias]]` and links inside code fences, which the spec doesn't define and we support/skip.
+
+**Not verified.** No Extension Development Host run, so the real VS Code ordering of `onWillRenameFiles` edits vs. the rename (edits target pre-rename URIs, as the old code did) and the preview styling are untested by hand. `npm run lint` can't run — eslint isn't installed (pre-existing).
+
+**Known limitation.** Two memory repos opened as separate workspace roots collide in the index (keys omit the folder name) — fixed separately on fix/multi-root-index-keys.

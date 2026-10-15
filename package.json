@@ -1,7 +1,7 @@
 {
   "name": "vscode-md-editor",
   "displayName": "VS Code MD Editor",
-  "description": "A rich Markdown editor with live preview, Mermaid diagrams, task checklists, wikilinks, graph visualizer, version diff, and LanguageTool grammar checking",
+  "description": "A rich Markdown editor with live preview, Mermaid diagrams, task checklists, wikilinks, graph visualizer, version diff, LanguageTool grammar checking, and Agent Memory Repo support",
   "version": "1.5.0",
   "license": "MIT",
   "author": {
@@ -23,6 +23,22 @@
   },
   "categories": [
     "Other"
+  ],
+  "keywords": [
+    "markdown",
+    "wysiwyg",
+    "wikilinks",
+    "backlinks",
+    "obsidian",
+    "graph",
+    "mermaid",
+    "grammar",
+    "languagetool",
+    "agent memory repo",
+    "agent-memory-repo",
+    "agent memory",
+    "ai memory",
+    "memory.md"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
@@ -181,6 +197,21 @@
             "**/.claude/worktrees/**"
           ],
           "description": "Glob patterns for folders the Markdown and Mermaid file lists (and the link graph) should ignore. Your files.exclude and search.exclude settings are honoured on top of these. Nested copies of a repository — such as the git worktrees Claude Code creates under .claude/worktrees — otherwise make every document appear once per copy."
+        },
+        "vscodeMdEditor.wikilinks.brokenLinkDiagnostics": {
+          "type": "string",
+          "enum": [
+            "memoryRepos",
+            "all",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Only in Agent Memory Repo folders (a folder with a MEMORY.md at its root), where every link is expected to resolve",
+            "In every markdown file",
+            "Never"
+          ],
+          "default": "memoryRepos",
+          "description": "Where to report [[wikilinks]] that don't resolve to a file as warnings in the Problems panel"
         },
         "vscodeMdEditor.graph.defaultMode": {
           "type": "string",

@@ -1,5 +1,18 @@
 import * as vscode from 'vscode';
-import { parseWikilinks, resolveWikilinkTarget, parseTags, WikilinkOccurrence } from './wikilinkParser.js';
+import { parseWikilinks, parseTags, WikilinkOccurrence } from './wikilinkParser.js';
+import {
+  LinkIndex,
+  ResolvedLink,
+  createLinkIndex,
+  addToLinkIndex,
+  removeFromLinkIndex,
+  resolveWikilinkTarget,
+  linkKey,
+  pathKey,
+  memoryRootsContaining,
+  linkCandidatePaths,
+  preferredLinkText,
+} from './linkResolution.js';
 import { getFileStem, isMarkdownFile } from '../utils.js';
 import { getExcludePatterns, affectsExcludeSettings } from '../fileExclusions.js';
 import { matchesAnyGlob, buildFindFilesExclude } from '../globMatch.js';
@@ -23,13 +36,14 @@ export interface FileEntry {
 }
 
 export type FileIndex = Map<string, FileEntry>;
+/** Normalised link target (see linkKey) -> relativePaths of files containing such a link. */
 export type BacklinkIndex = Map<string, Set<string>>;
 
 export class FileIndexService implements vscode.Disposable {
   private fileIndex: FileIndex = new Map();
   private backlinkIndex: BacklinkIndex = new Map();
-  /** Lowercase stem -> relativePath for wikilink resolution */
-  private stemToPath: Map<string, string> = new Map();
+  /** Path, stem and memory-root lookups for wikilink resolution */
+  private linkIndex: LinkIndex = createLinkIndex();
 
   private _onDidUpdateIndex = new vscode.EventEmitter<void>();
   public readonly onDidUpdateIndex = this._onDidUpdateIndex.event;
@@ -89,7 +103,7 @@ export class FileIndexService implements vscode.Disposable {
     this.excludePatterns = getExcludePatterns();
     this.fileIndex.clear();
     this.backlinkIndex.clear();
-    this.stemToPath.clear();
+    this.linkIndex = createLinkIndex();
     await this.scan();
     this._onDidUpdateIndex.fire();
   }
@@ -126,6 +140,12 @@ export class FileIndexService implements vscode.Disposable {
           if (isMarkdownFile(uri.fsPath)) {
             this.removeFromIndex(uri);
             changed = true;
+          } else {
+            // A deleted folder arrives as one event for the folder itself.
+            for (const entry of this.getFilesUnder(uri)) {
+              this.removeFromIndex(entry.uri);
+              changed = true;
+            }
           }
         }
         if (changed) {
@@ -143,6 +163,16 @@ export class FileIndexService implements vscode.Disposable {
             this.removeFromIndex(oldUri);
             if (isMarkdownFile(newUri.fsPath)) {
               indexPromises.push(this.indexFile(newUri));
+            }
+          } else {
+            // A renamed or moved folder arrives as one event for the folder,
+            // not one per file inside it.
+            const inside = this.getFilesUnder(oldUri);
+            if (inside.length > 0) {
+              for (const entry of inside) {
+                this.removeFromIndex(entry.uri);
+              }
+              indexPromises.push(this.indexFolder(newUri));
             }
           }
         }
@@ -304,16 +334,28 @@ export class FileIndexService implements vscode.Disposable {
     };
 
     this.fileIndex.set(relativePath, entry);
-    this.stemToPath.set(stem.toLowerCase(), relativePath);
+    addToLinkIndex(this.linkIndex, relativePath);
 
     // Add new backlink entries
     for (const link of outgoingLinks) {
-      const targetStem = link.target.toLowerCase();
-      if (!this.backlinkIndex.has(targetStem)) {
-        this.backlinkIndex.set(targetStem, new Set());
+      const key = linkKey(link.target);
+      if (key === undefined) {
+        continue;
       }
-      this.backlinkIndex.get(targetStem)!.add(relativePath);
+      if (!this.backlinkIndex.has(key)) {
+        this.backlinkIndex.set(key, new Set());
+      }
+      this.backlinkIndex.get(key)!.add(relativePath);
     }
+  }
+
+  /** Index every markdown file under a folder (after a folder rename). */
+  private async indexFolder(folderUri: vscode.Uri): Promise<void> {
+    const uris = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(folderUri, '**/*.{md,markdown}'),
+      buildFindFilesExclude(this.excludePatterns),
+    );
+    await Promise.all(uris.map(uri => this.indexFile(uri)));
   }
 
   /** Remove a file from the index. */
@@ -326,12 +368,7 @@ export class FileIndexService implements vscode.Disposable {
     const entry = this.fileIndex.get(relativePath);
     if (entry) {
       this.removeBacklinks(relativePath, entry.outgoingLinks);
-      // Only drop the stem->path mapping if it still points at THIS file —
-      // another file sharing the same stem may currently own the mapping.
-      const stemKey = entry.stem.toLowerCase();
-      if (this.stemToPath.get(stemKey) === relativePath) {
-        this.stemToPath.delete(stemKey);
-      }
+      removeFromLinkIndex(this.linkIndex, relativePath);
       this.fileIndex.delete(relativePath);
     }
   }
@@ -339,12 +376,15 @@ export class FileIndexService implements vscode.Disposable {
   /** Remove backlink entries for a file's outgoing links. */
   private removeBacklinks(sourcePath: string, links: WikilinkOccurrence[]): void {
     for (const link of links) {
-      const targetStem = link.target.toLowerCase();
-      const backlinks = this.backlinkIndex.get(targetStem);
+      const key = linkKey(link.target);
+      if (key === undefined) {
+        continue;
+      }
+      const backlinks = this.backlinkIndex.get(key);
       if (backlinks) {
         backlinks.delete(sourcePath);
         if (backlinks.size === 0) {
-          this.backlinkIndex.delete(targetStem);
+          this.backlinkIndex.delete(key);
         }
       }
     }
@@ -364,16 +404,32 @@ export class FileIndexService implements vscode.Disposable {
     return this.fileIndex.get(relativePath);
   }
 
-  /** Get all files that link TO a given stem. */
-  public getBacklinksFor(stem: string): FileEntry[] {
-    const backlinks = this.backlinkIndex.get(stem.toLowerCase());
-    if (!backlinks) {
-      return [];
+  /**
+   * Get all files with a link that resolves TO this file. Candidates come
+   * from every way a link could name it — its stem, its workspace path and
+   * its path from each memory root containing it — and are kept only if one
+   * of their links actually resolves here, so two files sharing a stem don't
+   * claim each other's backlinks.
+   */
+  public getBacklinksFor(target: FileEntry): FileEntry[] {
+    const keys = new Set<string>([target.stem.toLowerCase(), pathKey(target.relativePath)]);
+    for (const root of memoryRootsContaining(target.relativePath, this.linkIndex)) {
+      keys.add(pathKey(root ? target.relativePath.slice(root.length + 1) : target.relativePath));
     }
+
+    const sources = new Set<string>();
+    for (const key of keys) {
+      for (const source of this.backlinkIndex.get(key) ?? []) {
+        sources.add(source);
+      }
+    }
+
     const results: FileEntry[] = [];
-    for (const path of backlinks) {
-      const entry = this.fileIndex.get(path);
-      if (entry) {
+    for (const source of sources) {
+      const entry = this.fileIndex.get(source);
+      if (entry && entry.outgoingLinks.some(
+        link => this.resolveWikilink(link.target, source) === target.relativePath,
+      )) {
         results.push(entry);
       }
     }
@@ -417,19 +473,72 @@ export class FileIndexService implements vscode.Disposable {
     return results;
   }
 
-  /** Resolve a wikilink target to a relativePath. */
-  public resolveWikilink(target: string): string | undefined {
-    return resolveWikilinkTarget(target, this.stemToPath);
+  /**
+   * Resolve a wikilink target to the relativePath of an indexed markdown
+   * file. `fromPath` is the relativePath of the file containing the link —
+   * needed for links relative to a memory root (a folder with a MEMORY.md).
+   */
+  public resolveWikilink(target: string, fromPath?: string): string | undefined {
+    return this.resolveWikilinkDetailed(target, fromPath)?.path;
+  }
+
+  public resolveWikilinkDetailed(target: string, fromPath?: string): ResolvedLink | undefined {
+    return resolveWikilinkTarget(target, fromPath, this.linkIndex);
+  }
+
+  /**
+   * Resolve a link to a URI: an indexed markdown file, or else any existing
+   * file the target names (e.g. `[[metrics/query.sql]]`). `fromUri` is the
+   * document containing the link.
+   */
+  public async resolveLinkUri(target: string, fromUri: vscode.Uri): Promise<vscode.Uri | undefined> {
+    const fromPath = this.getRelativePath(fromUri);
+    const resolved = this.resolveWikilink(target, fromPath);
+    if (resolved) {
+      return this.fileIndex.get(resolved)?.uri;
+    }
+    const folder = vscode.workspace.getWorkspaceFolder(fromUri);
+    if (!folder) {
+      return undefined;
+    }
+    for (const candidate of linkCandidatePaths(target, fromPath, this.linkIndex)) {
+      const uri = vscode.Uri.joinPath(folder.uri, candidate);
+      try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (stat.type & vscode.FileType.File) {
+          return uri;
+        }
+      } catch {
+        // Not there — try the next candidate.
+      }
+    }
+    return undefined;
+  }
+
+  /** The link text to insert for `targetPath` in a link written in `fromPath`. */
+  public getLinkText(targetPath: string, fromPath: string | undefined): string {
+    return preferredLinkText(targetPath, fromPath, this.linkIndex);
+  }
+
+  /** The current link index (read-only use — rename planning). */
+  public getLinkIndex(): LinkIndex {
+    return this.linkIndex;
+  }
+
+  /** Indexed files inside a folder URI. */
+  public getFilesUnder(folderUri: vscode.Uri): FileEntry[] {
+    const folderPath = this.getRelativePath(folderUri);
+    if (folderPath === undefined) {
+      // The workspace folder itself, or somewhere outside the workspace.
+      return [];
+    }
+    const prefix = folderPath.toLowerCase() + '/';
+    return this.getAllFiles().filter(e => e.relativePath.toLowerCase().startsWith(prefix));
   }
 
   /** Get all file stems for autocomplete. */
   public getAllStems(): string[] {
     return Array.from(this.fileIndex.values()).map(e => e.stem);
-  }
-
-  /** Get the stemToPath map (for external use). */
-  public getStemToPathMap(): Map<string, string> {
-    return this.stemToPath;
   }
 
   // ========================================
@@ -454,7 +563,7 @@ export class FileIndexService implements vscode.Disposable {
    * the full absolute path AS the "relative" path, indexed as a second,
    * bogus entry for an already-indexed file.
    */
-  private getRelativePath(uri: vscode.Uri): string | undefined {
+  public getRelativePath(uri: vscode.Uri): string | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) {
       return undefined;

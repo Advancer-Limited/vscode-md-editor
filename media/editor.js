@@ -90,6 +90,9 @@
   let currentGrammarMatches = [];
   let grammarTooltip = null;
 
+  // [[link]] targets in this document that the host found no file for
+  let unresolvedWikilinks = new Set();
+
   // ================================================
   // Turndown (HTML → Markdown) initialization
   // ================================================
@@ -394,6 +397,11 @@
         }
         break;
       }
+      case 'wikilinkStatus': {
+        unresolvedWikilinks = new Set(message.unresolved || []);
+        markBrokenWikilinks();
+        break;
+      }
       case 'grammarResults': {
         currentGrammarMatches = message.matches || [];
         // Reset the grammar button
@@ -684,10 +692,10 @@
   document.getElementById('btn-link')?.addEventListener('click', () => {
     // Request all wikilink suggestions (empty prefix = all files)
     linkPickerMode = true;
-    linkPickerCallback = (stem) => {
+    linkPickerCallback = (linkText) => {
       if (isPreviewMode()) {
         // Insert wikilink as HTML in contenteditable
-        const wikilinkHtml = `<a class="wikilink" data-target="${escapeHtml(stem)}">${escapeHtml(stem)}</a>&nbsp;`;
+        const wikilinkHtml = `<a class="wikilink" data-target="${escapeHtml(linkText)}">${escapeHtml(linkText)}</a>&nbsp;`;
         document.execCommand('insertHTML', false, wikilinkHtml);
         // Sync back to markdown
         const bodyMarkdown = turndownService.turndown(previewContent.innerHTML);
@@ -699,7 +707,7 @@
       } else {
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        const insertion = `[[${stem}]]`;
+        const insertion = `[[${linkText}]]`;
         textarea.value =
           textarea.value.substring(0, start) + insertion + textarea.value.substring(end);
         textarea.selectionStart = textarea.selectionEnd = start + insertion.length;
@@ -922,9 +930,7 @@
 
     function filter(prefix) {
       const lower = prefix.toLowerCase();
-      filteredSuggestions = suggestions.filter(s =>
-        s.stem.toLowerCase().includes(lower)
-      );
+      filteredSuggestions = suggestions.filter(s => suggestionMatches(s, lower));
       selectedIndex = Math.min(selectedIndex, Math.max(0, filteredSuggestions.length - 1));
       render();
     }
@@ -951,7 +957,7 @@
       const cursorPos = textarea.selectionStart;
       const before = textarea.value.substring(0, triggerOffset);
       const after = textarea.value.substring(cursorPos);
-      const insertion = '[[' + item.stem + ']]';
+      const insertion = '[[' + (item.linkText || item.stem) + ']]';
       textarea.value = before + insertion + after;
       textarea.selectionStart = textarea.selectionEnd = triggerOffset + insertion.length;
       textarea.focus();
@@ -1013,6 +1019,12 @@
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  /** Match a link suggestion by file name or by the path it would insert. */
+  function suggestionMatches(s, lowerQuery) {
+    return s.stem.toLowerCase().includes(lowerQuery) ||
+      (s.linkText || '').toLowerCase().includes(lowerQuery);
+  }
+
   // Link picker overlay (reuses autocomplete styling)
   function showLinkPicker(suggestions, onSelect) {
     const existing = document.getElementById('link-picker-overlay');
@@ -1051,7 +1063,7 @@
 
     function confirm() {
       if (filtered.length > 0) {
-        onSelect(filtered[selectedIndex].stem);
+        onSelect(filtered[selectedIndex].linkText || filtered[selectedIndex].stem);
       }
       overlay.remove();
       document.removeEventListener('click', outsideClick);
@@ -1066,7 +1078,7 @@
 
     searchInput.addEventListener('input', () => {
       const q = searchInput.value.toLowerCase();
-      filtered = suggestions.filter(s => s.stem.toLowerCase().includes(q));
+      filtered = suggestions.filter(s => suggestionMatches(s, q));
       selectedIndex = 0;
       render();
     });
@@ -1383,9 +1395,27 @@
     // change (replaceWith keeps the same position) but a later swap would.
     upgradeMermaidBlocks(previewContent);
     applyGrammarHighlights();
+    markBrokenWikilinks();
 
     if (savedCaret) {
       restoreCaretPosition(previewContent, savedCaret);
+    }
+  }
+
+  /**
+   * Flag links the host couldn't resolve. Only toggles a class and title on
+   * the existing anchors — never rebuilds the DOM — so it is safe to run
+   * while the user is typing in Edit mode.
+   */
+  function markBrokenWikilinks() {
+    for (const link of previewContent.querySelectorAll('.wikilink')) {
+      const broken = unresolvedWikilinks.has(link.dataset.target);
+      link.classList.toggle('wikilink-broken', broken);
+      if (broken) {
+        link.title = 'No file found for this link';
+      } else {
+        link.removeAttribute('title');
+      }
     }
   }
 

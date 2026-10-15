@@ -3,21 +3,18 @@
  * Pure functions with no VS Code dependency.
  */
 
-/** Escape regex-special characters in a literal string. */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /** A single parsed wikilink occurrence within a file. */
 export interface WikilinkOccurrence {
   /** Raw text inside [[...]] */
   raw: string;
-  /** Target filename (without extension) */
+  /** Target as written, trimmed — a stem (`note`) or a path (`folder/note`, `folder/note.md`) */
   target: string;
   /** Optional display text after the pipe */
   displayText: string | undefined;
   /** Character offset of the opening [[ in the source text */
   offset: number;
+  /** Character offset of the first character of `target` (after any whitespace inside the brackets) */
+  targetOffset: number;
   /** Total length including [[ and ]] */
   length: number;
   /** Line number (0-based) */
@@ -28,30 +25,6 @@ export interface WikilinkOccurrence {
 
 /** Matches [[target]] and [[target|display text]] */
 export const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|([^\]]*?))?\]\]/g;
-
-/**
- * Find the character ranges of the *stem* portion within [[stem]] and
- * [[stem|display]] occurrences. Matches `stem` case-insensitively and tolerates
- * whitespace inside the brackets (e.g. `[[ Stem ]]`), returning the [start, end)
- * offsets of just the stem so it can be replaced in place during a rename.
- * A multi-word target (e.g. `[[Stem Two]]`) is NOT matched when renaming `Stem`.
- */
-export function findWikilinkStemRanges(
-  text: string,
-  stem: string,
-): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  if (!stem) {
-    return ranges;
-  }
-  const regex = new RegExp(`(\\[\\[\\s*)(${escapeRegex(stem)})(\\s*(?:\\|[^\\]]*)?\\]\\])`, 'gi');
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    const start = match.index + match[1].length;
-    ranges.push({ start, end: start + match[2].length });
-  }
-  return ranges;
-}
 
 /**
  * Compute fenced code block and inline code ranges in the text.
@@ -133,6 +106,7 @@ export function parseWikilinks(text: string): WikilinkOccurrence[] {
 
     const raw = match[1] + (match[2] !== undefined ? '|' + match[2] : '');
     const target = match[1].trim();
+    const targetOffset = offset + 2 + (match[1].length - match[1].trimStart().length);
     const displayText = match[2]?.trim() || undefined;
 
     results.push({
@@ -140,6 +114,7 @@ export function parseWikilinks(text: string): WikilinkOccurrence[] {
       target,
       displayText,
       offset,
+      targetOffset,
       length: match[0].length,
       line,
       column,
@@ -147,20 +122,6 @@ export function parseWikilinks(text: string): WikilinkOccurrence[] {
   }
 
   return results;
-}
-
-/**
- * Resolve a wikilink target to a workspace-relative path.
- * Case-insensitive lookup. Strips a .md or .markdown extension if the user typed it.
- */
-export function resolveWikilinkTarget(
-  target: string,
-  stemToPath: Map<string, string>
-): string | undefined {
-  let normalized = target.trim().toLowerCase();
-  // Strip .md/.markdown extension if present
-  normalized = normalized.replace(/\.(md|markdown)$/, '');
-  return stemToPath.get(normalized);
 }
 
 /**

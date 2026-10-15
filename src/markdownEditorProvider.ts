@@ -3,6 +3,8 @@ import * as path from 'path';
 import { getNonce, computeMinimalEdit, getBrandButtonHtml, toolbarIcon, buildMarkdownPrintHtml } from './utils.js';
 import { WebviewToExtensionMessage, GrammarMatch } from './types.js';
 import { FileIndexService } from './wikilink/fileIndexService.js';
+import { parseWikilinks } from './wikilink/wikilinkParser.js';
+import { hasNonMarkdownExtension } from './wikilink/linkResolution.js';
 import { showAboutDialog } from './about.js';
 import { sweepOldPrintFiles } from './printFiles.js';
 
@@ -88,12 +90,41 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       });
     };
 
+    // Tell the webview which of this document's [[links]] don't resolve, so
+    // the preview can mark them. Debounced: it re-runs on every edit and on
+    // every index update, and resolving a non-markdown target hits the disk.
+    let linkStatusTimer: ReturnType<typeof setTimeout> | undefined;
+    let linkStatusGeneration = 0;
+    const sendLinkStatus = () => {
+      clearTimeout(linkStatusTimer);
+      linkStatusTimer = setTimeout(async () => {
+        const generation = ++linkStatusGeneration;
+        const fromPath = this.fileIndexService.getRelativePath(document.uri);
+        const targets = new Set(parseWikilinks(document.getText()).map(l => l.target));
+        const unresolved: string[] = [];
+        for (const target of targets) {
+          if (this.fileIndexService.resolveWikilink(target, fromPath)) {
+            continue;
+          }
+          if (hasNonMarkdownExtension(target) && await this.fileIndexService.resolveLinkUri(target, document.uri)) {
+            continue;
+          }
+          unresolved.push(target);
+        }
+        if (generation === linkStatusGeneration) {
+          webviewPanel.webview.postMessage({ type: 'wikilinkStatus', unresolved });
+        }
+      }, 300);
+    };
+    const indexUpdateDisposable = this.fileIndexService.onDidUpdateIndex(sendLinkStatus);
+
     // Handle messages from the webview
     const messageDisposable = webviewPanel.webview.onDidReceiveMessage(
       async (message: WebviewToExtensionMessage) => {
         switch (message.type) {
           case 'ready':
             updateWebview();
+            sendLinkStatus();
             return;
 
           case 'edit': {
@@ -157,15 +188,18 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
           case 'requestWikilinkSuggestions': {
             const prefix = message.prefix.toLowerCase();
+            const fromPath = this.fileIndexService.getRelativePath(document.uri);
             const allFiles = this.fileIndexService.getAllFiles();
             const suggestions = allFiles
-              .filter(f => f.stem.toLowerCase().includes(prefix))
-              .slice(0, 20)
               .map(f => ({
                 stem: f.stem,
                 relativePath: f.relativePath,
                 folder: f.folder,
-              }));
+                linkText: this.fileIndexService.getLinkText(f.relativePath, fromPath),
+              }))
+              // Match the path too, so typing `[[projects/pa` finds projects/payments.md.
+              .filter(s => s.stem.toLowerCase().includes(prefix) || s.linkText.toLowerCase().includes(prefix))
+              .slice(0, 20);
             webviewPanel.webview.postMessage({
               type: 'wikilinkSuggestions',
               suggestions,
@@ -174,12 +208,11 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
           }
 
           case 'openWikilink': {
-            const resolved = this.fileIndexService.resolveWikilink(message.target);
-            if (resolved) {
-              const entry = this.fileIndexService.getFileEntry(resolved);
-              if (entry) {
-                vscode.commands.executeCommand('vscode.open', entry.uri);
-              }
+            const uri = await this.fileIndexService.resolveLinkUri(message.target, document.uri);
+            if (uri) {
+              vscode.commands.executeCommand('vscode.open', uri);
+            } else {
+              vscode.window.showInformationMessage(`No file found for [[${message.target}]].`);
             }
             return;
           }
@@ -248,6 +281,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       (e) => {
         if (e.document.uri.toString() === document.uri.toString() && e.contentChanges.length > 0) {
           updateWebview();
+          sendLinkStatus();
         }
       }
     );
@@ -267,6 +301,8 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         this.activeDocument = undefined;
         this._onDidChangeActiveDocument.fire(undefined);
       }
+      clearTimeout(linkStatusTimer);
+      indexUpdateDisposable.dispose();
       messageDisposable.dispose();
       changeDocumentDisposable.dispose();
       visibilityDisposable.dispose();

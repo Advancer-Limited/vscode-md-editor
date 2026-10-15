@@ -1,0 +1,3 @@
+- John coordinates the billing launch [source: https://example.com/sessions/101]
+- Shares a launch deadline with [[projects/website]]
+- Previous plan: [[archive/payments]]

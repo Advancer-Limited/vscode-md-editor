@@ -1,0 +1,3 @@
+- Payments and website share a 2026-10-15 launch deadline [source: https://example.com/sessions/102; added: 2026-09-03]
+- Owners: see [[team_structure]]
+- Launch checklist: [[projects/launch_checklist]]
