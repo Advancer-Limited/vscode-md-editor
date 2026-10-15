@@ -134,7 +134,7 @@ Grammar checking works out of the box with the free LanguageTool API (1500 chara
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `vscodeMdEditor.wikilinks.brokenLinkDiagnostics` | `"memoryRepos"` | Where to report `[[links]]` that don't resolve as Problems-panel warnings: `memoryRepos` (only inside Agent Memory Repo folders, where every link should resolve), `all`, or `off` |
+| `vscodeMdEditor.wikilinks.brokenLinkDiagnostics` | `"memoryRepos"` | Where to report `[[links]]` that don't resolve as Problems-panel warnings: `memoryRepos` (only inside Agent Memory Repo folders, where every link should resolve — if your workspace itself has a `MEMORY.md` at its root, that's the whole workspace), `all`, or `off` |
 
 ### Graph Settings
 

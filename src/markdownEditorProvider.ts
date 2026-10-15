@@ -190,16 +190,17 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             const prefix = message.prefix.toLowerCase();
             const fromPath = this.fileIndexService.getRelativePath(document.uri);
             const allFiles = this.fileIndexService.getAllFiles();
+            // Match the path too, so typing `[[projects/pa` finds projects/payments.md
+            // (the inserted link text is always a part of the path).
             const suggestions = allFiles
+              .filter(f => f.stem.toLowerCase().includes(prefix) || f.relativePath.toLowerCase().includes(prefix))
+              .slice(0, 20)
               .map(f => ({
                 stem: f.stem,
                 relativePath: f.relativePath,
                 folder: f.folder,
                 linkText: this.fileIndexService.getLinkText(f.relativePath, fromPath),
-              }))
-              // Match the path too, so typing `[[projects/pa` finds projects/payments.md.
-              .filter(s => s.stem.toLowerCase().includes(prefix) || s.linkText.toLowerCase().includes(prefix))
-              .slice(0, 20);
+              }));
             webviewPanel.webview.postMessage({
               type: 'wikilinkSuggestions',
               suggestions,
@@ -302,6 +303,8 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         this._onDidChangeActiveDocument.fire(undefined);
       }
       clearTimeout(linkStatusTimer);
+      // A run already awaiting the disk would otherwise post to the disposed webview.
+      linkStatusGeneration++;
       indexUpdateDisposable.dispose();
       messageDisposable.dispose();
       changeDocumentDisposable.dispose();
