@@ -29,10 +29,14 @@ export function workspaceFolderPrefix(folder: vscode.WorkspaceFolder): string {
   if (folders.length <= 1) {
     return '';
   }
-  const firstWithName = folders.find(f => f.name === folder.name);
+  // A .code-workspace file can give a folder any display name, slashes
+  // included — but the prefix must stay a single path segment.
+  const safe = (f: vscode.WorkspaceFolder) => f.name.replace(/[\\/]/g, '-');
+  const safeName = safe(folder);
+  const firstWithName = folders.find(f => safe(f) === safeName);
   const name = firstWithName && firstWithName.index !== folder.index
-    ? `${folder.name} (${folder.index + 1})`
-    : folder.name;
+    ? `${safeName} (${folder.index + 1})`
+    : safeName;
   return name + '/';
 }
 
