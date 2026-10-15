@@ -317,5 +317,5 @@
 - [x] Tests: test memory repo + node:test cases
 - [x] PR #83 feature/memory-repo-links → develop, self-review (2 fixes: stale link-status post after dispose; suggestion filtering)
 - [x] fix/multi-root-index-keys: index keys collide across workspace folders (stacked PR)
-- [ ] Manual Extension Development Host check: folder rename inside a memory repo, broken-link styling, multi-root with two memory repos
+- [x] Real VS Code run (@vscode/test-electron 1.105): folder rename in a memory repo, diagnostics, stem rename, pure move, custom editor open, multi-root with two memory repos — all pass. Preview broken-link styling only checked via DOM shim
 - [ ] Merge #83 then the stacked fix PR; version bump + release
