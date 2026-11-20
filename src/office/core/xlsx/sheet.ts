@@ -19,8 +19,9 @@
 
 import type { ReadOnlyReason } from '../types.js';
 import type { OfficePackage } from '../package.js';
-import type { XmlDoc, XmlElement } from '../xml.js';
-import { attr, child, childrenOf, textContent } from '../xml.js';
+import type { XmlDoc, XmlElement, XmlNode } from '../xml.js';
+import { attr, child, childrenOf, escapeAttr, qnameAt, serialize, textContent } from '../xml.js';
+import type { EditBuilder } from '../edits.js';
 import { partNameFromTarget, readRelationships } from '../opc.js';
 import { LIMITS } from '../limits.js';
 import type { CellRead, CellValue, ColInfo, Range, RowInfo, TableInfo } from './types.js';
@@ -181,6 +182,7 @@ export class Sheet {
   private sharedMasters: Map<number, SharedFormulaMaster> | null = null;
   private tableCache: TableInfo[] | null = null;
   private linkCache: Map<string, string> | null = null;
+  private roAreas: Array<{ range: Range; why: string }> | null = null;
 
   /**
    * Use `Workbook.sheet(id)`; this constructor is for the workbook. Call `rebuildIndex()` (or
@@ -328,6 +330,7 @@ export class Sheet {
       this.sharedMasters = null;
       this.tableCache = null;
       this.linkCache = null;
+      this.roAreas = null;
       const prot = child(root, ns, 'sheetProtection') !== undefined;
       this._readOnlyReason = prot ? 'protected' : layoutBad ? 'unsupported-xml-layout' : over ? 'too-large' : null;
     };
@@ -604,6 +607,287 @@ export class Sheet {
     return child(this.doc.root, this.ns, 'sheetProtection') !== undefined;
   }
 
+  // -------------------------------------------------------------------------------------------
+  // Write side (WP-20, spec §9.3)
+  //
+  // Every write goes through an EditBuilder (so it is recorded and undoable) and keeps the index in
+  // step incrementally. The index is trusted only after cheap local checks against the live tree —
+  // the nodes it hands out are still attached where it says, and an insertion point lies between
+  // element siblings with smaller and larger `r`. An undo/redo applied from outside (edits.applyEdit)
+  // makes the index stale; those checks then throw IndexStaleError before anything is written, and
+  // the caller (ops.ts) aborts, calls rebuildIndex() and retries. Hosts should still call
+  // `rebuildIndex()` after applying an edit themselves (ops.refreshAfterEdit does).
+
+  /** The `sheetData` element, or undefined. */
+  private sheetData(): XmlElement | undefined {
+    return child(this.doc.root, this.ns, 'sheetData');
+  }
+
+  /** Qualified name for a new element of the sheet namespace written below `sheetData` (qnameAt). */
+  elementName(local: string): string {
+    const at = this.sheetData() ?? this.doc.root;
+    const name = qnameAt(at, this.ns, local);
+    if (name === undefined) throw new Error(`${this.part}: the worksheet namespace is not bound where <${local}> would be written`);
+    return name;
+  }
+
+  /** Style a newly created cell at (r, c) takes (§9.3): the row's `s` when `customFormat`, else the column's `style`, else 0. */
+  inheritedStyle(r: number, c: number): number {
+    const row = this.rowInfo(r)?.styleIndex;
+    if (row !== undefined && row !== null && row > 0) return row;
+    if (row === 0) return 0;
+    for (const col of this.cols()) {
+      if (c >= col.min && c <= col.max) return col.styleIndex !== null && col.styleIndex > 0 ? col.styleIndex : 0;
+    }
+    return 0;
+  }
+
+  /** Style index that governs (r, c): the cell's `s` when the cell exists, else the inherited style. */
+  effectiveStyle(r: number, c: number): number {
+    const el = this.liveCellNode(r, c);
+    return el ? this.readCell(r, c, el).styleIndex : this.inheritedStyle(r, c);
+  }
+
+  /** §9.3 read-only cell (`ro`): why (r, c) cannot be edited, or null. */
+  readOnlyCellReason(r: number, c: number): string | null {
+    const el = this.liveCellNode(r, c);
+    if (el) {
+      for (const a of el.attrs) {
+        if (a.ns === '' && (a.local === 'cm' || a.local === 'vm')) {
+          return `${rcToA1(r, c)} holds a dynamic array or rich value (such as an in-cell picture or data type)`;
+        }
+      }
+    }
+    for (const area of this.readOnlyAreas()) {
+      const [r0, c0, r1, c1] = area.range;
+      if (r >= r0 && r <= r1 && c >= c0 && c <= c1) return `${rcToA1(r, c)} ${area.why}`;
+    }
+    return null;
+  }
+
+  isReadOnlyCell(r: number, c: number): boolean {
+    return this.readOnlyCellReason(r, c) !== null;
+  }
+
+  /** Read-only areas: multi-cell array formula / data table ranges and table header rows. */
+  readOnlyAreas(): ReadonlyArray<{ range: Range; why: string }> {
+    if (this.roAreas) return this.roAreas;
+    const out: Array<{ range: Range; why: string }> = [];
+    for (const r of this.rowList) {
+      const ri = this.rowMap.get(r)!;
+      for (const el of ri.cells) {
+        const f = child(el, this.ns, 'f');
+        const t = f ? attr(f, '', 't') : undefined;
+        if (t !== 'array' && t !== 'dataTable') continue;
+        const ref = attr(f!, '', 'ref');
+        const range = ref !== undefined ? a1ToRange(ref) : undefined;
+        if (!range || (range[0] === range[2] && range[1] === range[3])) continue;
+        out.push({ range, why: t === 'array' ? `is part of the array formula ${ref}` : `is part of the data table ${ref}` });
+      }
+    }
+    for (const t of this.tables()) {
+      if (t.headerRows < 1) continue;
+      out.push({ range: [t.ref[0], t.ref[1], t.ref[0] + t.headerRows - 1, t.ref[3]], why: `is a header cell of table "${t.name}"` });
+    }
+    this.roAreas = out;
+    return out;
+  }
+
+  /** Row index entry for `r`, checked against the live tree (IndexStaleError when it is not). */
+  private liveRow(r: number): RowIndex | undefined {
+    const ri = this.rowMap.get(r);
+    if (!ri) return undefined;
+    const sd = this.sheetData();
+    if (!sd || ri.node.parent !== sd || attr(ri.node, '', 'r') !== String(r + 1)) throw new IndexStaleError(this.part);
+    return ri;
+  }
+
+  /** The `c` node at (r, c), checked against the live tree. */
+  private liveCellNode(r: number, c: number): XmlElement | undefined {
+    const ri = this.liveRow(r);
+    if (!ri) return undefined;
+    const k = lowerBound(ri.cols, c);
+    if (k >= ri.cols.length || ri.cols[k] !== c) return undefined;
+    const el = ri.cells[k];
+    const ref = attr(el, '', 'r');
+    const rc = ref !== undefined ? parseCell(ref) : undefined;
+    if (el.parent !== ri.node || !rc || rc[0] !== r || rc[1] !== c) throw new IndexStaleError(this.part);
+    return el;
+  }
+
+  /**
+   * Write cell (r, c) (§9.3):
+   * - `content` null clears it: `v`, `f`, `is` and `t` go; the `c` stays when it has an `s` attribute,
+   *   otherwise it is removed. A missing cell is left missing.
+   * - otherwise the cell gets `t` = `content.t` (removed when undefined), `s` = `content.s` (kept as
+   *   it is when undefined; a new cell then has none) and `content.inner` (the value children, built
+   *   with `elementName`) in place of its `f`/`v`/`is`. Every other attribute and child (`extLst`…) is
+   *   kept from the source text. A missing cell is created, and its row when needed, in ascending
+   *   order; `dimension/@ref` grows (an `attr` change) when the new cell lies outside it.
+   * The caller checks read-only rules and shared formulas first. Throws IndexStaleError (nothing
+   * written) when the index no longer matches the tree.
+   */
+  writeCell(b: EditBuilder, r: number, c: number, content: { t?: string; s?: number; inner: string } | null): void {
+    if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || r >= MAX_ROWS || c < 0 || c >= MAX_COLS) {
+      throw new Error(`writeCell: (${r}, ${c}) is outside the sheet`);
+    }
+    const sd = this.sheetData();
+    if (!sd) throw new Error(`${this.part}: no sheetData element`);
+    const ri = this.liveRow(r);
+    const el = this.liveCellNode(r, c);
+    if (el) {
+      const k = lowerBound(ri!.cols, c);
+      const hadValue = isNonEmpty(el, this.ns);
+      if (content === null && attr(el, '', 's') === undefined) {
+        b.removeNode(this.part, el);
+        ri!.cols.splice(k, 1);
+        ri!.cells.splice(k, 1);
+      } else {
+        const xml = this.cellXml(el, r, c, content);
+        if (xml === serialize(el)) return;
+        const nodes = b.replaceNode(this.part, el, xml);
+        if (nodes.length !== 1 || nodes[0].type !== 'el') throw new Error('writeCell: the cell did not re-parse as one element');
+        ri!.cells[k] = nodes[0];
+      }
+      const nowValue = content !== null;
+      this._nonEmptyCells += (nowValue ? 1 : 0) - (hadValue ? 1 : 0);
+      this.sharedMasters = null;
+      this.roAreas = null;
+      return;
+    }
+    if (content === null) {
+      // Nothing to clear — unless the index missed a cell the tree has (an outside undo/redo).
+      if (ri) {
+        for (const n of ri.node.children) {
+          if (n.type !== 'el' || n.ns !== this.ns || n.local !== 'c') continue;
+          const ref = attr(n, '', 'r');
+          const rc = ref !== undefined ? parseCell(ref) : undefined;
+          if (rc && rc[1] === c) throw new IndexStaleError(this.part);
+        }
+      }
+      return;
+    }
+    const cellXml = this.cellXml(undefined, r, c, content);
+    if (ri) {
+      // New cell in an existing row, before the first cell with a larger column.
+      const k = lowerBound(ri.cols, c);
+      const row = ri.node;
+      let at: number;
+      if (k < ri.cells.length) at = row.children.indexOf(ri.cells[k]);
+      else if (ri.cells.length > 0) at = row.children.indexOf(ri.cells[ri.cells.length - 1]) + 1;
+      else at = 0;
+      if (at < 0) throw new IndexStaleError(this.part);
+      this.checkSiblings(row, at, 'c', (e) => { const ref = attr(e, '', 'r'); const rc = ref !== undefined ? parseCell(ref) : undefined; return rc && rc[0] === r ? rc[1] : undefined; }, c);
+      const nodes = b.insertAt(this.part, row, at, cellXml);
+      if (nodes.length !== 1 || nodes[0].type !== 'el') throw new Error('writeCell: the new cell did not parse as one element');
+      ri.cols.splice(k, 0, c);
+      ri.cells.splice(k, 0, nodes[0]);
+    } else {
+      // New row (with only `r`, §9.3) holding the new cell, before the first row with a larger index.
+      const k = lowerBound(this.rowList, r);
+      let at: number;
+      if (k < this.rowList.length) at = sd.children.indexOf(this.liveRow(this.rowList[k])!.node);
+      else if (k > 0) at = sd.children.indexOf(this.liveRow(this.rowList[k - 1])!.node) + 1;
+      else at = sd.children.length;
+      if (at < 0) throw new IndexStaleError(this.part);
+      this.checkSiblings(sd, at, 'row', (e) => { const v = attr(e, '', 'r'); return v !== undefined && /^\d+$/.test(v) ? parseInt(v, 10) - 1 : undefined; }, r);
+      const rowName = this.elementName('row');
+      const nodes = b.insertAt(this.part, sd, at, `<${rowName} r="${r + 1}">${cellXml}</${rowName}>`);
+      const rowEl = nodes.length === 1 && nodes[0].type === 'el' ? nodes[0] : undefined;
+      const cellEl = rowEl?.children[0];
+      if (!rowEl || !cellEl || cellEl.type !== 'el') throw new Error('writeCell: the new row did not parse as one element');
+      this.rowList.splice(k, 0, r);
+      this.rowMap.set(r, { node: rowEl, cols: [c], cells: [cellEl] });
+    }
+    this._nonEmptyCells++;
+    if (r > this.maxRow) this.maxRow = r;
+    if (c > this.maxCol) this.maxCol = c;
+    this.sharedMasters = null;
+    this.roAreas = null;
+    this.ensureDimensionCovers(b, [r, c, r, c]);
+  }
+
+  /**
+   * Grow `dimension/@ref` (one `attr` change) so it covers `range`. No-op without a `dimension`
+   * element or when it already covers the range. Throws when the existing ref cannot be read (the
+   * caller refuses the edit rather than guess).
+   */
+  ensureDimensionCovers(b: EditBuilder, range: Range): void {
+    const dim = child(this.doc.root, this.ns, 'dimension');
+    if (!dim) return;
+    const ref = attr(dim, '', 'ref');
+    const cur = ref !== undefined ? a1ToRange(ref) : undefined;
+    if (!cur) throw new Error(`${this.part}: the dimension reference "${ref ?? ''}" cannot be read`);
+    if (range[0] >= cur[0] && range[1] >= cur[1] && range[2] <= cur[2] && range[3] <= cur[3]) return;
+    const next: Range = [Math.min(cur[0], range[0]), Math.min(cur[1], range[1]), Math.max(cur[2], range[2]), Math.max(cur[3], range[3])];
+    b.setAttr(this.part, dim, '', 'ref', rangeToA1(next));
+  }
+
+  /**
+   * Element siblings either side of insertion index `at` of `parent` (elements named `local` in the
+   * sheet namespace) must have keys below / above `key`; otherwise the index is stale.
+   */
+  private checkSiblings(parent: XmlElement, at: number, local: string, keyOf: (e: XmlElement) => number | undefined, key: number): void {
+    const isTarget = (n: XmlNode): n is XmlElement => n.type === 'el' && n.ns === this.ns && n.local === local;
+    for (let j = at - 1; j >= 0; j--) {
+      const n = parent.children[j];
+      if (!isTarget(n)) continue;
+      const k = keyOf(n);
+      if (k === undefined || k >= key) throw new IndexStaleError(this.part);
+      break;
+    }
+    for (let j = at; j < parent.children.length; j++) {
+      const n = parent.children[j];
+      if (!isTarget(n)) continue;
+      const k = keyOf(n);
+      if (k === undefined || k <= key) throw new IndexStaleError(this.part);
+      break;
+    }
+  }
+
+  /** XML text of the cell after the write (see writeCell); `el` undefined for a new cell. */
+  private cellXml(el: XmlElement | undefined, r: number, c: number, content: { t?: string; s?: number; inner: string } | null): string {
+    const name = el ? el.rawName : this.elementName('c');
+    let attrs = '';
+    let sDone = false;
+    let tDone = false;
+    const t = content?.t;
+    const s = content?.s;
+    if (el) {
+      for (const a of el.attrs) {
+        const pre = (a as { pre?: string }).pre ?? ' ';
+        if (a.ns === '' && a.local === 't') {
+          tDone = true;
+          if (t !== undefined) attrs += `${pre}t="${escapeAttr(t)}"`;
+          continue;
+        }
+        if (a.ns === '' && a.local === 's' && s !== undefined) {
+          sDone = true;
+          attrs += `${pre}s="${s}"`;
+          continue;
+        }
+        attrs += pre + a.raw;
+        if (a.ns === '' && a.local === 'r' && s !== undefined && attr(el, '', 's') === undefined) {
+          attrs += ` s="${s}"`;   // a cell gaining a style (§9.3.1): Excel's order r, s, t
+          sDone = true;
+        }
+      }
+    } else {
+      attrs = ` r="${rcToA1(r, c)}"`;
+    }
+    if (s !== undefined && !sDone) attrs += ` s="${s}"`;
+    if (t !== undefined && !tDone) attrs += ` t="${escapeAttr(t)}"`;
+    let inner = content ? content.inner : '';
+    if (el) {
+      for (const ch of el.children) {
+        if (ch.type === 'text' || ch.type === 'cdata') continue;   // whitespace between children
+        if (ch.type === 'el' && ch.ns === this.ns && (ch.local === 'f' || ch.local === 'v' || ch.local === 'is')) continue;
+        inner += serialize(ch);
+      }
+    }
+    return inner === '' ? `<${name}${attrs}/>` : `<${name}${attrs}>${inner}</${name}>`;
+  }
+
   /**
    * Hyperlinks: key = the `ref` as written (a cell "K2" or a range "A1:B2", `$` removed, upper case);
    * value = the external target (`r:id` through the sheet's relationships), `#location` for an
@@ -667,6 +951,25 @@ export class Sheet {
     this.tableCache = out;
     return out;
   }
+}
+
+/**
+ * The sheet's index no longer matches its tree (an edit was applied from outside since it was built).
+ * Thrown before anything is written; rebuild the index and retry.
+ */
+export class IndexStaleError extends Error {
+  constructor(part: string) {
+    super(`${part}: the sheet index is out of date`);
+    this.name = 'IndexStaleError';
+  }
+}
+
+/** Whether a `c` element has a value: a `v`, `f` or `is` child (the non-empty count of §10.2). */
+function isNonEmpty(el: XmlElement, ns: string): boolean {
+  for (const g of el.children) {
+    if (g.type === 'el' && g.ns === ns && (g.local === 'v' || g.local === 'f' || g.local === 'is')) return true;
+  }
+  return false;
 }
 
 /** Sort parallel arrays by column and drop duplicate columns (first occurrence wins). */
