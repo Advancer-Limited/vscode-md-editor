@@ -233,3 +233,9 @@ export interface LanguageToolConfig {
   motherTongue: string;
   checkDelayMs: number;
 }
+
+// ========================================
+// Office Viewer Types
+// ========================================
+
+export * from './office/protocol.js';
