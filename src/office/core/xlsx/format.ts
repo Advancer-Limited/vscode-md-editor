@@ -3,6 +3,7 @@
 import { dateFromSerial, format, formatColor, isDateFormat } from 'numfmt';
 import type { CellRead, CellValue } from './types.js';
 import type { StyleTable } from './styles.js';
+import { stripXlfnPrefixes } from './xlfn.js';
 
 const COLOR_HEX: Record<string, string> = {
   black: '#000000', blue: '#0000FF', cyan: '#00FFFF', green: '#00FF00',
@@ -59,7 +60,7 @@ function looksLikeNonText(s: string): boolean {
  * with an apostrophe) gets a leading apostrophe, except in Text-formatted cells.
  */
 export function editSeed(cell: CellRead, styles: StyleTable, date1904: boolean): string {
-  if (cell.formula !== undefined && cell.formula !== '') return '=' + cell.formula;
+  if (cell.formula !== undefined && cell.formula !== '') return '=' + stripXlfnPrefixes(cell.formula);   // §9.5: no _xlfn. in the UI
   const v = cell.value;
   switch (v.k) {
     case 'z': return '';

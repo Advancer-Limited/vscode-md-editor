@@ -39,7 +39,7 @@ import { StyleTable } from './styles.js';
 import { editSeed } from './format.js';
 import { classifyInput, encodeXstring, numberToXml } from './input.js';
 import { ensureFullCalcOnLoad } from './calc.js';
-import { materialiseGroup, setFormula } from './sharedFormula.js';
+import { isUnchangedFormula, materialiseGroup, setFormula } from './sharedFormula.js';
 import { dateStyleFor } from './stylesWrite.js';
 import { insertOrDelete } from './structure.js';
 import { checkStructuralOp } from './guards.js';
@@ -229,8 +229,12 @@ function writeOne(b: EditBuilder, wb: Workbook, sheet: Sheet, styles: StyleTable
   if (existing && input === editSeed(existing, styles, wb.date1904)) return;
   const style = existing ? existing.styleIndex : sheet.inheritedStyle(r, c);
   const k = classifyInput(input, { isPercentStyle: styles.isPercentStyle(style), isTextStyle: styles.isTextStyle(style), date1904: wb.date1904 });
-  // A shared-formula master is materialised before it changes (§9.4); dependants just lose their f.
-  if (existing?.shared?.master) materialiseGroup(b, sheet, existing.shared.si);
+  // Re-committing a formula cell's formula (shown without `_xlfn.` prefixes, or as a shared
+  // dependant's materialised text) changes nothing.
+  if (k.kind === 'formula' && isUnchangedFormula(sheet, existing, k.text)) return;
+  // A shared-formula master is materialised before it changes (§9.4; setFormula does it for formula
+  // input); dependants just lose their f.
+  if (existing?.shared?.master && k.kind !== 'formula') materialiseGroup(b, sheet, existing.shared.si);
   const inherited = !existing && style > 0 ? style : undefined;
   const v = sheet.elementName('v');
   switch (k.kind) {

@@ -10,6 +10,7 @@ import { a1ToRange, rcToA1 } from './sheet.js';
 import { isMainNs, stringItemText } from './sharedStrings.js';
 import type { StyleTable } from './styles.js';
 import { displayString, pointsToPx, unitsToPx } from './format.js';
+import { stripXlfnPrefixes } from './xlfn.js';
 import type { CellRead, Range } from './types.js';
 import { detectSheetNotices } from './notices.js';
 
@@ -101,7 +102,7 @@ export function hasFormula(cell: CellRead): boolean {
  */
 export function cellText(wb: Workbook, styles: StyleTable, cell: CellRead): string {
   if (!cell.hasCachedValue && cell.value.k === 'z' && hasFormula(cell)) {
-    return cell.formula !== undefined ? '=' + cell.formula : '';
+    return cell.formula !== undefined ? '=' + stripXlfnPrefixes(cell.formula) : '';
   }
   return displayString(cell.value, styles.formatCode(cell.styleIndex), wb.date1904).text;
 }

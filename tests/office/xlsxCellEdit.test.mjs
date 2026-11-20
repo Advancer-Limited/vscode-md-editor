@@ -202,11 +202,16 @@ test('clearCells over a block: values gone, styled cells kept, empty cells ignor
   assert.strictEqual((await excel(after)).getWorksheet('Values').getCell('B18').value, null);
 });
 
-test('formula input is refused until WP-21 and changes nothing', async () => {
+test('formula input goes through sharedFormula.setFormula (WP-21; full coverage in xlsxFormula.test.mjs)', async () => {
   const { pkg, wb, bytes } = load('basic.xlsx');
   const res = await run(wb, pkg, set(1, [[1, 1, '=1+1']]));
-  assert.deepStrictEqual(res, { ok: false, error: { code: 'blocked', message: 'Not available yet' } });
-  assertBytesEqual(pkg.serialize(), bytes, 'unchanged');
+  assert.ok(res.ok && res.edit);
+  assert.ok(pkg.text(SHEET1).includes('<c r="B2"><f>1+1</f></c>'));
+  const bad = load('basic.xlsx');
+  const refused = await run(bad.wb, bad.pkg, set(1, [[1, 1, '=1+']]));
+  assert.strictEqual(refused.ok, false);
+  assert.strictEqual(refused.error.code, 'invalid');
+  assertBytesEqual(bad.pkg.serialize(), bytes, 'unchanged');
 });
 
 test('committing the unchanged edit seed records nothing', async () => {
@@ -329,7 +334,7 @@ test('paste onto a table header is refused and changes nothing', async () => {
   assert.strictEqual(clr.ok, false);
 });
 
-test('array formula members, data tables, cm/vm cells are read-only; shared masters wait for WP-21', async () => {
+test('array formula members, data tables, cm/vm cells are read-only; shared masters are materialised (WP-21)', async () => {
   const { pkg, wb, bytes } = load('formulas.xlsx');
   const sheet = await wb.sheet(1);
   for (const [r, c] of [[1, 4], [2, 4], [3, 4]]) assert.ok(sheet.isReadOnlyCell(r, c), `E${r + 1}`);
@@ -337,11 +342,13 @@ test('array formula members, data tables, cm/vm cells are read-only; shared mast
   const arr = await run(wb, pkg, set(1, [[2, 4, '1']]));
   assert.strictEqual(arr.ok, false);
   assert.match(arr.error.message, /E3 is part of the array formula E2:E4/);
-  const master = await run(wb, pkg, set(1, [[1, 1, '5']]));
-  assert.deepStrictEqual(master, { ok: false, error: { code: 'blocked', message: 'Not available yet' } });
-  const clearMaster = await run(wb, pkg, { op: 'clearCells', sheetId: 1, range: [1, 1, 1, 1] });
-  assert.strictEqual(clearMaster.ok, false);
   assertBytesEqual(pkg.serialize(), bytes, 'unchanged');
+  const master = await run(wb, pkg, set(1, [[1, 1, '5']]));
+  assert.ok(master.ok && master.edit);
+  assert.ok(pkg.text(SHEET1).includes('<c r="B2"><v>5</v></c>') && pkg.text(SHEET1).includes('<c r="B3"><f>A3*2</f><v>0</v></c>'));
+  applyEdit(pkg, invertEdit(master.edit));
+  refreshAfterEdit(wb, master.edit);
+  assertBytesEqual(pkg.serialize(), bytes, 'undone');
 
   const vmBytes = await patched('basic.xlsx', { [SHEET1]: (t) => t.replace('<c r="B2"><v>42</v></c>', '<c r="B2" vm="1"><v>42</v></c>').replace('<c r="B3">', '<c r="B3" cm="1">') });
   const v = load('vm.xlsx', vmBytes);
@@ -569,6 +576,5 @@ test('seeded 200-op random setCells/clear sequence on basic.xlsx: full undo is b
 });
 
 test('seeded 200-op random setCells/clear sequence on formulas.xlsx (no refresh: stale-index recovery): full undo is byte-identical', async () => {
-  const refused = await randomRun('formulas.xlsx', 7, false);
-  assert.ok(refused > 0, 'some ops hit array members / shared masters / formulas and were refused');
+  await randomRun('formulas.xlsx', 7, false);
 });
