@@ -1115,6 +1115,25 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
 - **Result:** check-types clean, compile OK, `npm test` 1156 pass / 0 fail / 1 skipped / 0 todo. `xlsxRead` "large.xlsx index builds within the WP-01 S4 budget" (10 s parse+index limit) failed once under the full parallel run before these changes and passed in later runs: like `saveBlocking.test.mjs`, it depends on machine load.
 
 ### 2026-11-21 — Phase 4 core: WP-36, WP-38, WP-39, WP-40 (feature/office-xlsx-refs → feature/office-xlsx-structure)
-- WP-36 (Opus): structural shifting per §9.6/§9.7 on @borgar/fx/xlsx tokens.
-- WP-39 (Opus): pure inspection, about 150 ms on large.xlsx once loaded.
 - **WP-38 (Opus):** `structure.ts` insertOrDelete. It plans first, then writes, using per-row node changes, attr changes for sheet-level ranges and node changes on other sheets. Shared groups are kept when the shift is uniform and materialised otherwise; arrays move whole and a split is refused. CF/DV formulas are re-anchored, cols are split and rejoined, and frozen panes shift. On large.xlsx an insert at row 1 takes about 0.8 s standalone and undo about 0.6 s, linear in the rows changed. 57 tests, including insert→delete restoring the bytes of every fixture. The [WP-37] cases still await Excel goldens.
+- WP-36 (Opus): structural shifting per §9.6/§9.7 on @borgar/fx/xlsx tokens.
+  - **Insert:** moves endpoints >= at. An insert at the top edge moves a range; an insert inside it grows the range.
+  - **Delete:** shrinks a range, or writes #REF! when the whole range is deleted.
+  - **References:** `$` is ignored when shifting; whole rows/cols shift on their own axis. Unqualified refs move only on the formula's own sheet. External, structured, name, string and error tokens are never rewritten.
+  - **Round trip:** only the moved endpoint text is rewritten (no stringifyA1Ref), so insert→delete restores the text exactly.
+  - **3-D refs** are never shifted; `has3dSpanning` lets WP-39 refuse them (Tier B).
+  - **Grid edge and #REF! form:** a deleted ref is written as a bare `#REF!`. A ref pushed off the grid by an insert becomes #REF!, and a range end is clamped at the grid edge.
+- WP-39 (Opus): pure inspection, about 150 ms on large.xlsx once loaded.
+  - **Tier B (refused):** an off-grid position, or content pushed off the grid; an array formula split; a data table moved (r1/r2 aren't rewritten); a table column intersection; a header, totals or all-data rows deleted; notes or threaded comments at or beyond the index; a pivot table; 3-D refs spanning the sheet; dependent sheets that are protected, too large or unreadable.
+  - **Tier C (warn and allow):** drawings (charts, images, shapes, slicers, VML controls), moved chart series and pivot sources, extLst CF/DV/sparklines, internal hyperlink locations.
+  - **Sheets:** a locked structure blocks all sheet ops. Delete is blocked for chartsheets, the last visible worksheet and pivot sources.
+  - **Spec gaps raised:** array `f/@ref` and data-table r1/r2 are missing from Tier A (WP-38 told to shift the array ref); hyperlink @location is now Tier C; the dependent-sheet refusal is extended to rename and delete.
+  - Follow-up: export a per-anchor helper from notices.ts to remove about 25 duplicated lines.
+  - Changed one stub-era line in xlsxCellEdit.test.mjs (the structure-op loop runs with confirmed:true).
+- WP-40 (Opus):
+  - **addSheet:** a minimal part in the workbook's namespace style, sheetId max+1, later localSheetId/activeTab/firstSheet shifted. It drops the calc chain without setting fullCalcOnLoad, as a workaround for a validator false positive.
+  - **renameSheet:** names validated like the save validator, plus History and case-insensitive uniqueness. Requalifies formulas in cells, CF, DV, extLst xm:f, tables and defined names; charts and pivot caches are left as Tier C.
+  - **deleteSheet:** removes the parts only this sheet owns (a fixpoint over the package's relationship graph), removes scoped names and decrements later localSheetId, clamps the views, and turns references into #REF!. Refused for: the last visible worksheet, non-worksheets, pivot sources and hosts, slicer/timeline hosts, tables used elsewhere, and unreadable rels.
+  - **syncSheetEntries:** a sheet that reappears gets a fresh session id.
+  - **Tests:** G3 exact, G5 incl. part restoration, both validators, ExcelJS, and seeded random runs mixing sheet ops and cell edits.
+  - **Not handled:** tabSelected, customWorkbookView and hyperlink @location (Excel doesn't update the last either).
