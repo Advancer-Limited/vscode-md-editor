@@ -941,3 +941,17 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
 - **scripts/office-fixtures/make-synthetic.mjs:** added `hidden-sheets.xlsx` (basic.xlsx + a hidden and a veryHidden inline-string sheet), `chartsheet.xlsx` (features.xlsx + `xl/chartsheets/sheet1.xml`, its own drawing2 with an absoluteAnchor graphicFrame, workbook rel of type chartsheet, content types; the chart is a copy `chart2.xml` so each drawing owns its chart part) and `damaged-sheet.xlsx` (basic.xlsx + a sheet truncated mid-element). Generator run twice: identical md5 for all three; existing fixtures unchanged.
 - **Tests:** new `tests/office/extraFixtures.test.mjs` (states, chartsheet kind and `not-worksheet` rejection, damaged sheet `SheetLoadError` while others load); the three added to `fixtures.test.mjs` REQUIRED.
 - **Docs:** README fixture table, Gate R1 X12 (now covers all three, and the coverage note about `sheet-unavailable`), todo.md. `.gltf`/`.mmd` samples remain a note. Not opened in Excel (no COM by instruction).
+
+### 2026-11-21 — WP-18 edits, undo/redo, serialise, verify (feature/office-save, 6641785)
+- **WP-18 (Opus):** `core/edits.ts`, `core/save.ts`, and writer functions in `core/opc.ts`.
+  - `edits.ts`: the PartChange/OfficeEdit types, an atomic applyEdit with rollback, invertEdit, EditBuilder (inserts are `rootScoped` by default), StaleEditError, and a generation-guarded `undoRedoFor`.
+  - `save.ts`: `serializeAndVerify` re-reads the ZIP, then inflates and CRC-checks every entry. It checks the entry set and content, re-opens the package, re-parses each changed XML part, and runs the validators. `packageValidator` ignores problems the original file already had.
+  - `opc.ts` writers: addOverride, removeOverride, ensureDefault, addRelationship, removeRelationship.
+- **Found by the seeded random test:**
+  - Undo needed exactness beyond equal text. It now reuses detached nodes, falls back to the recorded start tag, and records how an emptied element was written.
+  - **A silent misplacement**: an old undo could land at a shifted index after text nodes merged. It is fixed: a child-count check makes such a change refuse instead.
+- **Tests:** edits.test.mjs, save.test.mjs and the `_roundtrip.mjs` helpers. The property test runs 200 seeded steps on each of 6 fixtures, checking byte identity at every step.
+- **Known, in package.ts:**
+  - A created part that is deleted and then restored is appended at the end again, so ZIP order differs in intermediate states only. WP-19 is to fix this with a tombstone.
+  - After a whole-part undo, older node undos on the same part are refused. This is safe.
+- Merged Phase 1 (`feature/office-viewers-docs`) into this branch.

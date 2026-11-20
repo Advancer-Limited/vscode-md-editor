@@ -336,7 +336,7 @@
   - [x] Follow-up: synthetic fixtures for a hidden or very hidden sheet, a chartsheet and a damaged sheet part (make-synthetic.mjs, no COM)
   - [ ] Note: small `.gltf`/`.mmd` samples for the regression checks are still to do
 - [ ] Phase 2 — save pipeline + Excel cell editing
-  - [ ] WP-18 Edits, undo/redo, serialise, verify, save core
+  - [x] WP-18 Edits, undo/redo, serialise, verify, save core
   - [ ] WP-19 Full CustomEditorProvider
   - [ ] WP-20 Xlsx cell write, input classification, calc handling
   - [ ] WP-21 Formula entry, _xlfn, shared formulas
