@@ -359,11 +359,12 @@
   - [ ] WP-35 Word edit toolbar, shortcuts, CSS
   - [ ] Gate R3
 - [ ] Phase 4 — Excel structure (rows/columns/sheets)
-  - [ ] WP-36 Reference shifting
+  - [x] WP-36 Reference shifting
   - [ ] WP-37 Excel-produced goldens
-  - [ ] WP-38 Insert/delete rows and columns, Tier A
-  - [ ] WP-39 Tier B/C guards
-  - [ ] WP-40 Add / rename / delete sheet
+  - [x] WP-38 Insert/delete rows and columns, Tier A
+  - [x] WP-39 Tier B/C guards
+  - [x] WP-40 Add / rename / delete sheet
+  - [x] PR-13 integration pass (feature/office-xlsx-structure): stub-era tests rewritten, grid aux invalidation (Sheet.structureGeneration), sheet list after outside undo/redo and aborted sheet ops, add-sheet keeps the calc chain, structural random run (1156 pass / 1 skipped)
   - [ ] WP-41 Structure UI + host wiring
   - [ ] WP-42 v1 release preparation
   - [ ] Gate R4

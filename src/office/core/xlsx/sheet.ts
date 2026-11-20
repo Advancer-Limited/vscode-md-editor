@@ -183,6 +183,7 @@ export class Sheet {
   private tableCache: TableInfo[] | null = null;
   private linkCache: Map<string, string> | null = null;
   private roAreas: Array<{ range: Range; why: string }> | null = null;
+  private _generation = 0;
 
   /**
    * Use `Workbook.sheet(id)`; this constructor is for the workbook. Call `rebuildIndex()` (or
@@ -214,6 +215,16 @@ export class Sheet {
 
   /** Count of non-empty cells (a `v`, `f` or `is` child) in the whole part, indexed or not. */
   get nonEmptyCellCount(): number { return this._nonEmptyCells; }
+
+  /**
+   * Structural generation: bumped every time the index is rebuilt from the tree (`rebuildIndex`,
+   * `buildIndexAsync`). Everything that moves positions, hyperlinks, tables or array ranges — a
+   * structural op, an outside undo/redo/revert via ops.refreshAfterEdit, a stale-index recovery —
+   * goes through a rebuild, so caches derived from the sheet beyond its own (view.ts `auxFor`) key
+   * on this number. Cell writes (`writeCell`) keep it: they change no hyperlink, table or
+   * multi-cell array range (those cells are read-only or outside the write's reach).
+   */
+  get structureGeneration(): number { return this._generation; }
 
   // -------------------------------------------------------------------------------------------
   // Index
@@ -331,6 +342,7 @@ export class Sheet {
       this.tableCache = null;
       this.linkCache = null;
       this.roAreas = null;
+      this._generation++;
       const prot = child(root, ns, 'sheetProtection') !== undefined;
       this._readOnlyReason = prot ? 'protected' : layoutBad ? 'unsupported-xml-layout' : over ? 'too-large' : null;
     };

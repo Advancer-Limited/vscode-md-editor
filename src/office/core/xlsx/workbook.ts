@@ -188,6 +188,15 @@ export class Workbook {
     return this.sheets.find((s) => s.id === id);
   }
 
+  /**
+   * Drop the cached model of sheet `id` (its part's tree was replaced, e.g. a deletion rolled back):
+   * the next `sheet(id)` loads it again from the package under the same id.
+   */
+  forgetSheet(id: number): void {
+    this.loaded.delete(id);
+    this.loadedSheets.delete(id);
+  }
+
   /** The sheet already loaded for `id`, without loading it. */
   loadedSheet(id: number): Sheet | undefined {
     return this.loadedSheets.get(id);

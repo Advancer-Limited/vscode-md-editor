@@ -186,6 +186,24 @@ test('calc chain present after a formula edit', () => {
   assert.deepStrictEqual(broken('formulas.xlsx', { [SHEET1]: sub('<c r="G2"><v>7</v></c>', '<c r="G2"><v>8</v></c>') }), []);
 });
 
+test('added empty sheet on a workbook with calcChain saves cleanly (a part absent at load had no formulas)', () => {
+  const { Workbook } = core.xlsx.workbook;
+  const { EditBuilder } = core.edits;
+  const pkg = open('formulas.xlsx');
+  const wb = Workbook.load(pkg);
+  const b = new EditBuilder(pkg, 'Add Sheet');
+  assert.strictEqual(core.xlsx.sheetsOps.addSheet(b, wb, 'Empty'), null);
+  const edit = b.finish();
+  const added = edit.changes.find((c) => c.kind === 'part' && c.after).part;
+  assert.ok(pkg.has('xl/calcChain.xml'), 'the calc chain is kept');
+  assert.deepStrictEqual(xlsxValidator(pkg, pkg.touchedParts(), ctxFor('formulas.xlsx')), [], 'with the loaded original');
+  const r = serializeAndVerify(pkg, [packageValidator, xlsxValidator]);   // the save pipeline (loaded original as context)
+  assert.ok(r.ok, JSON.stringify(r.ok ? '' : r.failures));
+  // The new part with a formula in it is a formula edit: the kept chain is then reported.
+  pkg.setPart(added, encodePart(pkg.text(added).replace('<sheetData/>', '<sheetData><row r="1"><c r="A1"><f>1+1</f></c></row></sheetData>'), false));
+  assertFails(xlsxValidator(pkg, pkg.touchedParts(), ctxFor('formulas.xlsx')), /calc chain is still present/, 'formula in the new sheet');
+});
+
 // ---------------------------------------------------------------------------------------------
 // Styles rules (only when styles.xml is touched)
 

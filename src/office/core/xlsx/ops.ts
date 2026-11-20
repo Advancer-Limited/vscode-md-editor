@@ -22,7 +22,7 @@
 // writer cannot express. A helper that throws an Error carrying `officeError` is reported as that error.
 //
 // After applying an edit from outside (undo, redo, revert), call `refreshAfterEdit` so the sheet
-// indexes and the style table follow the tree. (The write path also detects a stale index on its own
+// list, the sheet indexes (and the grid lookups keyed on them) and the style table follow the tree. (The write path also detects a stale index on its own
 // and retries once after rebuilding it.)
 //
 // No `vscode` import here (core rule).
@@ -48,7 +48,8 @@ import type { FormulaContext } from './refs.js';
 import { dateStyleFor } from './stylesWrite.js';
 import { insertOrDelete } from './structure.js';
 import { checkStructuralOp } from './guards.js';
-import { addSheet, deleteSheet, renameSheet } from './sheetsOps.js';
+import { addSheet, deleteSheet, renameSheet, syncSheetEntries } from './sheetsOps.js';
+import { partNameFromTarget, readRelationships, relsPartFor } from '../opc.js';
 
 export type OpResult =
   | { ok: true; edit: OfficeEdit | null; invalidate: 'cells' | 'sheet' | 'workbook'; sheetId?: number; range?: Range; confirm?: string[] }
@@ -81,19 +82,44 @@ export function stylesFor(wb: Workbook): StyleTable {
 
 /**
  * Bring the read models in line with the tree after `edit` was applied, undone or redone from
- * outside: rebuild the index of every loaded sheet whose part it touches and reload the style table
- * when it touches the styles part.
+ * outside: re-read the sheet list when it touches the workbook part (an added, renamed or deleted
+ * sheet: sheetsOps.syncSheetEntries), rebuild the index of every loaded sheet whose part — or whose
+ * relationships part, or a part those relationships target (tables, comments) — it touches, and
+ * reload the style table when it touches the styles part. Rebuilding bumps the sheet's
+ * structureGeneration, which drops the grid's hyperlink and locked-range lookups (view.ts).
  */
 export function refreshAfterEdit(wb: Workbook, edit: OfficeEdit, styles?: StyleTable): void {
-  const parts = new Set(edit.changes.map((c) => c.part.toLowerCase()));
-  for (const e of wb.sheets) {
-    const s = wb.loadedSheet(e.id);
-    if (s && parts.has(s.part.toLowerCase())) s.rebuildIndex();
-  }
+  const parts = refreshParts(wb, edit.changes.map((c) => c.part));
   if (wb.stylesPart && parts.has(wb.stylesPart.toLowerCase())) {
     (styles ?? stylesFor(wb)).reload();
     if (styles && stylesCache.get(wb) !== styles) stylesCache.get(wb)?.reload();
   }
+}
+
+/** The sheet-list and sheet-index half of refreshAfterEdit for the changed `parts`; returns them lower-cased. */
+function refreshParts(wb: Workbook, changed: readonly string[]): Set<string> {
+  const parts = new Set(changed.map((p) => p.toLowerCase()));
+  if (parts.has(wb.workbookPart.toLowerCase())) syncSheetEntries(wb);
+  for (const e of wb.sheets) {
+    const s = wb.loadedSheet(e.id);
+    if (s && sheetTouched(wb, s, parts)) s.rebuildIndex();
+  }
+  return parts;
+}
+
+/** Whether `parts` (lower-case) include `sheet`'s part, its relationships part or a part they target. */
+function sheetTouched(wb: Workbook, sheet: Sheet, parts: ReadonlySet<string>): boolean {
+  if (parts.has(sheet.part.toLowerCase())) return true;
+  const rels = relsPartFor(sheet.part);
+  if (parts.has(rels.toLowerCase())) return true;
+  if (!wb.pkg.has(rels)) return false;
+  let list;
+  try { list = readRelationships(wb.pkg, sheet.part); } catch { return true; }
+  for (const r of list) {
+    if (r.external) continue;
+    try { if (parts.has(partNameFromTarget(sheet.part, r.target).toLowerCase())) return true; } catch { /* not a part */ }
+  }
+  return false;
 }
 
 export async function applyXlsxEdit(wb: Workbook, pkg: OfficePackage, op: XlsxEditOp, opts: ApplyOptions): Promise<OpResult> {
@@ -398,7 +424,11 @@ async function structural(wb: Workbook, op: Extract<XlsxEditOp, { op: 'insertRow
     await insertOrDelete(b, wb, sheetOrError, axis, op.at, op.op.startsWith('insert') ? op.count : -op.count);
     if (b.size > 0) ensureFullCalcOnLoad(b, wb);
   } catch (err) {
+    // insertOrDelete rebuilt the indexes from what it wrote; a failure after it (calc handling)
+    // rolls those writes back, so the indexes follow the restored tree again.
+    const written = b.changedParts();
     b.abort();
+    if (written.length > 0) refreshParts(wb, written);
     return errorResult(err);
   }
   return { ok: true, edit: b.finish(), invalidate: 'sheet', sheetId: op.sheetId };
@@ -411,16 +441,36 @@ async function sheetOp(wb: Workbook, op: Extract<XlsxEditOp, { op: 'addSheet' | 
   if (isResult(g)) return g;
   if (g) return { ok: true, edit: null, invalidate: 'workbook', confirm: g };
   const b = new EditBuilder(wb.pkg, SHEET_LABELS[op.op]);
+  // The operations re-read wb.sheets as they write. After an abort the list is put back as it was,
+  // so every sheet keeps its session id (the webview still holds them): a sheet whose deletion was
+  // rolled back has a re-created tree, so its cached model is dropped and reloads under the same id.
+  // Indexes of the sheets the operation had rewritten follow the restored nodes.
+  const sheetsBefore = wb.sheets;
+  const abort = (): void => {
+    const written = b.changedParts();
+    b.abort();
+    wb.sheets = sheetsBefore;
+    for (const e of wb.sheets) {
+      const s = wb.loadedSheet(e.id);
+      if (s && (!wb.pkg.has(s.part) || s.doc !== wb.pkg.xml(s.part))) wb.forgetSheet(e.id);
+    }
+    syncSheetEntries(wb);
+    refreshParts(wb, written);
+  };
   try {
     const err = op.op === 'addSheet' ? addSheet(b, wb, op.name, op.afterSheetId)
       : op.op === 'renameSheet' ? renameSheet(b, wb, op.sheetId, op.name)
         : deleteSheet(b, wb, op.sheetId);
-    if (err) { b.abort(); return { ok: false, error: err }; }
-    // Rename and delete rewrite formulas (§9.7), so Excel must recalculate; adding a sheet does not.
+    if (err) { abort(); return { ok: false, error: err }; }
+    // Rename and delete rewrite formulas (§9.7), so Excel must recalculate; adding a sheet does not
+    // (and keeps the calc chain: no formula changed).
     if (op.op !== 'addSheet' && b.size > 0) ensureFullCalcOnLoad(b, wb);
   } catch (err) {
-    b.abort();
+    abort();
     return errorResult(err);
   }
-  return { ok: true, edit: b.finish(), invalidate: 'workbook' };
+  const edit = b.finish();
+  // Rename and delete rewrite formulas on other sheets: their indexes must follow the new nodes.
+  if (edit) refreshParts(wb, edit.changes.map((c) => c.part));
+  return { ok: true, edit, invalidate: 'workbook' };
 }

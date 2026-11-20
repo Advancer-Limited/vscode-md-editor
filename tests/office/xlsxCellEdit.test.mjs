@@ -467,10 +467,70 @@ test('refusals: protected sheet, chartsheet, limits, duplicates, bad coordinates
   assert.strictEqual((await run(wb, pkg, set(1, [[0, 0, 'x'.repeat(32768)]]))).error.code, 'invalid');
   assert.strictEqual((await run(wb, pkg, set(99, [[0, 0, 'a']]))).error.code, 'invalid');
   assert.strictEqual((await run(wb, pkg, { op: 'clearCells', sheetId: 1, range: [0, 0, -1, 2] })).error.code, 'invalid');
-  for (const op of [{ op: 'insertRows', sheetId: 1, at: 2, count: 1 }, { op: 'deleteCols', sheetId: 1, at: 0, count: 2 },
-    { op: 'addSheet' }, { op: 'renameSheet', sheetId: 1, name: 'X' }, { op: 'deleteSheet', sheetId: 2 }]) {
-    assert.deepStrictEqual(await run(wb, pkg, op, true), { ok: false, error: { code: 'blocked', message: 'Not available yet' } }, op.op);
+  // Structure ops (WP-38/39/40) run for real: each is applied (edit labelled for the undo stack), the
+  // read model follows (sheet list, grid), and an outside undo restores the bytes and the sheet list.
+  const names = () => wb.sheets.map((s) => s.name);
+  for (const [op, label, invalidate] of [
+    [{ op: 'insertRows', sheetId: 1, at: 2, count: 1 }, 'Insert Rows', 'sheet'],
+    [{ op: 'deleteCols', sheetId: 1, at: 0, count: 2 }, 'Delete Columns', 'sheet'],
+    [{ op: 'addSheet' }, 'Add Sheet', 'workbook'],
+    [{ op: 'renameSheet', sheetId: 1, name: 'X' }, 'Rename Sheet', 'workbook'],
+    [{ op: 'deleteSheet', sheetId: 2 }, 'Delete Sheet', 'workbook'],
+  ]) {
+    await wb.sheet(1);
+    const sheetsBefore = names();
+    const res = await run(wb, pkg, op, true);
+    assert.ok(res.ok && res.edit, `${op.op}: ${JSON.stringify(res.ok ? res : res.error)}`);
+    assert.strictEqual(res.edit.label, label, op.op);
+    assert.strictEqual(res.invalidate, invalidate, op.op);
+    assert.ok(!res.confirm, `${op.op}: confirmed, so no confirmation list`);
+    save(pkg);
+    await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `${op.op} applied`);
+    if (op.op === 'addSheet') assert.deepStrictEqual(names(), [...sheetsBefore, 'Sheet1']);
+    if (op.op === 'renameSheet') assert.deepStrictEqual(names(), ['X', 'Second Sheet']);
+    if (op.op === 'deleteSheet') assert.deepStrictEqual(names(), ['Values']);
+    applyEdit(pkg, invertEdit(res.edit));
+    refreshAfterEdit(wb, invertEdit(res.edit));
+    assertBytesEqual(pkg.serialize(), bytes, `${op.op}: undo restores the bytes`);
+    assert.deepStrictEqual(names(), sheetsBefore, `${op.op}: undo restores the sheet list`);
+    await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `${op.op} undone`);
   }
+  // Without confirmation, deleting a sheet only asks (nothing applied).
+  // (An undone delete brings the sheet back under a fresh session id: look it up by name.)
+  const secondId = wb.sheets.find((s) => s.name === 'Second Sheet').id;
+  const ask = await run(wb, pkg, { op: 'deleteSheet', sheetId: secondId });
+  assert.ok(ask.ok && ask.edit === null && ask.confirm?.length > 0, JSON.stringify(ask));
+  assertBytesEqual(pkg.serialize(), bytes, 'confirmation only: unchanged');
+  // Structure ops that stay refused, each changing nothing.
+  const refusedOps = [
+    [{ op: 'insertRows', sheetId: 1, at: -1, count: 1 }, 'invalid'],
+    [{ op: 'insertCols', sheetId: 1, at: 16384, count: 1 }, 'invalid'],
+    [{ op: 'deleteRows', sheetId: 1, at: 0, count: 0 }, 'invalid'],
+    [{ op: 'insertRows', sheetId: 99, at: 0, count: 1 }, 'invalid'],
+    [{ op: 'insertRows', sheetId: 1, at: 0, count: 1048576 }, 'blocked'],   // content pushed past the last row
+    [{ op: 'renameSheet', sheetId: 1, name: 'a/b' }, 'invalid'],
+    [{ op: 'renameSheet', sheetId: 1, name: 'second sheet' }, 'invalid'],   // case-insensitive duplicate
+    [{ op: 'renameSheet', sheetId: 99, name: 'Y' }, 'invalid'],
+    [{ op: 'addSheet', name: 'History' }, 'invalid'],
+    [{ op: 'deleteSheet', sheetId: 99 }, 'invalid'],
+  ];
+  for (const [op, code] of refusedOps) {
+    const r = await run(wb, pkg, op, true);
+    assert.strictEqual(r.ok, false, `${JSON.stringify(op)} is refused`);
+    assert.strictEqual(r.error.code, code, `${JSON.stringify(op)}: ${r.error.message}`);
+    assertBytesEqual(pkg.serialize(), bytes, `${JSON.stringify(op)}: refusal changed nothing`);
+    assert.deepStrictEqual(names(), ['Values', 'Second Sheet'], `${JSON.stringify(op)}: sheet list unchanged`);
+  }
+  // The last visible worksheet cannot be deleted.
+  const one = load('protected-sheet.xlsx');
+  const lastDel = await run(one.wb, one.pkg, { op: 'deleteSheet', sheetId: 1 }, true);
+  assert.strictEqual(lastDel.error.code, 'blocked');
+  assertBytesEqual(one.pkg.serialize(), one.bytes, 'last sheet: unchanged');
+  // Structure ops on a protected sheet or a chartsheet stay refused.
+  assert.strictEqual((await run(p.wb, p.pkg, { op: 'insertRows', sheetId: 1, at: 0, count: 1 }, true)).error.code, 'read-only');
+  assert.strictEqual((await run(ch.wb, ch.pkg, { op: 'deleteCols', sheetId: chartId, at: 0, count: 1 }, true)).error.code, 'read-only');
+  assert.strictEqual((await run(ch.wb, ch.pkg, { op: 'deleteSheet', sheetId: chartId }, true)).error.code, 'blocked');
+
   const big = await run(wb, pkg, set(1, [[0, 0, 'x'.repeat(32767)]]));
   assert.ok(big.ok, 'exactly 32,767 characters is accepted');
   applyEdit(pkg, invertEdit(big.edit));
@@ -666,3 +726,104 @@ test('seeded 200-op random setCells/clear sequence on basic.xlsx: full undo is b
 test('seeded 200-op random setCells/clear sequence on formulas.xlsx (no refresh: stale-index recovery): full undo is byte-identical', async () => {
   await randomRun('formulas.xlsx', 7, false);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Randomised structure + sheets + cells (PR-13): insert/delete rows and columns, add/rename/delete
+// sheet and cell edits through ops.applyXlsxEdit (confirmed: guards may still refuse), mixed with
+// provider-style outside undo/redo (applyEdit + refreshAfterEdit). After every step the live model —
+// sheet list, cells and the grid (view.cellWindow: links, notes, locked ranges) — reads what the file
+// says; refusals change nothing; undo/redo return the recorded states; a full undo is byte-identical.
+
+async function randomStructuralRun(name, seed, steps) {
+  const { pkg, wb, bytes } = load(name);
+  const styles = core.xlsx.ops.stylesFor(wb);
+  const rand = rng(seed);
+  const pick = (a) => a[Math.floor(rand() * a.length)];
+  const int = (n) => Math.floor(rand() * n);
+  const loadAll = async () => { for (const e of wb.sheets) if (e.kind === 'worksheet') await wb.sheet(e.id); };
+  const outside = (edit, undo) => {
+    const e = undo ? invertEdit(edit) : edit;
+    applyEdit(pkg, e);
+    refreshAfterEdit(wb, e);
+  };
+  const names = () => JSON.stringify(wb.sheets.map((s) => [s.name, s.part]));
+  const done = [];      // { edit, after } (after = bytes once applied)
+  const undone = [];
+  const kinds = {};
+  const refusals = {};
+  const count = (o, k) => { o[k] = (o[k] ?? 0) + 1; };
+  const NAMES = ['Alpha', "Q'tr", 'Sheet 9', 'Ωmega', 'Data', 'x'];
+  await loadAll();
+  for (let i = 0; i < steps; i++) {
+    const x = rand();
+    const before = pkg.serialize();
+    const list = names();
+    if (x < 0.12 && done.length) {
+      const d = done.pop();
+      outside(d.edit, true);
+      undone.push(d);
+      count(kinds, 'undo');
+      assertBytesEqual(pkg.serialize(), done.length ? done[done.length - 1].after : bytes, `${name} step ${i}: undo returns the previous state`);
+    } else if (x < 0.2 && undone.length) {
+      const d = undone.pop();
+      outside(d.edit, false);
+      done.push(d);
+      count(kinds, 'redo');
+      assertBytesEqual(pkg.serialize(), d.after, `${name} step ${i}: redo returns the state the edit produced`);
+    } else {
+      const ws = wb.sheets.filter((s) => s.kind === 'worksheet');
+      const sheetId = pick(ws).id;
+      const y = rand();
+      let op;
+      if (y < 0.3) {
+        const n = 1 + int(3);
+        const cells = new Map();
+        for (let k = 0; k < n; k++) cells.set(`${int(30)},${int(9)}`, pick(POOL));
+        op = set(sheetId, [...cells].map(([rc, input]) => [...rc.split(',').map(Number), input]));
+      } else if (y < 0.38) {
+        const r0 = int(25), c0 = int(8);
+        op = { op: 'clearCells', sheetId, range: [r0, c0, r0 + int(3), c0 + int(3)] };
+      } else if (y < 0.7) {
+        const kind = pick(['insertRows', 'deleteRows', 'insertCols', 'deleteCols']);
+        op = { op: kind, sheetId, at: int(kind.endsWith('Rows') ? 25 : 9), count: 1 + int(3) };
+      } else if (y < 0.8) {
+        op = rand() < 0.5 ? { op: 'addSheet' } : { op: 'addSheet', name: pick(NAMES) + i, afterSheetId: pick(wb.sheets).id };
+      } else if (y < 0.9) {
+        op = { op: 'renameSheet', sheetId: pick(wb.sheets).id, name: rand() < 0.2 ? pick(NAMES) : pick(NAMES) + i };
+      } else {
+        op = { op: 'deleteSheet', sheetId: pick(wb.sheets).id };
+      }
+      const res = await run(wb, pkg, op, true);
+      if (!res.ok) {
+        count(refusals, `${op.op}:${res.error.code}`);
+        assertBytesEqual(pkg.serialize(), before, `${name} step ${i}: refused ${op.op} (${res.error.message}) changed nothing`);
+        assert.strictEqual(names(), list, `${name} step ${i}: refused ${op.op} kept the sheet list`);
+      } else if (res.edit) {
+        count(kinds, op.op);
+        done.push({ edit: res.edit, after: pkg.serialize() });
+        undone.length = 0;
+      }
+    }
+    await loadAll();
+    await assertViewMatchesFile(wb, pkg, styles, `${name} step ${i}`);
+    if (i % 20 === 0) save(pkg);
+  }
+  const final = save(pkg);
+  writeOut(OUT, `random-structure-${name}`, final);
+  await excel(final);   // G6: ExcelJS loads the result
+  for (const k of ['setCells', 'insertRows', 'deleteRows', 'insertCols', 'deleteCols', 'addSheet', 'renameSheet', 'deleteSheet', 'undo', 'redo']) {
+    assert.ok(kinds[k] > 0, `${name}: ${k} exercised: ${JSON.stringify(kinds)} (refused ${JSON.stringify(refusals)})`);
+  }
+  while (done.length) outside(done.pop().edit, true);
+  assertBytesEqual(pkg.serialize(), bytes, `${name}: full undo`);
+  await loadAll();
+  await assertViewMatchesFile(wb, pkg, styles, `${name}: all undone`);
+  return { kinds, refusals };
+}
+
+for (const [name, seed] of [['basic.xlsx', 0x13a], ['formulas.xlsx', 0x13b]]) {
+  test(`seeded random structural + sheet + cell sequence with outside undo/redo on ${name}: view matches the file at every step`, async (t) => {
+    const { kinds, refusals } = await randomStructuralRun(name, seed, 120);
+    t.diagnostic(`applied ${JSON.stringify(kinds)}; refused ${JSON.stringify(refusals)}`);
+  });
+}

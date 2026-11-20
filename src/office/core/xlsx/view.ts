@@ -20,13 +20,16 @@ const MIN_ROWS = 100;
 const MIN_COLS = 26;
 
 // ---------------------------------------------------------------------------------------------
-// Per-sheet auxiliary lookups (hyperlinks, legacy comments, locked ranges), built once per Sheet.
+// Per-sheet auxiliary lookups (hyperlinks, legacy comments, locked ranges), built once per Sheet and
+// structural generation: a structural op, an outside undo/redo (ops.refreshAfterEdit) or any other
+// index rebuild bumps Sheet.structureGeneration, and the next window rebuilds them.
 
 interface SheetAux {
   links: Map<string, string>;                 // "B2" -> target (single-cell refs)
   linkRanges: Array<[Range, string]>;         // range refs
   notes: Map<string, string>;                 // "B2" -> legacy comment text
   locked: Range[];                            // multi-cell array formulas and table header rows
+  generation: number;                         // Sheet.structureGeneration it was built at
 }
 
 const auxCache = new WeakMap<Sheet, SheetAux>();
@@ -58,7 +61,7 @@ function legacyNotes(wb: Workbook, sheet: Sheet): Map<string, string> {
 
 function auxFor(wb: Workbook, sheet: Sheet): SheetAux {
   const hit = auxCache.get(sheet);
-  if (hit) return hit;
+  if (hit && hit.generation === sheet.structureGeneration) return hit;
   const links = new Map<string, string>();
   const linkRanges: Array<[Range, string]> = [];
   for (const [ref, target] of sheet.hyperlinks()) {
@@ -74,7 +77,7 @@ function auxFor(wb: Workbook, sheet: Sheet): SheetAux {
   for (const t of sheet.tables()) {
     if (t.headerRows > 0) locked.push([t.ref[0], t.ref[1], t.ref[0] + t.headerRows - 1, t.ref[3]]);
   }
-  const aux = { links, linkRanges, notes: legacyNotes(wb, sheet), locked };
+  const aux = { links, linkRanges, notes: legacyNotes(wb, sheet), locked, generation: sheet.structureGeneration };
   auxCache.set(sheet, aux);
   return aux;
 }

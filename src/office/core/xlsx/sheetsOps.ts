@@ -4,7 +4,7 @@
 // refusal (an OfficeError) — after which the CALLER aborts the builder (ops.sheetOp does): a refusal
 // found after a write is still all-or-nothing. Checks run before any write wherever they can.
 // `ops.sheetOp` adds `calcPr/@fullCalcOnLoad` and removes the calc chain for rename and delete
-// (formulas were rewritten); add changes no formula, so it does not.
+// (formulas were rewritten); add changes no formula, so it does neither (the calc chain stays).
 //
 // addSheet     new part `<wbdir>worksheets/sheet{K}.xml` (K = highest existing number, or number a
 //              workbook relationship already names, + 1) holding a minimal worksheet (XML declaration,
@@ -15,7 +15,8 @@
 //              `definedName/@localSheetId` and `workbookView/@activeTab|@firstSheet` at or after the
 //              new index are incremented (the same sheet stays active). Default name `Sheet{n}`,
 //              first unused. `docProps/app.xml` is left alone (§9.7). A calc chain, if any, is
-//              removed (relationship, part, Override) but `calcPr` is not touched (see removeCalcChain).
+//              kept and `calcPr` is not touched: no formula changed (validate.ts treats a sheet
+//              part that did not exist at load as having had no formulas).
 // renameSheet  validates the name, sets `sheet/@name`, and requalifies (quoting as needed) every
 //              reference to the old name in: cell formulas of every worksheet, conditional-format and
 //              data-validation formulas, `extLst` formulas (`xm:f`: x14 CF/DV, sparklines), table
@@ -489,7 +490,8 @@ export function addSheet(b: EditBuilder, wb: Workbook, name?: string, afterSheet
     }
     b.insertAt(wb.workbookPart, s.sheetsEl, at, xml);
 
-    removeCalcChain(b, wb, s.rels);
+    // The calc chain stays: no formula changed and the new sheet has none (its cells are listed by
+    // sheetId, which existing sheets keep), so Excel neither needs nor rebuilds anything (§9.5).
 
     // Tab indexes at or after the insertion point move up by one.
     if (insertIdx < s.list.length) {
@@ -503,24 +505,6 @@ export function addSheet(b: EditBuilder, wb: Workbook, name?: string, afterSheet
     }
     syncSheetEntries(wb);
   });
-}
-
-/**
- * Drop the calc chain (relationship, part, Override) without touching `calcPr`: no formula changed,
- * so no recalculation is forced, but the chain is a cache Excel rebuilds silently (§9.5), it lists
- * cells by sheet, and the save validator counts the new sheet part as a formula-bearing part whose
- * formula list differs from load (it has none there), which requires the chain to be gone.
- */
-function removeCalcChain(b: EditBuilder, wb: Workbook, rels: readonly Relationship[]): void {
-  for (const rel of rels) {
-    if (relKind(rel.type) !== 'calcChain') continue;
-    removeRelationship(b, wb.workbookPart, rel.id);
-    const p = targetPart(wb, wb.workbookPart, rel);
-    if (p) { removeOverride(b, p); b.setPart(p, null); }
-  }
-  const slash = wb.workbookPart.lastIndexOf('/');
-  const conventional = `${slash >= 0 ? wb.workbookPart.slice(0, slash + 1) : ''}calcChain.xml`;
-  if (wb.pkg.has(conventional)) { removeOverride(b, conventional); b.setPart(conventional, null); }
 }
 
 /** The new part's text: same main-namespace binding style (default or prefix) as an existing worksheet. */

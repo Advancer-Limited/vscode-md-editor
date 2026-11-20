@@ -1,11 +1,12 @@
 // WP-38: insert/delete rows and columns, Tier A (src/office/core/xlsx/structure.ts). Spec §9.6 Tier A,
 // §9.4 (shared formulas before a structural operation), §9.5 (calc handling), §13.2 G3–G6.
 //
-// The shipped WP-39 guard stub blocks every structural op in ops.ts, so most cases drive
-// structure.insertOrDelete exactly as ops.structural does (EditBuilder -> insertOrDelete ->
-// ensureFullCalcOnLoad -> finish); one test bundles ops.ts with a pass-through guard to cover the
-// dispatcher. Every edit is checked for G3 (exact touched set), G5 (undo / redo bytes), G6 (both
-// validators + ExcelJS re-read) and view-vs-file (Gate R2 F1) after the op and after its undo.
+// Most cases drive structure.insertOrDelete exactly as ops.structural does (EditBuilder ->
+// insertOrDelete -> ensureFullCalcOnLoad -> finish) without the WP-39 guard in front, so Tier A is
+// tested on its own (guards: xlsxGuards.test.mjs); one test bundles ops.ts with a pass-through guard to
+// cover the dispatcher, and the grid tests at the end go through the real ops.applyXlsxEdit. Every edit
+// is checked for G3 (exact touched set), G5 (undo / redo bytes), G6 (both validators + ExcelJS re-read)
+// and view-vs-file including the grid (Gate R2 F1) after the op, its undo and its redo.
 //
 // Expectations are hand-derived from Excel's documented insert/delete semantics. Cases whose exact
 // Excel output has not been observed in Excel itself are tagged `[WP-37]` in their name: WP-37
@@ -29,11 +30,11 @@ const { editSeed } = core.xlsx.format;
 const { displayFormula } = core.xlsx.sharedFormula;
 
 /**
- * The read-model half of _viewCheck.assertViewMatchesFile (Gate R2 F1): every loaded worksheet's
- * Sheet.cellsIn (value, style, formula, shared group, array ref, editor seed, shown formula) and its
- * read-only reasons equal a model freshly loaded from the serialised package, and every indexed node is
- * in the current tree. The grid half (view.cellWindow) is not used here: view.ts caches hyperlinks and
- * locked ranges per Sheet without invalidation (see the todo test 'grid view after a structural op').
+ * View-vs-file (Gate R2 F1): every loaded worksheet's Sheet.cellsIn (value, style, formula, shared
+ * group, array ref, editor seed, shown formula), its read-only reasons and dimensions equal a model
+ * freshly loaded from the serialised package, every indexed node is in the current tree, and — through
+ * _viewCheck.assertViewMatchesFile — the grid (view.cellWindow: hyperlinks, notes, locked ranges) does
+ * too, which needs view.ts's per-sheet lookups to follow Sheet.structureGeneration.
  */
 async function assertModelMatchesFile(wb, pkg, styles, msg, range = [0, 0, 59, 15]) {
   const fp = OfficePackage.open('fresh.xlsx', pkg.serialize());
@@ -56,6 +57,7 @@ async function assertModelMatchesFile(wb, pkg, styles, msg, range = [0, 0, 59, 1
     assert.deepStrictEqual(dump(wb, live, styles), dump(fwb, await fwb.sheet(e.id), fst), `${msg}: sheet ${e.id} cells differ from the file`);
     assert.deepStrictEqual(live.dimensions(), (await fwb.sheet(e.id)).dimensions(), `${msg}: sheet ${e.id} dimensions`);
   }
+  await assertViewMatchesFile(wb, pkg, styles, msg, range);
 }
 
 const { OfficePackage } = core.pkg;
@@ -671,7 +673,12 @@ function calcBaseline(name, bytes) {
 for (const name of allFixtures('xlsx')) {
   test(`insert -> delete of the same band restores the bytes: ${name}`, async (t) => {
     let fx;
-    try { fx = load(name); } catch { t.skip('not openable'); return; }
+    try { fx = load(name); } catch (err) {
+      // encrypted.xlsx and zip64.xlsx are refused at open by design (fixtures.test.mjs): nothing to shift.
+      assert.ok(err instanceof core.sniff.OfficeLoadError, `${name}: only a classified load refusal is expected (${err?.stack})`);
+      t.diagnostic(`refused at open: ${err.failure}`);
+      return;
+    }
     if (fx.pkg.viewOnlyReason) { t.skip(`view-only (${fx.pkg.viewOnlyReason})`); return; }
     const baseline = calcBaseline(name, fx.bytes);
     let ran = 0;
@@ -757,13 +764,106 @@ test('large.xlsx (200,000 cells): insert/delete a row at the top is linear and e
 });
 
 
-test('grid view after a structural op (view.cellWindow) matches the file', { todo: 'view.ts auxFor caches hyperlinks and locked ranges per Sheet and never invalidates them; needs a fix outside WP-38 (sheet.ts/view.ts)' }, async () => {
+// ---------------------------------------------------------------------------------------------------
+// Grid (view.cellWindow) after structural ops, undo and redo: view.ts caches hyperlinks, notes and
+// locked ranges per Sheet, keyed on Sheet.structureGeneration.
+
+const { cellWindow } = core.xlsx.view;
+const { applyXlsxEdit } = core.xlsx.ops;
+
+/** Outside undo (or redo) as the provider's stack does it: apply, then refresh the read models. */
+function outside(wb, edit, undo) {
+  const e = undo ? invertEdit(edit) : edit;
+  applyEdit(wb.pkg, e);
+  refreshAfterEdit(wb, e);
+}
+
+const gridCell = (wb, sheet, styles, r, c) => cellWindow(wb, sheet, styles, [r, c, r, c], false).cells[0];
+
+test('grid view after a structural op (view.cellWindow) matches the file', async () => {
   const fx = load('formulas.xlsx');
   const styles = stylesFor(fx.wb);
-  await fx.wb.sheet(1);
+  const sheet = await fx.wb.sheet(1);
   await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'before');   // fills the aux cache
-  await structural(fx.wb, 1, insR(1));   // moves the array formula E2:E4 (a locked range) to E3:E5
+  assert.ok(gridCell(fx.wb, sheet, styles, 1, 4).ro, 'E2 is in the array formula E2:E4');
+  const g0 = sheet.structureGeneration;
+  const edit = await structural(fx.wb, 1, insR(1));   // moves the array formula E2:E4 (a locked range) to E3:E5
+  assert.ok(sheet.structureGeneration > g0, 'the structural op bumps the generation');
   await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'grid after insert');
+  assert.ok(gridCell(fx.wb, sheet, styles, 4, 4).ro, 'E5 is locked after the insert');
+  outside(fx.wb, edit, true);
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'grid after undo');
+  assert.ok(!gridCell(fx.wb, sheet, styles, 4, 4)?.ro, 'E5 is not locked after the undo');
+  outside(fx.wb, edit, false);
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'grid after redo');
+  assert.ok(gridCell(fx.wb, sheet, styles, 4, 4).ro);
+});
+
+test('grid: hyperlinks and table header locks follow structural ops through ops.applyXlsxEdit, undo and redo', async () => {
+  // features.xlsx: hyperlinks K2 (external) and K3 (internal). Inserting two columns at G moves them to M.
+  const fx = load('features.xlsx');
+  const styles = stylesFor(fx.wb);
+  const sheet = await fx.wb.sheet(1);
+  const link = (r, c) => gridCell(fx.wb, sheet, styles, r, c)?.link;
+  const k2 = link(1, 10);
+  assert.ok(k2, 'K2 has a link');
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'links before');
+  const res = await applyXlsxEdit(fx.wb, fx.pkg, { op: 'insertCols', sheetId: 1, at: 6, count: 2 }, { confirmed: true });
+  assert.ok(res.ok && res.edit, JSON.stringify(res));
+  assert.strictEqual(res.edit.label, 'Insert Columns');
+  assert.strictEqual(link(1, 10), undefined, 'K2 has no link any more');
+  assert.strictEqual(link(1, 12), k2, 'the link moved to M2');
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'links after insert');
+  outside(fx.wb, res.edit, true);
+  assert.strictEqual(link(1, 10), k2, 'undo: back at K2');
+  assert.strictEqual(link(1, 12), undefined);
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'links after undo');
+  outside(fx.wb, res.edit, false);
+  assert.strictEqual(link(1, 12), k2, 'redo: at M2 again');
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'links after redo');
+
+  // tables.xlsx: SalesTable A1:E7 has its header on row 1; inserting a row above moves the lock to row 2.
+  const tx = load('tables.xlsx');
+  const tst = stylesFor(tx.wb);
+  const ts = await tx.wb.sheet(1);
+  const ro = (r, c) => gridCell(tx.wb, ts, tst, r, c)?.ro === true;
+  assert.ok(ro(0, 0) && !ro(1, 0), 'header row 1 is locked');
+  const ins = await applyXlsxEdit(tx.wb, tx.pkg, { op: 'insertRows', sheetId: 1, at: 0, count: 1 }, { confirmed: true });
+  assert.ok(ins.ok && ins.edit, JSON.stringify(ins));
+  assert.ok(!ro(0, 0) && ro(1, 0), 'the header lock moved to row 2');
+  await assertViewMatchesFile(tx.wb, tx.pkg, tst, 'table after insert');
+  outside(tx.wb, ins.edit, true);
+  assert.ok(ro(0, 0) && !ro(1, 0), 'undo: the header lock is back on row 1');
+  await assertViewMatchesFile(tx.wb, tx.pkg, tst, 'table after undo');
+  outside(tx.wb, ins.edit, false);
+  assert.ok(!ro(0, 0) && ro(1, 0), 'redo');
+  await assertViewMatchesFile(tx.wb, tx.pkg, tst, 'table after redo');
+});
+
+test('grid: cell edits keep the structural generation (a hyperlink cell keeps its link; table headers stay refused)', async () => {
+  const fx = load('features.xlsx');
+  const styles = stylesFor(fx.wb);
+  const sheet = await fx.wb.sheet(1);
+  const k2 = gridCell(fx.wb, sheet, styles, 1, 10).link;
+  const g0 = sheet.structureGeneration;
+  const res = await applyXlsxEdit(fx.wb, fx.pkg, { op: 'setCells', sheetId: 1, cells: [{ r: 1, c: 10, input: 'relabelled' }] }, { confirmed: false });
+  assert.ok(res.ok && res.edit, JSON.stringify(res));
+  assert.strictEqual(sheet.structureGeneration, g0, 'a cell edit does not rebuild the aux lookups');
+  const after = gridCell(fx.wb, sheet, styles, 1, 10);
+  assert.strictEqual(after.d, 'relabelled');
+  assert.strictEqual(after.link, k2, 'the hyperlink stays on the edited cell');
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'hyperlink cell edited');
+  outside(fx.wb, res.edit, true);
+  await assertViewMatchesFile(fx.wb, fx.pkg, styles, 'hyperlink cell edit undone');
+
+  const tx = load('tables.xlsx');
+  const before = tx.pkg.serialize();
+  const hdr = await applyXlsxEdit(tx.wb, tx.pkg, { op: 'setCells', sheetId: 1, cells: [{ r: 0, c: 0, input: 'Renamed' }] }, { confirmed: false });
+  assert.strictEqual(hdr.ok, false);
+  assert.strictEqual(hdr.error.code, 'read-only');
+  assert.match(hdr.error.message, /header cell of table/);
+  assertBytesEqual(tx.pkg.serialize(), before, 'refused header edit changed nothing');
+  await assertViewMatchesFile(tx.wb, tx.pkg, stylesFor(tx.wb), 'table header refused');
 });
 // ---------------------------------------------------------------------------------------------------
 // Through the dispatcher (ops.ts) with a pass-through guard

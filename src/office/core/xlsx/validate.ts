@@ -515,7 +515,9 @@ function* xlsxChecks(pkg: OfficePackage, touched: string[], ctx: ValidatorContex
     let changed = false;
     if (original) {
       const before = (yield* loaded(original)).formulas;
-      for (const [part, list] of formulas) if (!sameList(list, before.get(part))) { changed = true; break; }
+      // A worksheet part that did not exist (or was not a worksheet) at load had no formulas then: a
+      // sheet added empty does not count as "formulas touched".
+      for (const [part, list] of formulas) if (!sameList(list, before.get(part) ?? [])) { changed = true; break; }
     } else {
       for (const list of formulas.values()) if (list.length > 0) { changed = true; break; }
     }

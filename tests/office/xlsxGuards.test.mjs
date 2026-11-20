@@ -15,9 +15,12 @@ import { assertG0 } from './_roundtrip.mjs';
 const { OfficePackage } = core.pkg;
 const { Workbook } = core.xlsx.workbook;
 const { checkStructuralOp } = core.xlsx.guards;
-const { applyXlsxEdit } = core.xlsx.ops;
+const { applyXlsxEdit, refreshAfterEdit } = core.xlsx.ops;
+const { applyEdit, invertEdit } = core.edits;
 const MAX_ROWS = 1_048_576;
 const MAX_COLS = 16_384;
+
+const partOf = (bytes, part) => OfficePackage.open('x.xlsx', bytes).text(part);
 
 function load(name, bytes = fixture(name)) {
   const pkg = OfficePackage.open(name, bytes);
@@ -383,17 +386,46 @@ test('ops: Tier B refusal is an error with the guard message; the package is unc
 
 test('ops: Tier C returns the confirm list unapplied; confirmed: true proceeds past the guard', async () => {
   const ctx = load('features.xlsx');
-  const op = { op: 'insertRows', sheetId: idOf(ctx.wb, 'Features'), at: 4, count: 1 };
+  const sheetId = idOf(ctx.wb, 'Features');
+  // Inserting before row 3 moves cells under a chart, an image, chart ranges and x14 ranges (Tier C).
+  const op = { op: 'insertRows', sheetId, at: 2, count: 1 };
   const first = await applyXlsxEdit(ctx.wb, ctx.pkg, op, { confirmed: false });
   assert.strictEqual(first.ok, true);
-  assert.strictEqual(first.edit, null);
+  assert.strictEqual(first.edit, null, 'unconfirmed: nothing applied');
+  assert.strictEqual(first.invalidate, 'sheet');
   assert.ok(first.confirm && first.confirm[0].includes('1 chart and 1 image'), JSON.stringify(first));
+  assert.ok(first.confirm.some((c) => c.includes('chart ranges will not be adjusted')), JSON.stringify(first.confirm));
+  assert.ok(first.confirm.some((c) => c.includes('sparkline')), JSON.stringify(first.confirm));
   assertG0(ctx.pkg);
+  assertBytesEqual(ctx.pkg.serialize(), ctx.bytes, 'confirm list returned unapplied');
+
   const second = await applyXlsxEdit(ctx.wb, ctx.pkg, op, { confirmed: true });
-  assert.ok(!(second.ok && second.confirm), 'no confirmation the second time');
-  // Past the guard: either WP-38's insertOrDelete ran, or (until it lands) its stub refused.
-  if (second.ok) assert.ok(second.edit, 'an edit was produced');
-  else assert.ok(!/keep (its|their) position/.test(second.error.message), `not a guard message: ${second.error.message}`);
+  assert.ok(second.ok, JSON.stringify(second));
+  assert.ok(!second.confirm, 'no confirmation the second time');
+  assert.ok(second.edit, 'confirmed: the operation is applied');
+  assert.strictEqual(second.edit.label, 'Insert Rows');
+  const sheet = await ctx.wb.sheet(sheetId);
+  // A3 ("…" row label) moved to A4; row 3 is empty; the read model follows the tree.
+  const a3 = partOf(ctx.bytes, 'xl/worksheets/sheet1.xml').match(/<c r="A3" t="s"><v>(\d+)<\/v>/)[1];
+  assert.match(ctx.pkg.text('xl/worksheets/sheet1.xml'), new RegExp(`<c r="A4" t="s"><v>${a3}</v>`));
+  assert.strictEqual(sheet.cellsIn([2, 0, 2, 15]).length, 0, 'the inserted row is empty');
+  assert.deepStrictEqual(sheet.cell(3, 0).value, (await Workbook.load(OfficePackage.open('f.xlsx', ctx.bytes)).sheet(sheetId)).cell(2, 0).value);
+  // Undo restores the bytes exactly.
+  applyEdit(ctx.pkg, invertEdit(second.edit));
+  refreshAfterEdit(ctx.wb, second.edit);
+  assertBytesEqual(ctx.pkg.serialize(), ctx.bytes, 'undo');
+
+  // Confirmed but nothing moves (row 5 is below all content): ok, no edit, nothing changed.
+  const below = await applyXlsxEdit(ctx.wb, ctx.pkg, { op: 'insertRows', sheetId, at: 4, count: 1 }, { confirmed: true });
+  assert.ok(below.ok && below.edit === null && !below.confirm, JSON.stringify(below));
+  assertBytesEqual(ctx.pkg.serialize(), ctx.bytes, 'nothing moved');
+
+  // Tier B stays refused even when confirmed (the note at A2), and changes nothing.
+  const blocked = await applyXlsxEdit(ctx.wb, ctx.pkg, { op: 'insertRows', sheetId, at: 0, count: 1 }, { confirmed: true });
+  assert.strictEqual(blocked.ok, false);
+  assert.strictEqual(blocked.error.code, 'blocked');
+  assert.match(blocked.error.message, /note at A2/);
+  assertBytesEqual(ctx.pkg.serialize(), ctx.bytes, 'refused: unchanged');
 });
 
 test('ops: deleteSheet always produces a confirmation list (the provider only asks for a non-empty list)', async () => {

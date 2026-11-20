@@ -11,6 +11,10 @@
 // Outputs: tests/.out/xlsxSheets/<case>.xlsx (scripts/verify-office-open.ps1).
 import { test } from 'node:test';
 import assert from 'node:assert';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import esbuild from 'esbuild';
 import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
 import { core, fixture, writeOut, assertBytesEqual } from './_helpers.mjs';
@@ -247,9 +251,11 @@ test('add: named, after a given sheet: localSheetId, activeTab and firstSheet of
   const { wb } = load('formulas.xlsx', bytes);
   await loadAll(wb);
   const { edit } = op(wb, 'add', 'New One', byName(wb, 'Data'));
-  // formulas.xlsx has a calc chain: add removes it (without fullCalcOnLoad).
-  const after = await checkEdit(wb, edit, bytes, [WB, ...CALC, 'xl/worksheets/sheet5.xml'], 'add-after-first');
+  // formulas.xlsx has a calc chain: add keeps it (no formula changed) and forces no recalculation.
+  const after = await checkEdit(wb, edit, bytes, [WB, WB_RELS, CT, 'xl/worksheets/sheet5.xml'], 'add-after-first');
   assert.ok(!/fullCalcOnLoad/.test(partText(after, WB)), 'no forced recalculation');
+  assertBytesEqual(OfficePackage.open('x.xlsx', after).bytes('xl/calcChain.xml'), OfficePackage.open('o.xlsx', bytes).bytes('xl/calcChain.xml'), 'calc chain kept');
+  assert.ok(partText(after, WB_RELS).includes('calcChain'), 'calc chain relationship kept');
   const t = partText(after, WB);
   assert.ok(t.includes('<sheet name="Data" sheetId="1" r:id="rId1"/><sheet name="New One" sheetId="5" r:id="rId8"/><sheet name="My Sheet"'), t);
   assert.ok(t.includes('<definedName name="Scoped" localSheetId="2">'));
@@ -562,6 +568,96 @@ test('delete: a table used by a formula elsewhere refuses; unused tables go with
   assert.deepStrictEqual(excelNames(w), ['Other']);
   assert.strictEqual(w.getWorksheet('Other').getCell('A1').formula, '#REF!&"x"');
   assert.ok(bytes.length > 0);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Through ops.applyXlsxEdit, with the provider-style outside undo/redo: applyEdit(invertEdit(...))
+// then ops.refreshAfterEdit ONLY (no syncSheetEntries of its own) — refreshAfterEdit re-reads the
+// sheet list whenever the edit touches workbook.xml.
+
+function outside(wb, edit, undo) {
+  const e = undo ? invertEdit(edit) : edit;
+  applyEdit(wb.pkg, e);
+  refreshAfterEdit(wb, e);
+}
+
+for (const [label, name, mk, expect] of [
+  ['add', 'basic.xlsx', () => ({ op: 'addSheet', name: 'Added' }), ['Values', 'Second Sheet', 'Added']],
+  ['add (after the first)', 'formulas.xlsx', (wb) => ({ op: 'addSheet', afterSheetId: byName(wb, 'Data') }), ['Data', 'Sheet1', 'My Sheet', "O'Brien", 'NoCache']],
+  ['delete', 'formulas.xlsx', (wb) => ({ op: 'deleteSheet', sheetId: byName(wb, 'My Sheet') }), ['Data', "O'Brien", 'NoCache']],
+  ['rename', 'formulas.xlsx', (wb) => ({ op: 'renameSheet', sheetId: byName(wb, 'Data'), name: 'Data 2024' }), ['Data 2024', 'My Sheet', "O'Brien", 'NoCache']],
+]) {
+  test(`ops: ${label}, then outside undo/redo with refreshAfterEdit: wb.sheets and the grid match a fresh load`, async () => {
+    const { pkg, wb, bytes } = load(name);
+    await loadAll(wb);
+    const res = await applyXlsxEdit(wb, pkg, mk(wb), { confirmed: true });
+    assert.ok(res.ok && res.edit, JSON.stringify(res.ok ? res : res.error));
+    assert.strictEqual(res.invalidate, 'workbook');
+    const after = save(pkg, label);
+    assert.deepStrictEqual(wb.sheets.map((s) => s.name), expect);
+    await assertModel(wb, `${label} applied`);
+    for (let round = 0; round < 2; round++) {
+      outside(wb, res.edit, true);
+      assertBytesEqual(pkg.serialize(), bytes, `${label} undo ${round}`);
+      await loadAll(wb);
+      await assertModel(wb, `${label} undo ${round}`);
+      outside(wb, res.edit, false);
+      assertBytesEqual(pkg.serialize(), after, `${label} redo ${round}`);
+      assert.deepStrictEqual(wb.sheets.map((s) => s.name), expect, `${label} redo ${round}: names`);
+      await loadAll(wb);
+      await assertModel(wb, `${label} redo ${round}`);
+    }
+    // A cell edit on the restored list goes to the right sheet.
+    const target = wb.sheets.find((s) => s.kind === 'worksheet');
+    const cell = await applyXlsxEdit(wb, pkg, { op: 'setCells', sheetId: target.id, cells: [{ r: 30, c: 0, input: 'after' }] }, { confirmed: false });
+    assert.ok(cell.ok && cell.edit && cell.edit.changes.some((c) => c.part === target.part), JSON.stringify(cell.ok ? '' : cell.error));
+    await assertModel(wb, `${label} cell edit after redo`);
+  });
+}
+
+test('ops: a sheet op aborted after writing restores wb.sheets and every touched sheet index', async () => {
+  // A bundle whose calc handling throws: rename and delete (which force recalculation) fail after
+  // sheetsOps has written (and re-read wb.sheets); ops.sheetOp aborts and must restore the read model.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const root = path.join(here, '..', '..');
+  const outfile = path.join(root, 'tests', '.build', 'office-core-failcalc.cjs');
+  await esbuild.build({
+    entryPoints: [path.join(root, 'src', 'office', 'core', 'index.ts')],
+    bundle: true, platform: 'node', format: 'cjs', outfile, logLevel: 'silent',
+    plugins: [{
+      name: 'fail-calc',
+      setup(b) {
+        b.onLoad({ filter: /[\\/]xlsx[\\/]calc\.ts$/ }, () => ({
+          contents: 'export function needsFullCalcOnLoad() { return true; }\nexport function ensureFullCalcOnLoad() { throw new Error("calc handling failed (test)"); }',
+          loader: 'ts',
+        }));
+      },
+    }],
+  });
+  const c2 = createRequire(import.meta.url)(outfile);
+  for (const mk of [(wb) => ({ op: 'renameSheet', sheetId: wb.sheets[1].id, name: 'Renamed' }), (wb) => ({ op: 'deleteSheet', sheetId: wb.sheets[1].id })]) {
+    const pkg = c2.pkg.OfficePackage.open('formulas.xlsx', fixture('formulas.xlsx'));
+    const wb = c2.xlsx.workbook.Workbook.load(pkg);
+    for (const e of wb.sheets) if (e.kind === 'worksheet') await wb.sheet(e.id);
+    const before = wb.sheets.map((e) => ({ ...e }));
+    const op = mk(wb);
+    const res = await c2.xlsx.ops.applyXlsxEdit(wb, pkg, op, { confirmed: true });
+    assert.strictEqual(res.ok, false, op.op);
+    assert.match(res.error.message, /calc handling failed/);
+    assertBytesEqual(pkg.serialize(), fixture('formulas.xlsx'), `${op.op}: aborted, unchanged`);
+    assert.deepStrictEqual(wb.sheets, before, `${op.op}: wb.sheets restored (names, ids, parts)`);
+    // Every loaded sheet reads the restored tree (rename/delete had rewritten formulas on other sheets).
+    for (const e of wb.sheets) {
+      if (e.kind !== 'worksheet') continue;
+      // A sheet whose deletion was rolled back has a re-created tree: it reloads under the same id.
+      const live = wb.loadedSheet(e.id) ?? await wb.sheet(e.id);
+      const fresh = await Workbook.load(OfficePackage.open('f.xlsx', fixture('formulas.xlsx'))).sheet(e.id);
+      const rows = (s) => s.cellsIn([0, 0, 39, 12]).map((c) => JSON.stringify([c.r, c.c, c.value, c.formula]));
+      assert.deepStrictEqual(rows(live), rows(fresh), `${op.op}: ${e.name} cells`);
+      const tree = pkg.xml(live.part).root;
+      for (const c of live.cellsIn([0, 0, 39, 12])) assert.strictEqual(rootOf(live.cellNode(c.r, c.c)), tree, `${op.op}: ${e.name} (${c.r}, ${c.c}) on the tree`);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------------------------
