@@ -316,8 +316,8 @@
   - [ ] WP-01 Spikes
   - [x] WP-02 Scaffolding, dependencies, test bundle, housekeeping
   - [ ] WP-03 Fixtures and generators
-  - [ ] WP-04 ZIP container
-  - [ ] WP-05 Lossless XML
+  - [x] WP-04 ZIP container (`core/zip.ts`, 22 tests)
+  - [x] WP-05 Lossless XML (`core/xml.ts`, 19 tests)
   - [ ] WP-06 OPC, OfficePackage, load classification (Gate R0)
 - [ ] Phase 1 — read-only viewers
   - [ ] WP-07 Protocol contract freeze
