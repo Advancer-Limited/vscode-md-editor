@@ -305,3 +305,16 @@
 - [x] PR #80 fix/bump-1.5.0 → develop (version 1.5.0 + CHANGELOG), merge
 - [x] PR #81 develop → master (Release 1.5.0), merge
 - [x] Publish 1.5.0 from master to VS Code Marketplace
+
+## 2026-11-20 Office viewers/editors — Word (.docx) + Excel (.xlsx) (feature/office-viewers)
+
+- [x] Gather requirements (user): .docx/.xlsx only; viewer first, basic edit; default editor; View mode by default with an Edit toggle
+- [x] Spec — `docs/office-viewers-spec.md` (Fable subagent)
+- [x] Resolve spec open questions (user): real dates in v1, Word table-cell text editable in v1, warn-and-allow for charts/pivots on row/col changes
+- [ ] Implementation plan — `docs/office-viewers-plan.md` (Fable subagent)
+- [ ] Phase 0 — spikes + core (ZIP container, lossless XML)
+- [ ] Phase 1 — read-only viewers
+- [ ] Phase 2 — save pipeline + Excel cell editing
+- [ ] Phase 3 — Word editing
+- [ ] Phase 4 — Excel structure (rows/columns/sheets)
+- [ ] Post-v1: Excel range → Markdown table; Word → Markdown; Markdown → Word; Office files in wikilinks/graph

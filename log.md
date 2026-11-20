@@ -755,3 +755,11 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 - PR #81: develop → master release merge.
 - Published `advancer-limited.vscode-md-editor` v1.5.0 from master (vsce reported DONE; Marketplace listing lags a few minutes).
 - Dev-host testing tip: the default profile's other markdown extensions claim `.md`; launch with an isolated `--user-data-dir`/`--extensions-dir` and a `workbench.editorAssociations` setting for `vscodeMdEditor.editor`.
+
+## 2026-11-20 — Office viewers/editors: requirements + spec (feature/office-viewers)
+
+**Decisions (user):** v1 formats are .docx and .xlsx only. The priority is viewing, with basic editing. The editors are registered as the default for both formats and open in View mode with an Edit toggle. Word edits: paragraph text, bold/italic/underline, headings, lists, adding/removing paragraphs, and text in table cells. Everything else is kept unchanged on save. Excel edits: values, formula text (cached results are kept and Excel recalculates on load, with no calc engine), real dates (a minimal styles.xml patch), inserting/deleting rows and columns, and adding/renaming/deleting sheets. For charts, pivot sources and drawings, a row/column change warns and is then allowed. Post-v1, in order: Excel range → Markdown table, Word → Markdown, Markdown → Word, Office files in wikilinks/graph. Models (user): Fable wrote the spec and plan, and implementation uses Opus for the code that can corrupt files and Sonnet for mechanical work.
+
+**Spec** (`docs/office-viewers-spec.md`). Both formats are saved by patching the original OOXML package. The ZIP reader/writer is in-house on top of fflate, and unchanged entries are copied as raw bytes. A lossless in-house XML tree rejects DOCTYPE, so it can't be used for XXE. Word viewing uses docx-preview; Excel uses an in-house virtualised grid with numfmt and @borgar/fx. Two `CustomEditorProvider`s do all parsing and patching in the host, and every save is checked in memory before anything is written. Rejected: ExcelJS and SheetJS CE (their round trips lose data) and mammoth for viewing.
+
+**Correction:** `GltfEditorProvider` is a `CustomTextEditorProvider` over JSON text, so the Office editors are the repo's first binary custom editors.
