@@ -322,12 +322,12 @@
   - [ ] Gate R0 — self-review of zip/xml/package against spec §3.2–3.3 (G1/G2 green on all 31 openable fixtures)
 - [ ] Phase 1 — read-only viewers
   - [ ] WP-07 Protocol contract freeze
-  - [ ] WP-08 Host shell
-  - [ ] WP-09 Common webview chrome
+  - [x] WP-08 Host shell
+  - [x] WP-09 Common webview chrome
   - [ ] WP-10 Word viewer
-  - [ ] WP-11 Xlsx read model
-  - [ ] WP-12 Xlsx styles and display formatting
-  - [ ] WP-13 Grid maths
+  - [x] WP-11 Xlsx read model
+  - [x] WP-12 Xlsx styles and display formatting
+  - [x] WP-13 Grid maths
   - [ ] WP-14 Xlsx provider view path
   - [ ] WP-15 Grid component
   - [ ] WP-16 Excel viewer shell

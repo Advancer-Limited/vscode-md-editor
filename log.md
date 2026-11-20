@@ -810,3 +810,29 @@ Decisions: keep the bookmark hook (no patched docx-preview); keep `bytes: Uint8A
 - **VML / unparseable parts (decision, §10.1).** `open` parses only content types, root rels and the main part's root tag. No other part is parsed until a caller asks, and serialize never parses untouched parts. A malformed part is therefore copied raw and never blocks opening: `xml()` throws `XmlError` for it only to the caller that asked (not cached), and `touch()` refuses an unparsed part. Tested with a deliberately malformed `vmlDrawing1.vml` in features.xlsx. All 343 real fixture parts, VML included, pass G2 now.
 - **G2 full run** is now unconditional in package.test.mjs: 31 archives, every .xml/.rels/.vml part through OfficePackage. Plan acceptance tests present: G1 force, G0, G2, main part via rels (renamed in-test), the six fixture classifications, Strict view-only, G3 touch, setPart add/delete through readZip + JSZip.
 - **Resolved ambiguities.** `Relationship.target` is the raw Target attribute. `partNameFromTarget` drops `#fragment`, does no percent-decoding and throws on escaping the root. `touchedParts()` lists parts that were touched and parts that were set, created or deleted. `setPart` doesn't maintain content types or rels (the caller does, WP-18+). `xmlAsync` returns the same tree as `xml()`, and a `setPart` during an async parse never installs the stale tree. Directory entries are copied but aren't listed as parts.
+
+## 2026-11-20 — Phase 1 group B2: WP-07, 08, 09, 11, 12, 13 (merged into feature/office-word-viewer)
+
+- **WP-07 (Sonnet):** protocol frozen in `src/office/protocol.ts`, with validators `parseCommonToHost`, `parseDocxToHost` and `parseXlsxToHost` and 95 reject cases. Amendments made before the freeze:
+  - a generic `requestFailed` reply, so every request that carries a requestId gets exactly one answer;
+  - sheet-name rules;
+  - the `openLink` allow-list (http, https, mailto);
+  - `PROTOCOL_LIMITS` as the single source of validator caps.
+- **WP-08 (Opus):** `OfficeDocument`, `OfficeEditorProviderBase`, a `DocxEditorProvider` skeleton, `featureFlags` (all off) and `loadErrors` (the §10.3 text), plus step 2d in `extension.ts` and the docx `customEditors` entry.
+  - `OfficeDocument` reads through workspace.fs, including backups, and never throws. A `git:` document is read-only. It shows a `~$` lock-file notice, and a debounced watcher reloads the document when clean or shows a notice when dirty.
+  - Before rendering, a **DOCTYPE guard** scans every XML/.rels part and refuses the document as `damaged`, naming the part.
+  - Host tests bundle the code with a `vscode` stub. Minified `dist/extension.js` grows from 71.6 KB to 128.9 KB.
+- **WP-09 (Sonnet):** `media/officeCommon.js` and `officeCommon.css` provide the toolbar (roving tabindex), notices, error view, edit toggle (Ctrl+E) and live-region hints. All DOM is built with textContent.
+- **WP-11 (Opus):** the xlsx read model in `workbook.ts`, `sheet.ts` and `sharedStrings.ts`, cross-checked against ExcelJS. `large.xlsx` parses and indexes in 0.65–3 s; the XML parse dominates.
+  - Dependants of a shared formula carry no formula text.
+  - Rows or cells out of order are refused as `unsupported-xml-layout`.
+- **WP-12 (Sonnet):** `StyleTable` and `displayString`/`editSeed`, using numfmt with the S7 notes applied. Tinted theme colours are within ±3/255 of Excel's.
+  - `editSeed` adds an apostrophe to text that would otherwise re-parse as a number, boolean, date or formula.
+  - The expected display strings are hand-written. Checking them against real Excel is on the Gate R1 checklist.
+- **WP-13 (Sonnet):** `media/xlsxGridMath.js` gives O(log k) axes, visible windows, request bands of at most 20k cells, Excel-style navigation, selection stats and TSV.
+- **Orchestrator decisions:**
+  - Clipboard: the webview may send plain text through `writeClipboard`, capped by PROTOCOL_LIMITS and never HTML. Spec §12 is to be loosened to match.
+  - `notices` messages carry the full list.
+  - Every load error offers Open in Word/Excel.
+  - The docx `customEditors` entry lives on this branch, so PR-3 must not merge without WP-10.
+- **Combined:** check-types clean, compile OK, 320/320 tests.
