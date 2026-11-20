@@ -7,6 +7,7 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 - **WYSIWYG Editing** — Edit markdown in a rich preview with contenteditable, or switch to split view or raw markdown mode.
 - **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode). A dedicated split-view editor opens `.mmd`/`.mermaid` files directly, with **syntax highlighting**, **error-line marking**, **zoom and pan**, **PNG / print (Save as PDF) export**, and **authoring help** (template gallery, snippet palette, and node-ID completions) — all themed to match VS Code's light or dark theme.
 - **3D Model Viewer** — open a `.gltf` file to get its JSON source alongside a live 3D preview rendered with three.js, with orbit, pan and zoom. The preview updates as you edit and keeps your camera position.
+- **Word and Excel Viewers** — `.docx` and `.xlsx` files open in a read-only viewer: paged Word documents and a scrollable, styled Excel grid, themed to match VS Code. Nothing is ever written to the file.
 - **Task Checklists** — GFM `- [ ] task` / `- [x] task` checkboxes render as clickable checkboxes in the preview and toggle directly in the markdown source. Handy for spec-driven workflows (e.g. GitHub Spec Kit `tasks.md` files).
 - **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
 - **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
@@ -77,6 +78,36 @@ Open a `.gltf` file and you'll get the JSON source on the left with a live 3D pr
 
 Models with external `.bin` buffers and textures work as long as those files sit within your workspace folder. Binary `.glb` files aren't supported yet, nor are Draco/KTX2-compressed assets — those report a clear error rather than failing silently.
 
+### Word and Excel viewers (`.docx`, `.xlsx`)
+
+Opening a `.docx` or `.xlsx` file in VS Code shows it in a read-only viewer instead of the "cannot display binary file" message. The viewers never modify the file and never mark it as changed. Editing is coming in a later release.
+
+**Word documents** are drawn as pages, on a themed background, with the document's own colours (a light page even in a dark theme, as a PDF viewer does). You see text and formatting, tables, pictures, headers and footers, footnotes and endnotes, and lists. There is a zoom control (50-200%, Fit width, Ctrl+wheel) and an **Open in Word** button. Use Ctrl+F for VS Code's find, and click `http`, `https` and `mailto` links to open them in your browser (internal `#bookmark` links scroll to their target).
+
+**Excel workbooks** open in a spreadsheet grid with sheet tabs, row and column headers, the file's column widths, row heights, frozen panes and merged cells, and the file's fonts, fills, borders and number, date and currency formats. Formula cells show their saved result and the formula appears in the formula bar; a formula that has never been calculated shows its text marked "Not calculated". Select cells to see Sum, Average and Count in the status bar. Ctrl+F searches the current sheet or all sheets, Ctrl+C copies the selection as tab-separated text, Ctrl+click follows a hyperlink, and Ctrl+PageUp / Ctrl+PageDown switch sheets. Hidden sheets are listed in a menu, and cell notes appear as tooltips.
+
+**Present but not shown.** Some content can't be drawn: tracked changes (the document is shown as if every change were accepted), comments, charts, SmartArt, embedded objects, equations, embedded HTML, macros, and pictures linked from the web in Word; and charts, images, shapes, pivot tables, sparklines, conditional formatting and data validation in Excel. A notice bar names what is there but not displayed. All of it stays in the file untouched; the viewer only reads.
+
+**Limits.** Very large files are cut back: an Excel sheet over 500,000 cells shows its first 50,000 rows with a banner, and files over 250 MB are refused. Password-protected files, files that are really the older `.doc`/`.xls` format, Office lock files (`~$name.docx`), empty files and damaged files each show an explanation with an **Open in Word/Excel** button; the viewer never tries to repair or decrypt a file.
+
+**Known limitations.**
+
+- Word pages follow the document's explicit page and section breaks. The viewer does not re-paginate like Word, so page numbers and page counts can differ from Word.
+- Word headings are displayed with the document's formatting, but are not yet announced as headings, with their level, by screen readers. This arrives with editing.
+- Excel numbers and dates are formatted in US English regardless of your locale. Rotated text, gradient and pattern fills, rich text inside a cell, and zoom are not supported.
+- `.doc`, `.xls`, `.xlsm`, `.csv`, `.pptx` and other Office formats are not handled.
+
+**Switching to another editor.** The viewers become the default for `.docx` and `.xlsx`. To open a file with something else just once, right-click the tab and choose **Reopen Editor With...**, or right-click the file in the Explorer and choose **Open With...**; pick **Configure default editor for '*.docx'...** there to change it permanently. Or set it in `settings.json` (for example `"default"` for VS Code's built-in handling, or another extension's editor id):
+
+```json
+"workbench.editorAssociations": {
+  "*.docx": "default",
+  "*.xlsx": "default"
+}
+```
+
+**Privacy and trust.** Documents are opened entirely on your machine; no content is uploaded and the viewer makes no network requests, so pictures linked from the web simply appear broken. Documents cannot run code (macros are never executed). The viewers work in untrusted workspaces because they run nothing from the workspace.
+
 ### Comparing Versions
 
 Compare your markdown files against previous git commits:
@@ -123,6 +154,12 @@ Grammar checking works out of the box with the free LanguageTool API (1500 chara
 |---------|---------|-------------|
 | `vscodeMdEditor.graph.defaultMode` | `"local"` | Default graph view: `local` or `global` |
 | `vscodeMdEditor.graph.localDepth` | `1` | BFS depth for local graph (1-3 hops) |
+
+### Office Viewer Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `vscodeMdEditor.office.sheetAppearance` | `"theme"` | How Excel sheets are drawn: `theme` follows the VS Code color theme, `light` always shows the sheet on a light background as authored (applies to workbooks opened afterwards) |
 
 ## Contributing
 
