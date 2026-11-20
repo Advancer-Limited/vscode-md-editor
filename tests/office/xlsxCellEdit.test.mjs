@@ -469,7 +469,7 @@ test('refusals: protected sheet, chartsheet, limits, duplicates, bad coordinates
   assert.strictEqual((await run(wb, pkg, { op: 'clearCells', sheetId: 1, range: [0, 0, -1, 2] })).error.code, 'invalid');
   for (const op of [{ op: 'insertRows', sheetId: 1, at: 2, count: 1 }, { op: 'deleteCols', sheetId: 1, at: 0, count: 2 },
     { op: 'addSheet' }, { op: 'renameSheet', sheetId: 1, name: 'X' }, { op: 'deleteSheet', sheetId: 2 }]) {
-    assert.deepStrictEqual(await run(wb, pkg, op), { ok: false, error: { code: 'blocked', message: 'Not available yet' } }, op.op);
+    assert.deepStrictEqual(await run(wb, pkg, op, true), { ok: false, error: { code: 'blocked', message: 'Not available yet' } }, op.op);
   }
   const big = await run(wb, pkg, set(1, [[0, 0, 'x'.repeat(32767)]]));
   assert.ok(big.ok, 'exactly 32,767 characters is accepted');
