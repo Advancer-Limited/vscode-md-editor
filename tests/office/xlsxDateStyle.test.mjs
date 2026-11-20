@@ -8,6 +8,7 @@ import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
 import { core, fixture, writeOut, assertBytesEqual } from './_helpers.mjs';
 import { assertG3, assertG4, assertG5, rng } from './_roundtrip.mjs';
+import { assertViewMatchesFile } from './_viewCheck.mjs';
 
 const { OfficePackage } = core.pkg;
 const { Workbook } = core.xlsx.workbook;
@@ -215,6 +216,29 @@ test('date-formatted, currency-formatted target: styles.xml untouched, serial st
   assert.strictEqual((await excel(t.after)).getWorksheet('Values').getCell('B21').value, '2024-03-15');
 });
 
+test('a custom number format whose code is "General" is General: the date style patch applies', async () => {
+  const bytes = await patched('no-date-style.xlsx', {
+    [STYLES]: (t) => t
+      .replace('<fonts count="2">', '<numFmts count="1"><numFmt numFmtId="164" formatCode="General"/></numFmts><fonts count="2">')
+      .replace('<xf numFmtId="0" fontId="0" fillId="2" borderId="1" xfId="0" applyFill="1" applyBorder="1"/>',
+        '<xf numFmtId="164" fontId="0" fillId="2" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1"/>'),
+  });
+  const { pkg, wb } = load('general-custom.xlsx', bytes);
+  const styles = core.xlsx.ops.stylesFor(wb);
+  assert.strictEqual(styles.numFmtId(2), 164);
+  assert.ok(styles.isGeneralStyle(2) && styles.isGeneralStyle(0), "id 164 \"General\" and id 0 are General");
+  const res = await run(wb, pkg, set(1, [[1, 1, '2024-03-15']]));
+  assert.ok(res.ok && res.edit, JSON.stringify(res));
+  assert.ok(res.edit.changes.some((c) => c.part === STYLES), 'styles patched');
+  const text = pkg.text(SHEET1);
+  assert.ok(text.includes('<c r="B2" s="3"><v>45366</v></c>'), text);
+  assert.ok(pkg.text(STYLES).includes('<xf numFmtId="14" fontId="0" fillId="2" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1"/></cellXfs>'));
+  assert.ok(styles.isDateStyle(3));
+  const after = save(pkg);
+  writeOut(OUT, 'general-custom.xlsx', after);
+  assert.ok((await excel(after)).getWorksheet(1).getCell('B2').value instanceof Date);
+});
+
 test('no-date-style-nocount.xlsx: no count attribute is invented', async () => {
   const { styles, orig } = await checkEdit({ name: 'no-date-style-nocount.xlsx', op: set(1, [[2, 1, '2024-03-15']]),
     touched: PATCHED, out: 'nocount' });
@@ -279,7 +303,7 @@ function capped(n) {
 }
 
 test(`the record cap: ${MAX_CELL_XFS - 1} records -> append the ${MAX_CELL_XFS}th; ${MAX_CELL_XFS} records -> text`, async () => {
-  assert.strictEqual(MAX_CELL_XFS, 65_490);
+  assert.strictEqual(MAX_CELL_XFS, 65_430);   // Open XML SDK schema: cellXfs/xf maxOccurs
   const below = await checkEdit({ name: 'below.xlsx', bytes: await capped(MAX_CELL_XFS - 1), op: set(1, [[2, 1, '2024-03-15']]),
     touched: PATCHED, out: 'cap-below' });
   assert.ok(below.sheet.includes(`<c r="B3" s="${MAX_CELL_XFS - 1}"><v>45366</v></c>`));
@@ -391,6 +415,9 @@ test('a refused paste (bad formula after a date) leaves styles.xml and the packa
 const POOL = ['', '1', '-2.5', 'TRUE', 'text', "'2024-01-01", '2024-03-15', '2024-03-15T08:30', '1900-02-28', '1999-12-31 23:59:59',
   '=1+1', '=A2*3', '=SUM(A1:A3)', '=XLOOKUP(1,A:A,B:B)', '=TODAY()', '12%', '#N/A'];
 
+/** Refused inputs mixed into pastes after dates (Gate R2 F1: the date style patch must roll back with the view). */
+const BAD = ['=IF(', '=SUM(,)', '=NoSuch!A1', '={1,2;3}'];
+
 async function randomMix(name, seed, steps) {
   const { pkg, wb, bytes } = load(name);
   const rand = rng(seed);
@@ -398,7 +425,7 @@ async function randomMix(name, seed, steps) {
   const sheetIds = wb.sheets.filter((s) => s.kind === 'worksheet').map((s) => s.id);
   const done = [];
   const undone = [];
-  let applied = 0, undos = 0, styleEdits = 0;
+  let applied = 0, undos = 0, styleEdits = 0, refused = 0;
   for (let i = 0; i < steps; i++) {
     const x = rand();
     if (x < 0.15 && done.length) {
@@ -418,22 +445,26 @@ async function randomMix(name, seed, steps) {
       } else {
         const cells = new Map();
         for (let k = 1 + Math.floor(rand() * 4); k > 0; k--) cells.set(`${Math.floor(rand() * 25)},${Math.floor(rand() * 7)}`, pick(POOL));
-        op = set(sheetId, [...cells].map(([rc, input]) => [...rc.split(',').map(Number), input]));
+        const list = [...cells].map(([rc, input]) => [...rc.split(',').map(Number), input]);
+        if (list.length > 1 && rand() < 0.2) list[list.length - 1][2] = pick(BAD);
+        op = set(sheetId, list);
       }
       const res = await run(wb, pkg, op);
+      if (!res.ok) refused++;
       if (res.ok && res.edit) {
         done.push(res.edit); undone.length = 0; applied++;
         if (res.edit.changes.some((c) => c.part === STYLES)) styleEdits++;
       }
     }
     save(pkg);   // packageValidator + xlsxValidator at every step
+    await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `${name} step ${i}`, [0, 0, 29, 9]);
   }
   const final = save(pkg);
   writeOut(OUT, `random-${name}`, final);
   await excel(final);
   while (done.length) { const e = done.pop(); applyEdit(pkg, invertEdit(e)); refreshAfterEdit(wb, e); }
   assertBytesEqual(pkg.serialize(), bytes, `${name}: full undo`);
-  assert.ok(applied >= 40 && undos >= 8, `exercised: ${applied} edits, ${undos} undos`);
+  assert.ok(applied >= 40 && undos >= 8 && refused >= 3, `exercised: ${applied} edits, ${undos} undos, ${refused} refusals`);
   return styleEdits;
 }
 

@@ -8,7 +8,13 @@
 //   sheet rules     every worksheet part in `touched`: rows strictly ascending by r, cells strictly
 //                   ascending within their row and inside the sheet, dimension covers every cell,
 //                   c/@s < cellXfs record count, t="s" index < shared-string count, merge ranges do
-//                   not overlap, every <f> parses, each shared-formula group has exactly one master
+//                   not overlap, every <f> parses, each shared-formula group has exactly one master;
+//                   with a ValidatorContext also: every formula the edit changed (its text differs
+//                   from the cell's formula as loaded, a shared dependant's read through its master)
+//                   passes refs.validateFormula in the workbook context (function argument counts,
+//                   literals, sheet/table names, no external references) — unless the loaded sheet
+//                   already had a formula failing for the same reason (a structural shift or a
+//                   materialisation rewrites file formulas without making them worse)
 //   styles rules    when the styles part is touched: cellXfs/@count (when present) equals the number
 //                   of xf records; every xf/@numFmtId is built-in (< 164) or defined in numFmts;
 //                   fontId/fillId/borderId within their tables, xfId < cellStyleXfs records; every
@@ -21,7 +27,7 @@
 // loaded ones (without a context: a touched sheet has any formula).
 //
 // The validator reads the XML trees directly — it shares no code with the writers it checks except the
-// lossless parser, the A1 parser and the formula parser (refs.validateFormula).
+// lossless parser, the A1 parser and the formula checks (refs.checkFormulaSyntax / validateFormula).
 //
 // No `vscode` import here (core rule).
 
@@ -34,7 +40,8 @@ import type { Relationship } from '../opc.js';
 import { isMainNs } from './sharedStrings.js';
 import { MAX_COLS, MAX_ROWS, a1ToRange } from './sheet.js';
 import type { Range } from './sheet.js';
-import { validateFormula } from './refs.js';
+import { checkFormulaSyntax, formulaContextOf, translateFormula, validateFormula } from './refs.js';
+import type { FormulaContext } from './refs.js';
 
 interface Problem { key: string; message: string }
 
@@ -184,16 +191,29 @@ function sharedStringCount(pkg: OfficePackage, sstPart: string | null): number {
 // ---------------------------------------------------------------------------------------------------
 // Sheet rules
 
-interface SheetScan { problems: Problem[]; formulas: string[] }
+interface SheetScan {
+  problems: Problem[];
+  /** Every `<f>` (label + serialised element), in order: the calc-chain comparison. */
+  formulas: string[];
+  /** Formula text written in the cell (not data tables, not empty), by cell label. */
+  explicit: Array<[string, string]>;
+  /** The formula each formula cell has: its own text, or a shared dependant's master text translated to it. */
+  effective: Map<string, string>;
+}
 
 function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: number): SheetScan {
   const problems: Problem[] = [];
   const formulas: string[] = [];
+  const explicit: Array<[string, string]> = [];
+  const effective = new Map<string, string>();
+  const done = (): SheetScan => ({ problems, formulas, explicit, effective });
   const add = (key: string, message: string): void => { problems.push({ key: `${lower(part)}|${key}`, message: `${part}: ${message}` }); };
   let root: XmlElement;
-  try { root = pkg.xml(part).root; } catch (e) { add('xml', errText(e)); return { problems, formulas }; }
+  try { root = pkg.xml(part).root; } catch (e) { add('xml', errText(e)); return done(); }
   const ns = root.ns;
-  if (root.local !== 'worksheet' || !isMainNs(ns)) { add('root', 'root element is not a SpreadsheetML worksheet'); return { problems, formulas }; }
+  if (root.local !== 'worksheet' || !isMainNs(ns)) { add('root', 'root element is not a SpreadsheetML worksheet'); return done(); }
+  const masterAt = new Map<string, { r: number; c: number; text: string }>();
+  const dependantsAt: Array<{ label: string; si: string; r: number; c: number }> = [];
 
   let box: Range | null = null;
   const masters = new Map<string, number>();
@@ -235,17 +255,29 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
         formulas.push(`${label}\u0000${serialize(f)}`);
         if (ft === 'shared') {
           const si = attr(f, '', 'si') ?? '';
-          if (attr(f, '', 'ref') !== undefined) masters.set(si, (masters.get(si) ?? 0) + 1);
-          else dependants.add(si);
+          if (attr(f, '', 'ref') !== undefined) {
+            masters.set(si, (masters.get(si) ?? 0) + 1);
+            if (!masterAt.has(si)) masterAt.set(si, { r: rc[0], c: rc[1], text });
+          } else {
+            dependants.add(si);
+            if (text === '') dependantsAt.push({ label, si, r: rc[0], c: rc[1] });
+          }
         }
         if (ft !== 'dataTable' && text !== '') {
-          const check = validateFormula(text);
+          explicit.push([label, text]);
+          effective.set(label, text);
+          const check = checkFormulaSyntax(text);
           if (!check.ok) add(`f:${label}`, `cell ${label} has a formula that does not parse (at ${check.position}: ${check.message})`);
         } else if (ft === 'normal' || ft === 'array') {
           add(`f-empty:${label}`, `cell ${label} has an empty formula`);
         }
       }
     }
+  }
+  for (const d of dependantsAt) {
+    const m = masterAt.get(d.si);
+    if (!m || m.text === '') continue;
+    try { effective.set(d.label, translateFormula(m.text, d.r - m.r, d.c - m.c)); } catch { /* not comparable */ }
   }
   for (const [si, n] of masters) if (n !== 1) add(`shared:${si}`, `shared formula group si="${si}" has ${n} masters`);
   for (const si of dependants) if (!masters.has(si)) add(`shared:${si}`, `shared formula group si="${si}" has no master`);
@@ -275,7 +307,31 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
       if (b[1] <= a[3] && b[3] >= a[1]) add(`merge-overlap:${merges[i].ref}:${merges[j].ref}`, `merged ranges ${merges[i].ref} and ${merges[j].ref} overlap`);
     }
   }
-  return { problems, formulas };
+  return done();
+}
+
+/**
+ * Formulas of `cur` the edit changed (text differs from the loaded cell's formula in `orig`) that
+ * refs.validateFormula refuses in `fctx`, unless the loaded sheet had a formula refused for the same reason.
+ */
+function changedFormulaProblems(part: string, cur: SheetScan, orig: SheetScan | undefined, fctx: FormulaContext): Problem[] {
+  const out: Problem[] = [];
+  let before: Set<string> | undefined;
+  for (const [label, text] of cur.explicit) {
+    if (orig?.effective.get(label) === text) continue;
+    const check = validateFormula(text, fctx);
+    if (check.ok) continue;
+    if (!before) {
+      before = new Set();
+      for (const t of orig?.effective.values() ?? []) {
+        const v = validateFormula(t, fctx);
+        if (!v.ok) before.add(v.message);
+      }
+    }
+    if (before.has(check.message)) continue;
+    out.push({ key: `${lower(part)}|fctx:${label}`, message: `${part}: cell ${label} has a formula Excel would refuse (${check.message})` });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -338,10 +394,11 @@ function stylesProblems(pkg: OfficePackage, part: string): Problem[] {
 // ---------------------------------------------------------------------------------------------------
 
 /** Every rule for `pkg` within the scope of `touched` (lower-case part names). */
-function problemsOf(pkg: OfficePackage, touched: ReadonlySet<string>): { problems: Problem[]; facts?: WorkbookFacts; formulas: Map<string, string[]> } {
+function problemsOf(pkg: OfficePackage, touched: ReadonlySet<string>): { problems: Problem[]; facts?: WorkbookFacts; formulas: Map<string, string[]>; scans: Map<string, SheetScan> } {
   const facts = workbookFacts(pkg);
   const formulas = new Map<string, string[]>();
-  if (Array.isArray(facts)) return { problems: facts, formulas };
+  const scans = new Map<string, SheetScan>();
+  if (Array.isArray(facts)) return { problems: facts, formulas, scans };
   const problems = facts.problems.slice();
   const xfCount = cellXfCount(pkg, facts.stylesPart);
   let sstCount: number | undefined;
@@ -351,9 +408,10 @@ function problemsOf(pkg: OfficePackage, touched: ReadonlySet<string>): { problem
     const scan = scanSheet(pkg, s.part, xfCount, sstCount);
     problems.push(...scan.problems);
     formulas.set(lower(s.part), scan.formulas);
+    scans.set(lower(s.part), scan);
   }
   if (facts.stylesPart && touched.has(lower(facts.stylesPart))) problems.push(...stylesProblems(pkg, facts.stylesPart));
-  return { problems, facts, formulas };
+  return { problems, facts, formulas, scans };
 }
 
 const sameList = (a: readonly string[] | undefined, b: readonly string[] | undefined): boolean =>
@@ -365,15 +423,17 @@ const sameList = (a: readonly string[] | undefined, b: readonly string[] | undef
  */
 export const xlsxValidator: Validator = function xlsxValidator(pkg, touched, ctx) {
   const scope = new Set(touched.map(lower));
-  const { problems, facts, formulas } = problemsOf(pkg, scope);
+  const { problems, facts, formulas, scans } = problemsOf(pkg, scope);
   if (!facts) return problems.map((p) => p.message);
   const original = ctx?.original();
+  let loadedScan: ReturnType<typeof problemsOf> | undefined;
+  const loaded = (o: OfficePackage): ReturnType<typeof problemsOf> => (loadedScan ??= problemsOf(o, scope));
 
   // Calc chain absent whenever formulas were touched (§9.5, §13.3).
   if (hasCalcChain(pkg, facts)) {
     let changed = false;
     if (original) {
-      const before = problemsOf(original, scope).formulas;
+      const before = loaded(original).formulas;
       for (const [part, list] of formulas) if (!sameList(list, before.get(part))) { changed = true; break; }
     } else {
       for (const list of formulas.values()) if (list.length > 0) { changed = true; break; }
@@ -383,8 +443,14 @@ export const xlsxValidator: Validator = function xlsxValidator(pkg, touched, ctx
 
   let out = problems;
   if (out.length > 0 && original) {
-    const before = new Set(problemsOf(original, scope).problems.map((p) => p.key));
+    const before = new Set(loaded(original).problems.map((p) => p.key));
     out = out.filter((p) => !before.has(p.key));
+  }
+
+  // Changed formulas pass the contextual checks (only with the loaded package to tell what changed).
+  if (original) {
+    const fctx = formulaContextOf(pkg);
+    if (fctx) for (const [part, scan] of scans) out.push(...changedFormulaProblems(part, scan, loaded(original).scans.get(part), fctx));
   }
 
   // Every cellXfs record that existed at load is still present, at the same index, with identical text.

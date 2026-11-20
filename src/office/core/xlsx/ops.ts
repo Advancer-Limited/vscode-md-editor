@@ -3,7 +3,9 @@
 // `applyXlsxEdit` turns one XlsxEditOp into one OfficeEdit through an EditBuilder. The builder applies
 // as it records, so on `ok: true` with a non-null `edit` the package ALREADY HOLDS the edit: the
 // caller records it for undo/redo (e.g. `undoRedoFor`) and must not apply it again. On `ok: false`
-// nothing changed (the builder is aborted). `edit: null` means the operation changed nothing (or is
+// nothing changed: setCells checks every target and every formula before writing any cell, and a
+// refusal that only shows while writing aborts the builder and rebuilds the sheet index (and reloads
+// the style table) from the restored tree, so the read model never keeps a refused value. `edit: null` means the operation changed nothing (or is
 // waiting for the `confirm` list to be accepted: call again with `confirmed: true`).
 //
 // Dispatch (plan §3.2 — every later WP replaces only its own module):
@@ -35,11 +37,14 @@ import type { Workbook } from './workbook.js';
 import { SheetLoadError } from './workbook.js';
 import { IndexStaleError, MAX_COLS, MAX_ROWS } from './sheet.js';
 import type { Range, Sheet } from './sheet.js';
+import type { CellRead } from './types.js';
 import { StyleTable } from './styles.js';
 import { editSeed } from './format.js';
 import { classifyInput, encodeXstring, numberToXml } from './input.js';
 import { ensureFullCalcOnLoad } from './calc.js';
-import { isUnchangedFormula, materialiseGroup, setFormula } from './sharedFormula.js';
+import { formulaInputError, isUnchangedFormula, materialiseGroup, setFormula } from './sharedFormula.js';
+import { formulaContextOf } from './refs.js';
+import type { FormulaContext } from './refs.js';
 import { dateStyleFor } from './stylesWrite.js';
 import { insertOrDelete } from './structure.js';
 import { checkStructuralOp } from './guards.js';
@@ -147,8 +152,13 @@ class Refusal extends Error {
 /**
  * Run `body` with a fresh builder. A stale sheet index (an outside undo/redo since it was built) is
  * repaired by aborting, rebuilding the index and running once more. Any error aborts the builder.
+ *
+ * Aborting rolls the trees back, but the sheet index (and the style table, after a date-style patch)
+ * were updated as the body wrote: they would keep pointing at the detached nodes and serve the
+ * refused values. So whenever an aborted body had written anything, the index of `sheet` is rebuilt
+ * from the restored tree and the style table reloaded when the styles part was among the writes.
  */
-function runCellEdit(wb: Workbook, sheet: Sheet, label: string, body: (b: EditBuilder) => void): OfficeEdit | null | OpResult {
+function runCellEdit(wb: Workbook, sheet: Sheet, styles: StyleTable, label: string, body: (b: EditBuilder) => void): OfficeEdit | null | OpResult {
   for (let attempt = 0; ; attempt++) {
     const b = new EditBuilder(wb.pkg, label);
     try {
@@ -157,12 +167,24 @@ function runCellEdit(wb: Workbook, sheet: Sheet, label: string, body: (b: EditBu
       ensureFullCalcOnLoad(b, wb);
       return b.finish();
     } catch (err) {
+      const written = b.changedParts().map((p) => p.toLowerCase());
       b.abort();
+      if (written.length > 0) restoreReadModels(wb, sheet, styles, written);
       if (err instanceof IndexStaleError && attempt === 0) { sheet.rebuildIndex(); continue; }
       if (err instanceof IndexStaleError) { sheet.rebuildIndex(); return fail('stale', 'The sheet changed while editing; try again.'); }
       if (err instanceof Refusal) return err.result;
       return errorResult(err);
     }
+  }
+}
+
+/** After an abort that had written `parts` (lower-case): bring the read models back in line with the trees. */
+function restoreReadModels(wb: Workbook, sheet: Sheet, styles: StyleTable, parts: readonly string[]): void {
+  if (parts.includes(sheet.part.toLowerCase())) sheet.rebuildIndex();
+  if (wb.stylesPart && parts.includes(wb.stylesPart.toLowerCase())) {
+    styles.reload();
+    const cached = stylesCache.get(wb);
+    if (cached && cached !== styles) cached.reload();
   }
 }
 
@@ -198,40 +220,62 @@ async function setCells(wb: Workbook, op: Extract<XlsxEditOp, { op: 'setCells' }
   const styles = opts.styles ?? stylesFor(wb);
   const label = cells.length > 1 ? 'Paste Cells' : 'Edit Cell';
 
-  const result = runCellEdit(wb, sheet, label, (b) => {
+  const result = runCellEdit(wb, sheet, styles, label, (b) => {
     // 1. Every target must be editable before anything is written (paste is all-or-nothing).
     for (const { r, c } of cells) {
       const why = sheet.readOnlyCellReason(r, c);
       if (why) throw roRefusal(why);
     }
-    // 2. Grow the dimension once for all the cells that will be created.
+    // 2. Every formula must be valid before anything is written: a refusal half-way through would
+    //    leave nothing written (the builder rolls back) but is cheaper and clearer caught here.
+    let fctx: FormulaContext | undefined | null = null;
+    const formulaCtx = (): FormulaContext | undefined => (fctx === null ? (fctx = formulaContextOf(wb.pkg)) : fctx);
+    for (const { r, c, input } of cells) {
+      const planned = classifyCell(wb, sheet, styles, r, c, input);
+      if (planned?.k.kind !== 'formula') continue;
+      const err = formulaInputError(sheet, r, c, planned.k.text, formulaCtx());
+      if (err) throw new Refusal({ ok: false, error: err });
+    }
+    // 3. Grow the dimension once for all the cells that will be created.
     let box: [number, number, number, number] | null = null;
     for (const { r, c, input } of cells) {
       if (input === '' || sheet.cell(r, c)) continue;
       box = box ? [Math.min(box[0], r), Math.min(box[1], c), Math.max(box[2], r), Math.max(box[3], c)] : [r, c, r, c];
     }
     if (box) sheet.ensureDimensionCovers(b, box);
-    // 3. Write.
+    // 4. Write.
     const dateCache = new Map<string, number>();
     const noticeCodes = new Set<string>();
-    for (const { r, c, input } of cells) writeOne(b, wb, sheet, styles, r, c, input, dateCache, noticeCodes);
+    for (const { r, c, input } of cells) writeOne(b, wb, sheet, styles, r, c, input, dateCache, noticeCodes, formulaCtx);
   });
   if (isResult(result)) return result;
   afterCellEdit(wb, styles, result);
   return { ok: true, edit: result, invalidate: 'cells', sheetId: op.sheetId, range: bounds(cells) };
 }
 
-function writeOne(b: EditBuilder, wb: Workbook, sheet: Sheet, styles: StyleTable, r: number, c: number, input: string,
-  dateCache: Map<string, number>, noticeCodes: Set<string>): void {
+/**
+ * How (r, c) would store `input`: null when committing it changes nothing (the editor's unchanged
+ * seed, or a formula cell's own formula), else the cell as it is, its effective style and the class.
+ */
+function classifyCell(wb: Workbook, sheet: Sheet, styles: StyleTable, r: number, c: number, input: string):
+  { existing: CellRead | undefined; style: number; k: ReturnType<typeof classifyInput> } | null {
   const existing = sheet.cell(r, c);
   // Committing the editor's unchanged seed changes nothing (keeps rich text, shared strings, cached
   // formula results and error values exactly as they are).
-  if (existing && input === editSeed(existing, styles, wb.date1904)) return;
+  if (existing && input === editSeed(existing, styles, wb.date1904)) return null;
   const style = existing ? existing.styleIndex : sheet.inheritedStyle(r, c);
   const k = classifyInput(input, { isPercentStyle: styles.isPercentStyle(style), isTextStyle: styles.isTextStyle(style), date1904: wb.date1904 });
   // Re-committing a formula cell's formula (shown without `_xlfn.` prefixes, or as a shared
   // dependant's materialised text) changes nothing.
-  if (k.kind === 'formula' && isUnchangedFormula(sheet, existing, k.text)) return;
+  if (k.kind === 'formula' && isUnchangedFormula(sheet, existing, k.text)) return null;
+  return { existing, style, k };
+}
+
+function writeOne(b: EditBuilder, wb: Workbook, sheet: Sheet, styles: StyleTable, r: number, c: number, input: string,
+  dateCache: Map<string, number>, noticeCodes: Set<string>, formulaCtx: () => FormulaContext | undefined): void {
+  const planned = classifyCell(wb, sheet, styles, r, c, input);
+  if (!planned) return;
+  const { existing, style, k } = planned;
   // A shared-formula master is materialised before it changes (§9.4; setFormula does it for formula
   // input); dependants just lose their f.
   if (existing?.shared?.master && k.kind !== 'formula') materialiseGroup(b, sheet, existing.shared.si);
@@ -242,7 +286,7 @@ function writeOne(b: EditBuilder, wb: Workbook, sheet: Sheet, styles: StyleTable
       sheet.writeCell(b, r, c, null);
       return;
     case 'formula': {
-      const err = setFormula(b, sheet, r, c, k.text);
+      const err = setFormula(b, sheet, r, c, k.text, formulaCtx());
       if (err) throw new Refusal({ ok: false, error: err });
       return;
     }
@@ -257,8 +301,8 @@ function writeOne(b: EditBuilder, wb: Workbook, sheet: Sheet, styles: StyleTable
       return;
     case 'date': {
       let s = inherited;
-      if (styles.numFmtId(style) === 0) {
-        // General: the date style patch (§9.3.1) picks or appends a date xf, or falls back to text.
+      if (styles.isGeneralStyle(style)) {
+        // General (id 0, or a custom format whose code is "General"): the date style patch (§9.3.1) picks or appends a date xf, or falls back to text.
         const d = dateStyleFor(b, styles, style, k.withTime, dateCache);
         if ('fallback' in d) {
           if (!noticeCodes.has(d.notice.code)) { noticeCodes.add(d.notice.code); b.notice(d.notice); }
@@ -299,7 +343,7 @@ async function clearCells(wb: Workbook, op: Extract<XlsxEditOp, { op: 'clearCell
   const sheet = sheetOrError;
   const styles = opts.styles ?? stylesFor(wb);
 
-  const result = runCellEdit(wb, sheet, 'Clear Cells', (b) => {
+  const result = runCellEdit(wb, sheet, styles, 'Clear Cells', (b) => {
     for (const area of sheet.readOnlyAreas()) {
       const a = area.range;
       if (a[0] <= range[2] && a[2] >= range[0] && a[1] <= range[3] && a[3] >= range[1]) {

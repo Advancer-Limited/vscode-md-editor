@@ -16,7 +16,7 @@
 // Falls back to text (with a notice) when there is no styles part, it is not UTF-8 or not parseable,
 // the root is not a SpreadsheetML styleSheet with the main namespace bound on it, cellXfs is missing
 // or empty, cellXfs/@count disagrees with the records (an existing inconsistency the editor does not
-// guess around), the base index has no record, or the record count would exceed 65,490.
+// guess around), the base index has no record, or the record count would exceed 65,430 (MAX_CELL_XFS).
 //
 // The style table (StyleTable) is refreshed by the caller once the edit is finished
 // (ops.ts afterCellEdit -> styles.reload(); refreshAfterEdit after undo/redo): this module reads the
@@ -34,8 +34,15 @@ import { mainPart, partNameFromTarget, readRelationships } from '../opc.js';
 import { NS_MAIN } from './sharedStrings.js';
 import type { StyleTable } from './styles.js';
 
-/** Spec §9.3.1: no more cell formats than this are ever written (Excel's limit is 65,490). */
-export const MAX_CELL_XFS = 65_490;
+/**
+ * Spec §9.3.1: no more cell formats than this are ever written. 65,430 is the schema limit Office
+ * validates against: the Open XML SDK's generated SpreadsheetML schema gives `cellXfs/xf`
+ * maxOccurs = 65430 (`CellFormats`: `new ElementParticle(CellFormat.ElementType, 1, 65430)` in
+ * schemas_openxmlformats_org_spreadsheetml_2006_main.g.cs), and the SDK rejects a styles part with
+ * more records. (ECMA-376's sml.xsd says "unbounded"; Excel's own documented limit is 64,000 unique
+ * formats, but files with more records open, so the stricter of the file-format limits is used.)
+ */
+export const MAX_CELL_XFS = 65_430;
 /** Built-in short date / short date + h:mm (no numFmts entry needed). */
 export const DATE_NUMFMT_ID = 14;
 export const DATE_TIME_NUMFMT_ID = 22;

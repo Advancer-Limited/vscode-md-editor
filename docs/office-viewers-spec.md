@@ -611,8 +611,8 @@ Display string = numfmt applied to the value with the cell style's number format
 |---|---|
 | empty | cleared: `v`, `f`, `is` and `t` removed; the `c` element stays if it has a style `s`, otherwise it is removed |
 | starts with `'` | text (rest of the input), even if it looks like a number or formula |
-| starts with `=` and has more characters | formula (§9.5) |
-| matches `^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$` | number (`v` = shortest round-trip repr) |
+| starts with `=` and has more characters | formula (§9.5), if it passes the formula entry checks below; otherwise the edit is refused |
+| matches `^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$` and is 0 or has a magnitude within 2.2250738585072E-308 … 9.99999999999999E+307 (Excel's range) | number (`v` = shortest round-trip repr); outside the range it is text |
 | ends with `%` and the rest is a number, **and** the cell's format is a percent format | number / 100 |
 | `TRUE` / `FALSE` (case-insensitive) | boolean |
 | ISO date `YYYY-MM-DD`, optionally `THH:mm[:ss]` or ` HH:mm[:ss]`, a real calendar date within the range of §9.3.1, **and** the cell's effective number format is not Text (`@`) | serial number in the workbook's date system; if the effective format is General, the cell also gets a date format (§9.3.1) |
@@ -625,10 +625,12 @@ Display string = numfmt applied to the value with the cell style's number format
 - New `row` elements are created with only `r`; rows and cells are inserted in ascending order. Existing `spans` attributes are left alone on value edits.
 - Read-only cells (`ro`): members of a multi-cell array formula or data table (`f/@t="array"|"dataTable"` with a multi-cell `ref`); cells with `cm` or `vm` attributes (dynamic-array anchors, rich values such as in-cell images or data types); header-row cells of a table (the table part stores column names that must match).
 - Paste: plain-text TSV from the clipboard into the active cell, expanding right/down; each value goes through the table above; one undoable edit; capped at 10,000 cells; refused if it would hit any read-only cell.
+- **All or nothing**: every target cell's read-only status and every formula of a paste are checked before any cell is written. A refusal that can only arise while writing (a shared group that cannot be materialised, §9.4) rolls the whole edit back, and the sheet index — and the style table, if the date style patch (§9.3.1) already ran — is rebuilt from the restored tree, so the grid never shows a value the file does not hold.
+- **Formula entry checks** (in addition to the §9.5 parse; `refs.validateFormula` with the workbook context). Refused (`invalid`, with the position): a built-in function called with fewer or more arguments than Excel accepts (`IF()`, `ROUND(1.5)`, `IF(1,2,3,4)`; table in `xlsx/functions.ts` — [MS-XLS] §2.5.198.17 Ftab argument counts with Excel 2007's 255-argument limit, the Excel 2007 built-ins outside Ftab, and every `_xlfn.` function; a name not in the table, such as a defined or LAMBDA name, is not arity-checked); a call whose arguments are all empty (`SUM(,)`); more than 255 arguments; an array constant whose rows differ in length (`{1,2;3}`); a text constant over 255 characters; a number constant outside ±9.99999999999999E+307 (`1e999`); a union outside parentheses (`A1,B1`; `(A1,B1)` is fine); `A1..B2`; a lone column name as a range end (`A1:B`, unless `B` is a defined or LET/LAMBDA name); an unquoted sheet name that needs quotes (`Sheet 1!A1`, `A1!B1`); a sheet, table or table column that does not exist in the workbook (`NoSuch!A1`, `Table9[Col]`); a structured reference without its table name (`[@Col]`). Refused as `blocked` ("References to other workbooks can't be entered here"): any external-workbook reference (`[1]Sheet1!A1`, `[Book2.xlsx]Sheet1!A1`, `[1]!Name`); `[0]!Name` (this workbook) is allowed. Range chaining (`A1:A2:A3`) is legal Excel and accepted. Re-committing a cell's existing formula is a no-op even when that formula would fail these checks today. The save validator (§13.3) applies the same contextual checks to the formulas an edit changed, never to formulas the file already had.
 
 ### 9.3.1 The date style patch (the only change ever made to `styles.xml`)
 
-Applies when a `setCells` input is classified as a date and the target cell's **effective number format id is 0 (General)**. "Effective" means the `numFmtId` of `cellXfs/xf[s]`, where `s` is the cell's `s`, or for a cell being created the inherited row/column style, or 0.
+Applies when a `setCells` input is classified as a date and the target cell's **effective number format is General**: id 0, or a custom `numFmts` entry whose `formatCode` is `General` (any case). "Effective" means the `numFmtId` of `cellXfs/xf[s]`, where `s` is the cell's `s`, or for a cell being created the inherited row/column style, or 0.
 
 - **Accepted range**: 1900-03-01 … 9999-12-31 in the 1900 date system (this sidesteps the fictitious 1900-02-29), 1904-01-01 … 9999-12-31 in the 1904 system. Hours 0–23, minutes and seconds 0–59. Anything else is text.
 - **Format**: date only → built-in `numFmtId="14"` (short date). Date with time → built-in `numFmtId="22"` (short date + `h:mm`). Both are built-ins, so `numFmts` is never touched and no format code is written.
@@ -637,13 +639,15 @@ Applies when a `setCells` input is classified as a date and the target cell's **
 - **Append**: otherwise insert the new `xf` as the **last child of `cellXfs`** (immediately after the current last `xf`, no added whitespace) and, if `cellXfs` has a `count` attribute, increase it by one. The new index is the previous number of `xf` children. Existing records are never changed, reordered or removed, so no existing `c/@s` changes meaning. Nothing else in `styles.xml` is touched (`fonts`, `fills`, `borders`, `cellStyleXfs`, `cellStyles`, `dxfs`, `numFmts`, `extLst`).
 - The cell is written with `s` = that index and the serial in `v` (no `t`). This is the one case where an existing cell's `s` changes.
 - **One edit**: the style change and the cell change are one undoable `OfficeEdit` (touched set: the sheet part and `xl/styles.xml`). Undo removes the appended record and restores `count`. A paste creates at most one new record per distinct `(base, numFmtId)` pair.
-- **Fallback to text** (with the notice "Stored as text — this workbook has no cell formats to extend"): no styles part, styles part not UTF-8, `cellXfs` missing or empty, the main namespace not bound on the styles root, or the record count would exceed 65,490.
+- **Fallback to text** (with the notice "Stored as text — this workbook has no cell formats to extend"): no styles part, styles part not UTF-8, `cellXfs` missing or empty, the main namespace not bound on the styles root, or the record count would exceed 65,430 — the `cellXfs/xf` maxOccurs of the SpreadsheetML schema the Open XML SDK validates against (`CellFormats`: 1…65430); ECMA-376's own `sml.xsd` says unbounded, so the stricter limit is used.
 - Clearing a cell keeps its `s`, so the cell stays date-formatted (as in Excel).
 - Validator and tests: §13.3 (styles rules) and Phase 2 acceptance (§14).
 
 ### 9.4 Shared formulas
 
 `<f t="shared" si="n" ref="…">` (master) and `<f t="shared" si="n"/>` (dependants). Editing a dependant replaces its `f` with a plain formula. Before a master is edited or cleared, and before any structural operation on the sheet, every shared group affected is **materialised**: each dependant gets its explicit formula (the master's text with relative references offset by the cell delta) and the `t`/`si`/`ref` attributes are removed. Materialisation is part of the same undoable edit.
+
+A group's members are scoped to its master's `ref`: a dependant reads (and would be materialised from) the master of its `si` whose `ref` covers it. A sheet that gives one `si` to more than one master, or has a member of a group outside its master's `ref`, is malformed (Excel never writes it): materialising such a group — editing or clearing one of its masters, or a structural operation on the sheet — is refused as `blocked`, never guessed. Overwriting a dependant (which needs no materialisation) stays allowed.
 
 ### 9.5 Formulas, cached values and recalculation
 
