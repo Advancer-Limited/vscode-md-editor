@@ -9,7 +9,9 @@
 // No `vscode` import here (core rule).
 
 import type { OfficePackage } from './package.js';
-import { attr, childrenOf } from './xml.js';
+import type { EditBuilder } from './edits.js';
+import { attr, childrenOf, escapeAttr, qnameAt } from './xml.js';
+import type { XmlElement } from './xml.js';
 import { OfficeLoadError } from './sniff.js';
 
 export interface Relationship { id: string; type: string; target: string; external: boolean; }
@@ -136,4 +138,135 @@ export function mainPart(p: OfficePackage): { name: string; contentType: string 
   const contentType = contentTypeOf(p, name);
   if (contentType === undefined) throw new OfficeLoadError('damaged', `Main part "${name}" has no content type`);
   return { name, contentType };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Writers (WP-18). Each records its changes on an EditBuilder, so they undo with the edit. New
+// elements are spliced in after their last sibling of the same kind with no added whitespace; names
+// come from the bindings in scope at the parent (qnameAt), and the fragment is rootScoped-checked.
+
+export const CT_RELATIONSHIPS = 'application/vnd.openxmlformats-package.relationships+xml';
+
+function typesRoot(b: EditBuilder): XmlElement {
+  if (!b.pkg.has(CONTENT_TYPES_PART)) throw new Error(`${CONTENT_TYPES_PART} is missing`);
+  const root = b.pkg.xml(CONTENT_TYPES_PART).root;
+  if (root.ns !== NS_CONTENT_TYPES || root.local !== 'Types') throw new Error(`${CONTENT_TYPES_PART}: root element is not Types`);
+  return root;
+}
+
+/** Child index just after the last element child of `parent` named one of `locals` (in `ns`), or -1. */
+function afterLast(parent: XmlElement, ns: string, locals: readonly string[]): number {
+  for (let k = parent.children.length - 1; k >= 0; k--) {
+    const c = parent.children[k];
+    if (c.type === 'el' && c.ns === ns && locals.includes(c.local)) return k + 1;
+  }
+  return -1;
+}
+
+function newElement(parent: XmlElement, ns: string, local: string, attrs: [string, string][]): string {
+  const name = qnameAt(parent, ns, local);
+  if (name === undefined) throw new Error(`Cannot write <${local}>: namespace ${ns} is not bound on <${parent.rawName}>`);
+  return '<' + name + attrs.map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join('') + '/>';
+}
+
+function findOverride(root: XmlElement, part: string): XmlElement | undefined {
+  const key = normalizePartName(part).toLowerCase();
+  return childrenOf(root, NS_CONTENT_TYPES, 'Override').find((el) => {
+    const n = attr(el, '', 'PartName');
+    return n !== undefined && normalizePartName(n).toLowerCase() === key;
+  });
+}
+
+/** Add (or update the ContentType of) the `Override` for `part`. No-op when already as requested. */
+export function addOverride(b: EditBuilder, part: string, contentType: string): void {
+  const root = typesRoot(b);
+  const existing = findOverride(root, part);
+  if (existing) {
+    b.setAttr(CONTENT_TYPES_PART, existing, '', 'ContentType', contentType);
+    return;
+  }
+  let at = afterLast(root, NS_CONTENT_TYPES, ['Override']);
+  if (at < 0) at = afterLast(root, NS_CONTENT_TYPES, ['Default']);
+  if (at < 0) at = root.children.length;
+  b.insertAt(CONTENT_TYPES_PART, root, at,
+    newElement(root, NS_CONTENT_TYPES, 'Override', [['PartName', '/' + normalizePartName(part)], ['ContentType', contentType]]));
+}
+
+/** Remove the `Override` for `part`, if there is one. */
+export function removeOverride(b: EditBuilder, part: string): void {
+  const root = typesRoot(b);
+  const existing = findOverride(root, part);
+  if (existing) b.removeNode(CONTENT_TYPES_PART, existing);
+}
+
+/** Add a `Default` for extension `ext` unless one exists (any content type). */
+export function ensureDefault(b: EditBuilder, ext: string, contentType: string): void {
+  const root = typesRoot(b);
+  const key = ext.toLowerCase();
+  if (childrenOf(root, NS_CONTENT_TYPES, 'Default').some((el) => attr(el, '', 'Extension')?.toLowerCase() === key)) return;
+  let at = afterLast(root, NS_CONTENT_TYPES, ['Default']);
+  if (at < 0) at = 0;
+  b.insertAt(CONTENT_TYPES_PART, root, at,
+    newElement(root, NS_CONTENT_TYPES, 'Default', [['Extension', ext], ['ContentType', contentType]]));
+}
+
+function nextRelId(rels: readonly Relationship[]): string {
+  const ids = new Set(rels.map((r) => r.id));
+  let n = 0;
+  for (const r of rels) {
+    const m = /^rId(\d+)$/.exec(r.id);
+    if (m) n = Math.max(n, Number(m[1]));
+  }
+  let id = `rId${n + 1}`;
+  while (ids.has(id)) id = `rId${++n + 1}`;
+  return id;
+}
+
+/**
+ * Add a relationship from `sourcePart` ('' = package root) and return its new Id (`rId<max+1>`).
+ * Creates the relationships part when absent (and a `rels` Default content type if none exists).
+ * `target` is written as given (relative to the source part's folder, as Office writes it).
+ */
+export function addRelationship(b: EditBuilder, sourcePart: string, type: string, target: string, opts?: { external?: boolean }): string {
+  const relsPart = relsPartFor(sourcePart);
+  const attrs: [string, string][] = [['Type', type], ['Target', target]];
+  if (opts?.external) attrs.push(['TargetMode', 'External']);
+  if (!b.pkg.has(relsPart)) {
+    const id = 'rId1';
+    const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+      + `<Relationships xmlns="${NS_RELATIONSHIPS}"><Relationship Id="${id}"`
+      + attrs.map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join('') + '/></Relationships>';
+    if (contentTypeOf(b.pkg, relsPart) === undefined) ensureDefault(b, 'rels', CT_RELATIONSHIPS);
+    b.setPart(relsPart, new TextEncoder().encode(xml));
+    return id;
+  }
+  const rels = readRelationships(b.pkg, sourcePart);
+  const id = nextRelId(rels);
+  const root = b.pkg.xml(relsPart).root;
+  let at = afterLast(root, NS_RELATIONSHIPS, ['Relationship']);
+  if (at < 0) at = root.children.length;
+  b.insertAt(relsPart, root, at, newElement(root, NS_RELATIONSHIPS, 'Relationship', [['Id', id], ...attrs]));
+  return id;
+}
+
+/** Remove relationship `rId` of `sourcePart`. Throws when there is no such relationship. */
+export function removeRelationship(b: EditBuilder, sourcePart: string, rId: string): void {
+  const relsPart = relsPartFor(sourcePart);
+  if (!b.pkg.has(relsPart)) throw new Error(`${relsPart} does not exist`);
+  readRelationships(b.pkg, sourcePart);   // validates the part
+  const root = b.pkg.xml(relsPart).root;
+  const el = childrenOf(root, NS_RELATIONSHIPS, 'Relationship').find((r) => attr(r, '', 'Id') === rId);
+  if (!el) throw new Error(`${relsPart} has no relationship ${rId}`);
+  b.removeNode(relsPart, el);
+}
+
+/** Source part of a relationships part ('_rels/.rels' -> '', 'xl/_rels/workbook.xml.rels' -> 'xl/workbook.xml'); undefined if not a rels part name. */
+export function sourcePartOfRels(relsPart: string): string | undefined {
+  const p = normalizePartName(relsPart);
+  const m = /^(.*?)(?:^|\/)_rels\/([^/]*)\.rels$/i.exec(p);
+  if (!m) return undefined;
+  const dir = m[1];
+  const file = m[2];
+  if (file === '') return dir === '' ? '' : undefined;
+  return dir === '' ? file : `${dir}/${file}`;
 }
