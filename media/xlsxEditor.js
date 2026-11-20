@@ -87,6 +87,8 @@
     const inputCache = new Map();       // "sheetId:r:c:version" -> formula text
     const lastActive = new Map();       // sheetId -> { r, c } so tab switching keeps the cursor
     let cellEditor = null;
+    let flushHandler = null;            // WP-23: commits an in-progress cell edit (returns a promise)
+    const messageHandlers = [];         // WP-23: the cell editor sees every host message
     const menuProviders = [];
     let openMenuEl = null;
     let menuReturnFocus = null;
@@ -380,6 +382,8 @@
       if (typeof meta.version === 'number' && meta.version < state.version) { return; }
       const info = sheetInfo(meta.sheetId);
       if (!info || info.kind !== 'worksheet') { return; }
+      // The meta is built for the host's current version; edits use it as their baseVersion (spec §5).
+      if (typeof meta.version === 'number') { state.version = meta.version; }
       if (state.pendingSheetId === meta.sheetId) { state.pendingSheetId = null; }
       showGrid();
       state.meta = meta;
@@ -795,10 +799,21 @@
 
     // ---------- messages ----------
 
+    function runFlush(flushId) {
+      // The host waits for `flushed`: land any in-progress cell edit (and its reply) first.
+      const done = () => post({ type: 'flushed', flushId });
+      let p = null;
+      if (flushHandler) { try { p = flushHandler(); } catch (e) { p = null; } }
+      if (p && typeof p.then === 'function') { p.then(done, done); } else { done(); }
+    }
+
     function onMessage(msg) {
+      messageHandlers.forEach((fn) => {
+        try { fn(msg, shell); } catch (e) { /* a faulty handler must not break the shell */ }
+      });
       switch (msg.type) {
         case 'init': state.version = typeof msg.version === 'number' ? msg.version : state.version; break;
-        case 'flushPendingEdits': post({ type: 'flushed', flushId: msg.flushId }); break;   // view mode: nothing pending
+        case 'flushPendingEdits': runFlush(msg.flushId); break;
         case 'xlsxWorkbook': onWorkbook(msg); break;
         case 'xlsxSheetMeta': onSheetMeta(msg.meta); break;
         case 'xlsxCells':
@@ -826,6 +841,22 @@
       get grid() { return gridApi; },
       state,
       registerCellEditor(fn) { cellEditor = typeof fn === 'function' ? fn : null; },
+      /** WP-23: `fn(msg, shell)` sees every host message (xlsxEditResult, xlsxCellInput, ...). */
+      registerMessageHandler(fn) { if (typeof fn === 'function') { messageHandlers.push(fn); } },
+      /** WP-23: `fn()` commits an in-progress edit and returns a promise settled once the host answered. */
+      registerFlushHandler(fn) { flushHandler = typeof fn === 'function' ? fn : null; },
+      post, nextId,
+      /** Run an edit gesture through the shell's gating (edit mode, sheet protection) and the cell editor. */
+      editGesture: (g) => onEditGesture(g),
+      /** Re-request the shown sheet's meta (and so its cells) after the host's state changed. */
+      refetch() {
+        const info = sheetInfo(state.activeSheetId);
+        if (info && info.kind === 'worksheet') { requestMeta(info.id); }
+      },
+      refreshFormulaBar() { refreshFormulaBar(); },
+      /** The read-only formula display, name box and stale marker (the cell editor shows its input beside them). */
+      formulaBar: { bar: formulaBar, display: formulaText, nameBox, staleMark },
+      gridHost,
       registerMenuItems(fn) { if (typeof fn === 'function') { menuProviders.push(fn); } },
     };
 

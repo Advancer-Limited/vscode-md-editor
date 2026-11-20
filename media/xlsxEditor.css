@@ -222,3 +222,31 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .xlsx-content * { transition: none !important; animation: none !important; }
 }
+
+/* ---- cell editing (WP-23): in-cell editor and editable formula bar ---- */
+.xlsx-cell-editor {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 3px;
+  font: inherit;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, var(--vscode-editor-background));
+  border: 2px solid var(--vscode-focusBorder, currentColor);
+  outline: none;
+}
+.xlsx-formula-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, transparent);
+  border: 1px solid var(--vscode-focusBorder, currentColor);
+  outline: none;
+}
+.xlsx-content .xlsx-cell-editor[hidden],
+.xlsx-content .xlsx-formula-input[hidden] { display: none !important; }

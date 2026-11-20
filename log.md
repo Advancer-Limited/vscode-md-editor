@@ -1028,3 +1028,28 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - `chartsheet.xlsx` and `features.xlsx` report "'uri' attribute is not declared" on extLst.
   - `formulas.xlsx` and `tables.xlsx` report "style index 1 missing". That `s="1"` is in `xl/calcChain.xml`, where `s` is the calc-chain new-sheet/level flag, not a style index (confirmed by the orchestrator).
 - **User, at Gate R2:** run `verify-office-open.ps1` on the WP-20/21/22 outputs in real Office and paste the results here.
+
+### 2026-11-21 — WP-23 Xlsx editing wiring (feature/office-xlsx-edit-ui)
+- **Host (`xlsxEditorProvider.ts`):** `xlsxEdit` goes through a per-document queue (strict arrival order), then `applyXlsxEdit`, then `doc.recordApplied`, then `xlsxEditResult` (`ok` with version/invalidate/range, or the error).
+  - **Structural ops are refused** with `blocked` while `OFFICE_FLAGS.xlsxStructure` is off. Before this nothing consulted that flag.
+  - **Tier C confirm list:** shown as a modal warning (default Cancel, list as the detail), then the same op re-runs with `confirmed: true`. Declining answers `cancelled`. `confirmStructuralEdits: false` skips the prompt, except for deleteSheet. A version change while the modal was open answers `stale`.
+  - **`onEdited` override:** drops the workbook/model cache (keyed by package), marks the doc edited and posts notices plus `xlsxStateChanged` and a fresh `xlsxWorkbook`.
+  - **Stale-formulas banner:** the notice `formula-results-stale` is added to `kindNotices` once the doc has an edit in this generation. `cellWindow` gets `staleAll` on the same condition.
+  - **Seed:** a shared-formula dependant is seeded with `'=' + displayFormula`. A rich-text cell posts a `rich-text-cell` notice just before its seed.
+- **`OfficeDocument.recordApplied(edit, appliedTo)` (new, minimal):** registers an already-applied edit on the VS Code stack. If editing stopped, a save began or the package was replaced in the meantime, it rolls the edit back and returns the refusal. `editRefusal()` is now public.
+- **Webview:**
+  - `media/xlsxCellEditor.js` (new): in-cell editor and editable formula bar; F2/Enter/dblclick/typing; Enter/Tab (and Shift) commit and move; Esc cancels; Delete clears; paste as plain-text TSV (quotes, one `setCells`, 10,000 cell cap, 32,767 chars per cell, sheet bounds); host errors via `OfficeCommon.hint`; a rejected formula reopens the formula bar with the caret at the host's "(at character N)".
+    - Edits are sent one at a time, each with the version the previous reply reported.
+    - `flushPendingEdits` and turning Edit off commit first and wait for the reply (`flushed` / `setEditMode` follow it).
+    - A `xlsxStateChanged` while an editor is open discards the edit with a hint.
+    - **S3 fallback (spike still pending):** Ctrl+Z inside an open editor cancels that edit, Ctrl+Y does nothing there, and both are stopped in the capture phase. With no editor open VS Code's undo applies.
+  - `xlsxEditor.js`: new hooks (`registerMessageHandler`, `registerFlushHandler`, `post`, `nextId`, `refetch`, `refreshFormulaBar`, `formulaBar`, `gridHost`, `editGesture`), and `onSheetMeta` now adopts the meta's version (it is the baseVersion for the next edit).
+  - `officeCommon.js`: `setBeforeEditModeOff`.
+  - `xlsxGrid.js`: `cellElement(r, c)`.
+  - `xlsxEditor.css`: editor styles.
+  - **Rich-text hint** is delivered by that notice, because the frozen protocol has no rich flag on the cell DTO.
+- **Tests:**
+  - **`xlsxEditWiring.test.mjs` (18):** flag off, View mode, VS Code stack undo/redo byte-identical, `onEdited` invalidation, save + re-open, dependant seed, confirm flow with test-only WP-38/39 stubs, protected/read-only cells, paste limits, stale and ordering, structural flag, `recordApplied`, rich notice. It also writes `tests/.out/xlsxEditWiring/*.xlsx` with `.expect.json`.
+  - **`xlsxCellEditor.test.js` (28):** editor lifecycle, keyboard, paste, flush, errors, textContent-only.
+  - `xlsxProviderLogic` script-list expectation updated.
+- **Not verified:** a real Extension Development Host (VS Code undo stack, the real modal, the `paste` event from the system clipboard, focus/blur, Ctrl+Z routing) and real Excel on the saved outputs. Those are the Gate R2 checklist. `OFFICE_FLAGS.xlsxEdit` is still false.

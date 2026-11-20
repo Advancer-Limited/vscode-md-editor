@@ -974,6 +974,8 @@
     return {
       setMeta, setCells, invalidate, getSelection, setActive, setSelection, getCells,
       getCell: (r, c) => cellAt(r, c) || null,
+      /** The rendered element of a cell (null while it is outside the rendered window); for overlays. */
+      cellElement: (r, c) => nodeFor(r, c),
       focus() { if (root.focus) root.focus(); },
       destroy,
       setReadOnly(v) { readOnly = !!v; root.setAttribute('aria-readonly', readOnly ? 'true' : 'false'); lastSig = ''; render(true); },

@@ -26,7 +26,7 @@
     kind: null, canEdit: false, editMode: false, readOnlyReason: null,
     root: null, editBtn: null, reasonEl: null, noticesEl: null,
     hintEl: null, liveEl: null, errorEl: null,
-    hintTimer: null, lastAnnounce: '',
+    hintTimer: null, lastAnnounce: '', beforeEditModeOff: null,
   };
 
   function el(tag, className, text) {
@@ -178,6 +178,16 @@
       syncEditButton();
       return;
     }
+    if (!editMode && state.beforeEditModeOff) {
+      // Turning Edit off commits an open cell/paragraph editor first (§6.4): it must reach the host
+      // while editing is still on, so the toggle waits for the commit to be answered.
+      let p = null;
+      try { p = state.beforeEditModeOff(); } catch (e) { p = null; }
+      if (p && typeof p.then === 'function') {
+        p.then(() => post({ type: 'setEditMode', editMode: false }), () => post({ type: 'setEditMode', editMode: false }));
+        return;
+      }
+    }
     post({ type: 'setEditMode', editMode: !!editMode });
   }
 
@@ -318,6 +328,8 @@
 
   const api = {
     init, toolbar, setInit, showNotices, showError, hint, announce,
+    /** `fn()` runs before Edit is turned off; a returned promise delays the request until it settles. */
+    setBeforeEditModeOff(fn) { state.beforeEditModeOff = typeof fn === 'function' ? fn : null; },
     READ_ONLY_TEXT, EDIT_HINT,
     isEditMode() { return state.editMode; },
     canEdit() { return state.canEdit; },

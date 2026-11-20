@@ -19,7 +19,7 @@ import { contentTypeOf } from './core/opc.js';
 import { decodePart } from './core/xml.js';
 import { LIMITS } from './core/limits.js';
 import type { OfficeError, OfficeNotice, ReadOnlyReason } from './core/types.js';
-import { EditBuilder, tryApplyEdit, undoRedoFor } from './core/edits.js';
+import { EditBuilder, invertEdit, tryApplyEdit, undoRedoFor } from './core/edits.js';
 import type { EditOutcome, EditTarget, OfficeEdit } from './core/edits.js';
 import { serializeAndVerify } from './core/save.js';
 import type { Validator, VerifyFailure, VerifyResult } from './core/save.js';
@@ -314,8 +314,8 @@ export class OfficeDocument implements vscode.CustomDocument {
   // -------------------------------------------------------------------------------------------
   // Edits (spec §6.3)
 
-  /** Why an edit cannot be applied now, or null. */
-  private editRefusal(): OfficeError | null {
+  /** Why an edit cannot be applied now (view mode, read-only, a save writing), or null. */
+  editRefusal(): OfficeError | null {
     if (this.disposed || !this.pkg || !this.canEdit) return { code: 'read-only', message: READ_ONLY_MESSAGE };
     if (!this.editMode) return { code: 'read-only', message: VIEW_MODE_MESSAGE };
     // Between a save's flush and its completion the bytes being written are fixed; an edit landing
@@ -356,6 +356,26 @@ export class OfficeDocument implements vscode.CustomDocument {
     if (edit.changes.length === 0) return { ok: true, edit: null };
     const r = tryApplyEdit(this.pkg!, edit);
     if (!r.ok) return r;
+    this.record(edit);
+    return { ok: true, edit };
+  }
+
+  /**
+   * Record an edit that is ALREADY applied to the package (the xlsx ops apply as they build, so the
+   * provider cannot hand them to `applyEdit` again). Registers it for undo/redo exactly like
+   * `applyEdit`. When the document can no longer take edits (Edit turned off, a save began, the
+   * document was disposed or reloaded while the edit was being built) the edit is rolled back and
+   * the refusal returned, so nothing is ever in the package without being on the undo stack.
+   */
+  recordApplied(edit: OfficeEdit | null, appliedTo: OfficePackage): DocumentEditResult {
+    if (!edit || edit.changes.length === 0) return { ok: true, edit: null };
+    const refusal = this.editRefusal();
+    const stalePkg = this.pkg !== appliedTo;
+    if (refusal || stalePkg) {
+      // Nothing to roll back when the package is gone or was replaced by a reload.
+      if (!stalePkg) tryApplyEdit(appliedTo, invertEdit(edit));
+      return { ok: false, error: refusal ?? { code: 'stale', message: 'The workbook was reloaded; try the edit again.' } };
+    }
     this.record(edit);
     return { ok: true, edit };
   }

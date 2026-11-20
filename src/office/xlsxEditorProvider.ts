@@ -2,14 +2,19 @@
 //
 // WP-14: the view path. Glue only: the DTO building lives in core/xlsx/view.ts, find.ts and
 // notices.ts so it is bundle-testable. Editing (Phase 2) stays off while `OFFICE_FLAGS.xlsxEdit`
-// is false; `xlsxEdit` is answered with a `read-only` error.
+// is false; `xlsxEdit` is then answered with a `read-only` error.
+//
+// WP-23: `xlsxEdit` -> `applyXlsxEdit` (core/xlsx/ops.ts, which applies as it builds) ->
+// `doc.recordApplied` (VS Code undo stack) -> `xlsxEditResult`. Edits are processed strictly in
+// arrival order (a per-document queue; spec §5). Undo/redo mutate the package in place, so `onEdited`
+// drops the workbook/model cache and the webview refetches.
 
 import * as vscode from 'vscode';
 import { getBrandButtonHtml } from '../utils.js';
 import { OfficeEditorProviderBase, officeCsp } from './officeEditorProviderBase.js';
 import type { OfficeDocument } from './officeDocument.js';
 import { parseXlsxToHost } from './protocol.js';
-import type { OfficeError, XlsxSheetInfo, XlsxToHost } from './protocol.js';
+import type { OfficeError, OfficeNotice, XlsxEditOp, XlsxSheetInfo, XlsxToHost } from './protocol.js';
 import type { OfficePackage } from './core/package.js';
 import { OfficeLoadError } from './core/sniff.js';
 import { attr, child } from './core/xml.js';
@@ -17,14 +22,38 @@ import { Workbook, SheetLoadError } from './core/xlsx/workbook.js';
 import type { Sheet } from './core/xlsx/sheet.js';
 import { StyleTable } from './core/xlsx/styles.js';
 import { editSeed } from './core/xlsx/format.js';
+import { applyXlsxEdit, refreshAfterEdit } from './core/xlsx/ops.js';
+import { displayFormula } from './core/xlsx/sharedFormula.js';
 import { cellWindow, clampRange, sheetMeta, toTsv } from './core/xlsx/view.js';
 import { findInWorkbook } from './core/xlsx/find.js';
 import { describeLoadFailure, describeUnexpectedError } from './loadErrors.js';
 import { packageValidator } from './core/save.js';
 import type { Validator } from './core/save.js';
 import { xlsxValidator } from './core/xlsx/validate.js';
+import { OFFICE_FLAGS } from './featureFlags.js';
 
 interface Model { wb: Workbook; styles: StyleTable }
+
+/** Spec §9.5: shown once the workbook has any edit (cached formula results may be out of date). */
+export const STALE_FORMULAS_NOTICE: OfficeNotice = {
+  severity: 'info',
+  code: 'formula-results-stale',
+  message: 'Formula results are from the last calculation in Excel and will update when the file is next opened there.',
+};
+
+/** Spec §9.3: sent just before the seed of a cell whose text carries inline formatting. */
+export const RICH_TEXT_NOTICE: OfficeNotice = {
+  severity: 'info',
+  code: 'rich-text-cell',
+  message: 'This cell has formatting inside its text. Editing it replaces the text with plain text.',
+};
+
+/** Operations behind the `xlsxStructure` flag (plan §3.1): refused here while it is off, whatever the webview sends. */
+const STRUCTURAL_OPS: ReadonlySet<string> = new Set([
+  'insertRows', 'deleteRows', 'insertCols', 'deleteCols', 'addSheet', 'renameSheet', 'deleteSheet',
+]);
+
+type EditMsg = Extract<XlsxToHost, { type: 'xlsxEdit' }>;
 
 export type SheetAppearance = 'theme' | 'light';
 
@@ -52,9 +81,13 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private readonly models = new WeakMap<OfficePackage, Model>();
   /** JSON of the last `xlsxWorkbook` sent per panel, to re-send only when sheet info changed. */
   private readonly sentInfo = new WeakMap<vscode.WebviewPanel, string>();
+  /** Tail of each document's edit queue: edits and their confirmations run one at a time, in order. */
+  private readonly editQueues = new WeakMap<OfficeDocument, Promise<void>>();
+  /** The generation at which a document was last edited; the stale-formulas banner shows while it matches. */
+  private readonly editedAt = new WeakMap<OfficeDocument, number>();
 
   protected scripts(): string[] {
-    return ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js'];
+    return ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js', 'xlsxCellEditor.js'];
   }
 
   protected styles(): string[] {
@@ -152,6 +185,24 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     this.sendWorkbook(doc, panel, true);
   }
 
+  /**
+   * Undo/redo (VS Code's stack) changed the package in place. The workbook model and its sheet
+   * indexes are keyed by package, so they are dropped and rebuilt on the next request; the webview is
+   * told to refetch. (`refreshAfterEdit` would need the edit, which the document does not pass on; a
+   * fresh model is equivalent and cheap.)
+   */
+  protected onEdited(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+    if (doc.pkg) this.models.delete(doc.pkg);
+    this.editedAt.set(doc, doc.generation);
+    this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+    this.onReloaded(doc, panel);
+  }
+
+  /** The stale-formulas banner once the workbook has been edited (spec §9.5). */
+  protected kindNotices(doc: OfficeDocument): OfficeNotice[] {
+    return this.editedAt.get(doc) === doc.generation ? [STALE_FORMULAS_NOTICE] : [];
+  }
+
   // -------------------------------------------------------------------------------------------
   // Messages
 
@@ -175,12 +226,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       case 'xlsxRequestCellInput': return this.requestCellInput(doc, panel, msg.requestId, msg.sheetId, msg.r, msg.c);
       case 'xlsxFind': return this.find(doc, panel, msg.requestId, msg.query, msg.matchCase, msg.sheetId);
       case 'xlsxCopy': return this.copy(doc, msg.sheetId, msg.range, msg.format);
-      case 'xlsxEdit':
-        this.post(panel, {
-          type: 'xlsxEditResult', requestId: msg.requestId, ok: false,
-          error: { code: 'read-only', message: 'This workbook is open read-only.' },
-        });
-        return;
+      case 'xlsxEdit': return this.enqueueEdit(doc, panel, msg);
       default:
         return;   // common messages never reach here: the base handles every well-formed one first
     }
@@ -233,7 +279,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const meta = sheetMeta(m.wb, r.sheet, m.styles, sheetId, version);
     const clamped = clampRange(meta, range);
     if (!clamped) { this.fail(panel, requestId, 'invalid', 'That range is outside the sheet.'); return; }
-    const w = cellWindow(m.wb, r.sheet, m.styles, clamped, false);
+    const w = cellWindow(m.wb, r.sheet, m.styles, clamped, this.editedAt.get(doc) === doc.generation);
     this.post(panel, {
       type: 'xlsxCells', requestId, sheetId, version, range: clamped, cells: w.cells, styles: w.styles,
     });
@@ -249,8 +295,98 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const meta = sheetMeta(m.wb, r.sheet, m.styles, sheetId, doc.version);
     if (!clampRange(meta, [row, col, row, col])) { this.fail(panel, requestId, 'invalid', 'That cell is outside the sheet.'); return; }
     const cell = r.sheet.cell(row, col);
-    const input = cell ? editSeed(cell, m.styles, m.wb.date1904) : '';
+    let input = cell ? editSeed(cell, m.styles, m.wb.date1904) : '';
+    // A shared-formula dependant stores no formula of its own: seed the translated one, or the editor
+    // would open on the cached value and committing it would replace the formula (spec §9.4).
+    if (cell && cell.shared && !cell.shared.master) {
+      const f = displayFormula(r.sheet, cell);
+      if (f !== undefined) input = '=' + f;
+    }
+    if (cell?.rich) {
+      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), RICH_TEXT_NOTICE] });
+    }
     this.post(panel, { type: 'xlsxCellInput', requestId, sheetId, r: row, c: col, input });
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Edits (WP-23, spec §5.2, §6.3)
+
+  private enqueueEdit(doc: OfficeDocument, panel: vscode.WebviewPanel, msg: EditMsg): Promise<void> {
+    const prev = this.editQueues.get(doc) ?? Promise.resolve();
+    const run = prev.then(() => this.runEdit(doc, panel, msg)).catch((e) => {
+      console.error('[XlsxEditor] edit failed', e);
+      this.editFailed(panel, msg.requestId, { code: 'internal', message: 'The edit could not be applied.' });
+    });
+    this.editQueues.set(doc, run);
+    return run;
+  }
+
+  private editFailed(panel: vscode.WebviewPanel, requestId: number, error: OfficeError): void {
+    this.post(panel, { type: 'xlsxEditResult', requestId, ok: false, error });
+  }
+
+  private async runEdit(doc: OfficeDocument, panel: vscode.WebviewPanel, msg: EditMsg): Promise<void> {
+    const fail = (error: OfficeError): void => this.editFailed(panel, msg.requestId, error);
+    const stale = (): void => fail({ code: 'stale', message: 'The workbook changed. Your edit was not applied.' });
+    const refusal = doc.editRefusal();
+    if (refusal) { fail(refusal); return; }
+    if (msg.baseVersion !== doc.version) { stale(); return; }
+    if (STRUCTURAL_OPS.has(msg.edit.op) && !OFFICE_FLAGS.xlsxStructure) {
+      fail({ code: 'blocked', message: 'Inserting, deleting and renaming rows, columns and sheets is not available yet.' });
+      return;
+    }
+    const m = this.model(doc);
+    const pkg = doc.pkg;
+    if (!m || !pkg) { fail({ code: 'internal', message: "This workbook can't be edited." }); return; }
+
+    let confirmed = false;
+    for (;;) {
+      const res = await applyXlsxEdit(m.wb, pkg, msg.edit, { confirmed, styles: m.styles });
+      if (!res.ok) { fail(res.error); return; }
+      if (res.confirm && res.confirm.length > 0 && !confirmed) {
+        // Tier C (spec §9.6): ask, then run the same operation again with the confirmation.
+        if (!(await this.confirmEdit(msg.edit, res.confirm))) { fail({ code: 'cancelled', message: 'Cancelled.' }); return; }
+        if (msg.baseVersion !== doc.version) { stale(); return; }
+        confirmed = true;
+        continue;
+      }
+      // applyXlsxEdit applied the edit already: register it for undo, never apply it again.
+      const rec = doc.recordApplied(res.edit, pkg);
+      if (!rec.ok) {
+        if (res.edit) refreshAfterEdit(m.wb, res.edit, m.styles);
+        fail(rec.error);
+        return;
+      }
+      if (res.edit) {
+        this.editedAt.set(doc, doc.generation);
+        if (res.invalidate === 'workbook') this.models.delete(pkg);   // the sheet list changed
+      }
+      const range = res.range ? [res.range[0], res.range[1], res.range[2], res.range[3]] as [number, number, number, number] : undefined;
+      this.post(panel, {
+        type: 'xlsxEditResult', requestId: msg.requestId, ok: true, version: doc.version, invalidate: res.invalidate,
+        ...(res.sheetId !== undefined ? { sheetId: res.sheetId } : {}),
+        ...(range ? { range } : {}),
+      });
+      if (res.edit) {
+        this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+        if (res.invalidate === 'workbook') this.sendWorkbook(doc, panel, true);
+      }
+      return;
+    }
+  }
+
+  /** The modal for a Tier C list (default button Cancel); skipped when `confirmStructuralEdits` is off (spec §4.1). */
+  private async confirmEdit(op: XlsxEditOp, lines: readonly string[]): Promise<boolean> {
+    const alwaysAsk = op.op === 'deleteSheet';   // §9.7: deleting a sheet always asks
+    const setting = vscode.workspace.getConfiguration('vscodeMdEditor.office').get<boolean>('confirmStructuralEdits', true);
+    if (setting === false && !alwaysAsk) return true;
+    const proceed = 'Continue';
+    const answer = await vscode.window.showWarningMessage(
+      'This change will not be fully applied everywhere.',
+      { modal: true, detail: lines.join('\n') },
+      proceed,
+    );
+    return answer === proceed;
   }
 
   private async find(

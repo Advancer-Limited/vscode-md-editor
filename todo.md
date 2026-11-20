@@ -341,7 +341,7 @@
   - [x] WP-20 Xlsx cell write, input classification, calc handling
   - [x] WP-21 Formula entry, _xlfn, shared formulas
   - [x] WP-22 Date style patch + xlsx validators
-  - [ ] WP-23 Xlsx editing wiring
+  - [x] WP-23 Xlsx editing wiring
   - [x] WP-24 verify-office-open.ps1, OpenXmlValidator script
   - [ ] Gate R2 (Fable)
 - [ ] Phase 3 — Word editing
