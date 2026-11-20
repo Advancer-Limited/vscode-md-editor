@@ -313,7 +313,7 @@
 - [x] Resolve spec open questions (user): real dates in v1, Word table-cell text editable in v1, warn-and-allow for charts/pivots on row/col changes
 - [x] Implementation plan — `docs/office-viewers-plan.md` (Fable subagent)
 - [ ] Phase 0 — spikes + core (ZIP container, lossless XML)
-  - [ ] WP-01 Spikes
+  - [x] WP-01 Spikes (S1, S2, S4–S7 pass; S3 Ctrl+Z awaiting a manual run by the user)
   - [x] WP-02 Scaffolding, dependencies, test bundle, housekeeping
   - [ ] WP-03 Fixtures and generators
   - [x] WP-04 ZIP container (`core/zip.ts`, 22 tests)
