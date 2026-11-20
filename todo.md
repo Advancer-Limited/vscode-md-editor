@@ -328,8 +328,8 @@
   - [x] WP-11 Xlsx read model
   - [x] WP-12 Xlsx styles and display formatting
   - [x] WP-13 Grid maths
-  - [ ] WP-14 Xlsx provider view path
-  - [ ] WP-15 Grid component
+  - [x] WP-14 Xlsx provider view path
+  - [x] WP-15 Grid component
   - [ ] WP-16 Excel viewer shell
   - [ ] WP-17 Phase 1 docs and gate run
   - [ ] Gate R1

@@ -875,3 +875,24 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - Bookmark jumps.
   - No network requests for external images.
   - Reload after saving in Word.
+
+### 2026-11-20 — WP-14 xlsx provider + WP-15 grid component (feature/office-excel-viewer)
+- **WP-14 (Sonnet):** `src/office/xlsxEditorProvider.ts` (viewType `vscodeMdEditor.xlsx`, no find widget). Core pieces `core/xlsx/view.ts`, `find.ts` and `notices.ts`.
+  - It handles sheet meta and cell windows, find (capped at 1,000 matches) and TSV copy. `xlsxEdit` is refused as read-only.
+  - Cell windows carry the raw `v` for numbers and dates, plus the f, stale, ro, link and note flags. A formula cell with no cached value shows `=formula` and is marked stale.
+  - Wiring: step 2e in `extension.ts`, the xlsx `customEditors` entry, and the `vscodeMdEditor.office.sheetAppearance` setting (read at open through `data-sheet-appearance`). The `_vscodeStub` gained `getConfiguration`.
+  - 19 tests. The cell-window JSON in them is a regression snapshot, not taken from Excel.
+- **WP-15 (Sonnet):** `media/xlsxGrid.js` and `.css`, a virtualised grid.
+  - Layout: absolutely positioned cells in a body layer plus three sticky layers. DOM nodes are pooled and stay bounded, at about 1,200 even on a 1M×16k sheet.
+  - Data: cells are requested in 50×10 blocks, and the grid owns the requestIds, so stale batches are discarded.
+  - Accessibility: ARIA grid with aria-owns for the sticky layers.
+  - Colour: the §11.1 contrast rule is applied. Colours are parsed and re-emitted, so junk values never reach CSS.
+  - Safety: everything is set with textContent; a test throws on any innerHTML write.
+  - 20 tests.
+- **Gate R1 manual checks:**
+  - Scroll smoothness, and the sticky layers pinning correctly.
+  - Theming in all four themes, forced-colors, and screen readers.
+  - Sum/Average using raw values.
+  - The `sheetAppearance` setting.
+  - Ctrl+C putting TSV on the system clipboard.
+- **Combined:** check-types clean, compile OK, 394/394 tests.
