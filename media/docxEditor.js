@@ -162,13 +162,31 @@
       return pages ? pages.length : 0;
     }
 
+    /**
+     * JSZip (inside docx-preview) only accepts Uint8Array/ArrayBuffer/Blob/string. Normalise whatever
+     * the message carried: a typed-array view of another kind, or a plain object/array of byte values
+     * (how a non-plain view can arrive after structured cloning).
+     */
+    function toBytes(data) {
+      const tag = Object.prototype.toString.call(data);   // realm-independent, unlike instanceof
+      if (tag === '[object Uint8Array]' || tag === '[object ArrayBuffer]') return data;
+      if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      if (Array.isArray(data)) return Uint8Array.from(data);
+      if (data && typeof data === 'object') {
+        if (Array.isArray(data.data)) return Uint8Array.from(data.data);   // { type: 'Buffer', data: [...] }
+        const n = Object.keys(data).length;
+        if (n > 0 && typeof data[0] === 'number') return Uint8Array.from({ length: n }, (_, i) => data[i]);
+      }
+      throw new Error('The document data did not arrive in a readable form.');
+    }
+
     async function doRender(bytes) {
       const scrollTop = content.scrollTop;
       try {
         if (!docxLib || typeof docxLib.renderAsync !== 'function') {
           throw new Error('The Word renderer did not load.');
         }
-        await docxLib.renderAsync(bytes, host, styles, RENDER_OPTIONS);
+        await docxLib.renderAsync(toBytes(bytes), host, styles, RENDER_OPTIONS);
       } catch (e) {
         showRenderFailure(e);
         return;
