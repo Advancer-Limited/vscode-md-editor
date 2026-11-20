@@ -113,8 +113,12 @@ export class DocxEditorProvider extends OfficeEditorProviderBase {
       return;
     }
     let bytes = doc.pkg.originalBytes;
-    // A Uint8Array that views part of a larger (pooled) buffer is copied, so only the file crosses over.
-    if (bytes.byteOffset !== 0 || bytes.byteLength !== bytes.buffer.byteLength) bytes = bytes.slice();
+    // Send a plain Uint8Array that owns exactly the file's bytes. A Node Buffer (a Uint8Array subclass)
+    // or a view into a larger pooled buffer is copied: Buffer#slice shares memory instead of copying,
+    // and a non-plain view can reach the webview as something docx-preview/JSZip cannot read.
+    if (bytes.constructor !== Uint8Array || bytes.byteOffset !== 0 || bytes.byteLength !== bytes.buffer.byteLength) {
+      bytes = new Uint8Array(bytes);
+    }
     this.post(panel, { type: 'docxRender', version: doc.version, bytes, blocks: [] });
   }
 }
