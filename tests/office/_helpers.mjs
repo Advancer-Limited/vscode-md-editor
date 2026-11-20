@@ -55,7 +55,32 @@ export function commonAffixes(a, b) {
   return { prefix, suffix };
 }
 
-/** name -> { crc, compressedBytes, cdRecordBytes } for G3. Needs the ZIP reader (WP-04). */
-export function entryTable(_bytes) {
-  throw new Error('not available: entryTable needs the core ZIP reader (WP-04)');
+/**
+ * name -> { crc, compressedBytes, cdRecordBytes } for G3, read with the core ZIP reader.
+ * `compressedBytes` is the entry's compressed data (between its local header and any data
+ * descriptor). `cdRecordBytes` is its central-directory record with the local-header offset field
+ * (bytes 42..45) zeroed, because offsets legitimately move when an earlier entry changes size.
+ */
+export function entryTable(bytes) {
+  const L = core.limits.LIMITS;
+  const zip = core.zip.readZip(bytes, {
+    maxFileBytes: L.maxFileBytes,
+    maxTotalUncompressed: L.maxUncompressedTotalBytes,
+    maxEntryUncompressed: L.maxEntryBytes,
+  });
+  const table = new Map();
+  for (const e of zip.entries) {
+    const start = e.extent[0];
+    const nameLen = bytes[start + 26] | (bytes[start + 27] << 8);
+    const extraLen = bytes[start + 28] | (bytes[start + 29] << 8);
+    const dataStart = start + 30 + nameLen + extraLen;
+    const cdRecordBytes = bytes.slice(e.cdRecord[0], e.cdRecord[1]);
+    cdRecordBytes.fill(0, 42, 46);
+    table.set(e.name, {
+      crc: e.crc32,
+      compressedBytes: bytes.slice(dataStart, dataStart + e.compressedSize),
+      cdRecordBytes,
+    });
+  }
+  return table;
 }
