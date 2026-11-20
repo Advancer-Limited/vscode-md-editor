@@ -343,7 +343,8 @@
   - [x] WP-22 Date style patch + xlsx validators
   - [x] WP-23 Xlsx editing wiring
   - [x] WP-24 verify-office-open.ps1, OpenXmlValidator script
-  - [ ] Gate R2 (Fable)
+  - [ ] Gate R2 (Fable): review done, F1–F10 fixed (645 tests). Waiting on the user: verify-office-open.ps1 on r2excel-check + tests.out, then the dev-host checklist; then flip `xlsxEdit`
+  - [ ] Follow-up (F5): async/chunked core serialize, verifyBytes and xlsxValidator (no host block > 500 ms on large.xlsx)
 - [ ] Phase 3 — Word editing
   - [ ] WP-25 Docx block/segment model
   - [ ] WP-26 Docx styles + numbering, read side
