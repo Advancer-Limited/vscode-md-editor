@@ -81,6 +81,16 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.docx",
+        "displayName": "Word Document Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.docx"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "commands": [
