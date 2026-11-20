@@ -321,7 +321,7 @@
   - [x] WP-06 OPC, OfficePackage, load classification (`core/opc.ts`, `package.ts`, `sniff.ts`, 20 tests)
   - [ ] Gate R0 — self-review of zip/xml/package against spec §3.2–3.3 (G1/G2 green on all 31 openable fixtures)
 - [ ] Phase 1 — read-only viewers
-  - [ ] WP-07 Protocol contract freeze
+  - [x] WP-07 Protocol contract freeze
   - [x] WP-08 Host shell
   - [x] WP-09 Common webview chrome
   - [ ] WP-10 Word viewer
