@@ -896,3 +896,30 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - The `sheetAppearance` setting.
   - Ctrl+C putting TSV on the system clipboard.
 - **Combined:** check-types clean, compile OK, 394/394 tests.
+
+### 2026-11-21 — WP-16 Excel viewer shell (feature/office-excel-viewer)
+- **WP-16 (Sonnet):** `media/xlsxEditor.js` and `.css`, plus `tests/office/xlsxEditorShell.test.js`. Global `XlsxEditor.create(deps)`; the webview auto-starts it and exposes `window.XlsxShell = { grid, state, registerCellEditor, registerMenuItems }`.
+  - Sheets: tablist with a roving tabindex and a hidden-sheets menu. A viewed hidden sheet gets a temporary tab. Chart and other sheets show a placeholder with an Open in Excel button. Ctrl+PageUp/Down switches sheets.
+  - Loading: a switch requests meta, then `setMeta`, and the grid requests the cells. Foreign or stale meta is dropped. A `sheet-unavailable` notice reverts the tab to the previous sheet, or shows a placeholder if there was none.
+  - Formula bar: read-only. The formula text comes from `xlsxRequestCellInput`, with shell ids from 1e9 so they never collide with the grid's ids. Stale formulas get a "Not calculated" marker. The active cell's comment text is shown (the grid's own title tooltip covers hover).
+  - Status bar: selection address plus Sum/Average/Count via `XlsxGridMath.selectionStats`, which uses the raw `v`.
+  - Find: own bar. Enter/Shift+Enter/F3 step through matches, with a match-case toggle, a this-sheet/all-sheets scope and a debounced search. It switches sheets to reach a match. The count shows "1,000+" when truncated.
+  - Copy: Ctrl+C, the toolbar button and the menu send `xlsxCopy` as tsv. There is no Markdown option.
+  - Hyperlinks: Ctrl+click follows http/https/mailto via `openLink`; `#Sheet!A1` links switch sheet and select; other schemes are refused with a hint.
+  - Edit gestures: View mode shows the edit hint and returns false. A protected sheet shows its reason. Otherwise the registered cell editor is offered the gesture.
+  - Menu: a Shift+F10 / right-click context menu with only Copy enabled, plus a provider hook. Per-sheet notices render in `#office-banner`.
+  - Security: textContent only; a test asserts there are no HTML-string sinks.
+  - 29 tests (grid stubbed; real OfficeCommon and XlsxGridMath).
+- **Gate R1 manual checks:**
+  - Layout: grid fills the area with the formula bar above and tabs and status below; tab overflow scrolls; the find bar wraps.
+  - Themes: four themes, forced-colors, and the placement of the context and hidden-sheets menus (the menu is positioned with `position: fixed`).
+  - Keyboard: Ctrl+F, Ctrl+C and Ctrl+PageUp/Down are not swallowed by VS Code; focus returns to the grid after Escape in find and after the menu closes.
+  - Large selections: Ctrl+A then Ctrl+C on `large.xlsx`.
+  - Copy: the TSV lands on the system clipboard.
+  - Links: Ctrl+click on an https link opens the browser; an internal link jumps.
+  - Chart sheets: the placeholder on a chartsheet fixture.
+  - Hidden sheets: the menu and the temporary tab.
+  - Formulas: the formula bar on `formulas.xlsx`, including stale cells.
+  - Reload: reloading after the file changes on disk keeps the sheet.
+  - Notices: the `sheet-unavailable` notice on a damaged sheet.
+  - Theme switch: the grid's `refreshTheme` is not called when the VS Code theme changes live. Check this.

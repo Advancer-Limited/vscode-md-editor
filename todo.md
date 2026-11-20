@@ -330,7 +330,7 @@
   - [x] WP-13 Grid maths
   - [x] WP-14 Xlsx provider view path
   - [x] WP-15 Grid component
-  - [ ] WP-16 Excel viewer shell
+  - [x] WP-16 Excel viewer shell
   - [ ] WP-17 Phase 1 docs and gate run
   - [ ] Gate R1
 - [ ] Phase 2 — save pipeline + Excel cell editing
