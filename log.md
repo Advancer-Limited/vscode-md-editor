@@ -983,3 +983,23 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - The revert command targets the right editor.
   - With flags off there is no Save As.
   - No duplicate error toast on CancellationError.
+
+### 2026-11-21 — WP-20 cell write + WP-21 formulas (feature/office-xlsx-cells)
+- **WP-20 (Opus):**
+  - **Input:** `core/xlsx/input.ts` (`classifyInput` per §9.3, ISO date serials, Excel-form numbers, `encodeXstring`).
+  - **Cell writes:** `sheet.ts` write side. `writeCell` uses inline strings only and keeps unknown attributes and children. The index is updated incrementally, with an IndexStaleError rebuild-and-retry.
+  - **Recalc:** `calc.ts` `ensureFullCalcOnLoad` puts calcPr in schema position and removes the calc chain part, rel and Override. It is part of the first edit.
+  - **Dispatcher:** `ops.ts` `applyXlsxEdit` returns edits that are already applied, so the provider must not apply them again and must call `refreshAfterEdit`. Typed "Not available yet" stubs cover later WPs.
+  - **Tests:** a 98-row input table and 33 cell-edit tests. G3/G4/G5/G6 pass on every input kind, plus seeded 200-op random runs.
+  - **Decisions:** Text-format cells store input verbatim; error literals are stored as text; an unchanged seed commit is a no-op; a clear overlapping a read-only cell is refused.
+- **WP-21 (Opus):**
+  - **`refs.ts`:** `validateFormula` (@borgar/fx tokenize + parse). It also refuses a leading `=`, the `#` and `@` operators (users type ANCHORARRAY()/SINGLE() instead), control characters and formulas over 8,192 characters. `translateFormula` uses a per-token relative shift; the plan's R1C1 round trip was rejected, and plan WP-21 has been updated.
+  - **`xlfn.ts`:** the [MS-XLSX] §2.2.2.1 list plus a labelled Excel 365 supplement. It handles `_xlfn.`, `_xlws.` and `_xlpm.` for LET/LAMBDA parameters. Spec §9.5 is fixed to say the list lives in xlfn.ts.
+  - **`sharedFormula.ts`:** `setFormula` writes no `<v>`/`t` and keeps `s`. A master is materialised first. Other functions: `materialiseGroup`/`All` (an orphan dependant is refused), `displayFormula` and `isUnchangedFormula`.
+  - One line each in format.ts and view.ts strips the prefixes for display. 19 formula tests, including 200-op random runs that mix value and formula edits.
+- **Merged PR-6** (`feature/office-save`) into this branch.
+- **Follow-ups:**
+  - WP-23 must seed shared dependants with `'=' + displayFormula(sheet, cell)`, and must override `onEdited` (from WP-19).
+  - None of the outputs has been opened in real Excel yet (Gate R2, using WP-24's script).
+  - The Excel 365 supplement prefixes are inferred.
+  - libreoffice.xlsx is still pending.
