@@ -20,6 +20,9 @@ import { editSeed } from './core/xlsx/format.js';
 import { cellWindow, clampRange, sheetMeta, toTsv } from './core/xlsx/view.js';
 import { findInWorkbook } from './core/xlsx/find.js';
 import { describeLoadFailure, describeUnexpectedError } from './loadErrors.js';
+import { packageValidator } from './core/save.js';
+import type { Validator } from './core/save.js';
+import { xlsxValidator } from './core/xlsx/validate.js';
 
 interface Model { wb: Workbook; styles: StyleTable }
 
@@ -77,6 +80,11 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
 
   protected csp(webview: vscode.Webview, nonce: string): string {
     return officeCsp(webview.cspSource, nonce, false);
+  }
+
+  /** Spec §6.5 step 4 / §13.3: the package rules, then every xlsx rule (styles rules when styles.xml changed). */
+  protected validators(): Validator[] {
+    return [packageValidator, xlsxValidator];
   }
 
   // -------------------------------------------------------------------------------------------

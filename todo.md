@@ -340,7 +340,7 @@
   - [x] WP-19 Full CustomEditorProvider
   - [x] WP-20 Xlsx cell write, input classification, calc handling
   - [x] WP-21 Formula entry, _xlfn, shared formulas
-  - [ ] WP-22 Date style patch + xlsx validators
+  - [x] WP-22 Date style patch + xlsx validators
   - [ ] WP-23 Xlsx editing wiring
   - [ ] WP-24 verify-office-open.ps1, OpenXmlValidator script
   - [ ] Gate R2 (Fable)

@@ -1003,3 +1003,19 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - None of the outputs has been opened in real Excel yet (Gate R2, using WP-24's script).
   - The Excel 365 supplement prefixes are inferred.
   - libreoffice.xlsx is still pending.
+
+### 2026-11-21 — WP-22 date style patch + xlsx validators (feature/office-xlsx-cells)
+- **WP-22 (Opus):**
+  - **`core/xlsx/stylesWrite.ts`:** `dateStyleFor` replaces the WP-20 stub and implements spec §9.3.1. The target is a copy of the cell's base `xf` from its source text, with `numFmtId` set to 14 (22 with a time) and `applyNumberFormat="1"`. The lowest equal existing record is reused (attributes compared in any order, child XML must match exactly). Otherwise one `xf` is appended right after the last record (`insertAt`, rootScoped), and `count` is raised only if it exists. A per-edit cache gives one record per (base, format).
+  - **Text fallbacks** (each with the notice "Stored as text — this workbook has no cell formats to extend"): no styles part, not UTF-8, root is not a main-namespace `styleSheet`, `cellXfs` missing or empty, `count` disagrees with the records, the base index has no record, the record names don't resolve at the root (XmlScopeError), or the 65,490-record cap is reached.
+  - **Style table refresh:** the existing `ops.ts` call sites refresh the table after the edit (`afterCellEdit` → `styles.reload()`, and `refreshAfterEdit` after undo/redo). `dateStyleFor` reads only the live tree, so an aborted edit never leaves the table describing a rolled-back record.
+  - **`core/xlsx/validate.ts`:** `xlsxValidator` covers every §13.3 xlsx rule and the styles rules. Workbook rules always run, sheet rules run on touched worksheets, and styles rules run when styles.xml is touched. Given a ValidatorContext, it doesn't report problems the loaded file already had, and "formulas touched" means a touched sheet's formulas changed.
+  - **`xlsxEditorProvider.ts`:** `validators()` returns `[packageValidator, xlsxValidator]`.
+  - **Tests:** `xlsxDateStyle.test.mjs` (19) and `xlsxValidate.test.mjs` (23).
+    - Date tests: G3, a G4 exact-text check on styles.xml, G5 and ExcelJS reading a Date (G6). Also record reuse, nocount, no-styles, 1904 dates, the cap, a 50-date paste and seeded random value/date/formula runs with undo/redo that pass the validators at every step.
+    - Validator tests: one failing case per rule, plus every openable fixture and every tests/.out workbook passing.
+  - Updated the WP-20 test "date into a General cell", which asserted the stub's behaviour (styles.xml untouched).
+- **Follow-ups / not verified:**
+  - Outputs have not been opened in desktop Excel (Gate R2, WP-24 script).
+  - ExcelJS cannot read an `x:`-prefixed styles part at all, so that case is checked by the validators only.
+  - A UTF-16 styles part is not exercised: the package can't write UTF-16 parts.

@@ -173,11 +173,12 @@ test('date-time into a currency cell stores the serial and leaves the format alo
   assert.strictEqual((await excel(after)).getWorksheet('Values').getCell('B17').value, 45366.5);
 });
 
-test('date into a General cell stores the serial (date style patch is WP-22: styles.xml untouched for now)', async () => {
-  const { text, after } = await checkEdit({ name: 'basic.xlsx', op: set(1, [[1, 1, '2024-03-15']]), touched: BASIC_FIRST,
+test('date into a General cell stores the serial with a date format (WP-22 date style patch; full cases in xlsxDateStyle)', async () => {
+  const { text, after } = await checkEdit({ name: 'basic.xlsx', op: set(1, [[1, 1, '2024-03-15']]), touched: [...BASIC_FIRST, 'xl/styles.xml'],
     span: (t) => cellSpan(t, 'B2'), out: 'date-in-general-cell' });
-  assert.ok(text.includes('<c r="B2"><v>45366</v></c>'));
-  assert.strictEqual((await excel(after)).getWorksheet('Values').getCell('B2').value, 45366);
+  assert.ok(text.includes('<c r="B2" s="12"><v>45366</v></c>'));
+  const v = (await excel(after)).getWorksheet('Values').getCell('B2').value;
+  assert.ok(v instanceof Date && v.toISOString().startsWith('2024-03-15'), String(v));
 });
 
 test('clear keeps a styled c, removes an unstyled one', async () => {
