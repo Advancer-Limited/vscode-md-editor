@@ -896,3 +896,48 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - The `sheetAppearance` setting.
   - Ctrl+C putting TSV on the system clipboard.
 - **Combined:** check-types clean, compile OK, 394/394 tests.
+
+### 2026-11-21 — WP-16 Excel viewer shell (feature/office-excel-viewer)
+- **WP-16 (Sonnet):** `media/xlsxEditor.js` and `.css`, plus `tests/office/xlsxEditorShell.test.js`. Global `XlsxEditor.create(deps)`; the webview auto-starts it and exposes `window.XlsxShell = { grid, state, registerCellEditor, registerMenuItems }`.
+  - Sheets: tablist with a roving tabindex and a hidden-sheets menu. A viewed hidden sheet gets a temporary tab. Chart and other sheets show a placeholder with an Open in Excel button. Ctrl+PageUp/Down switches sheets.
+  - Loading: a switch requests meta, then `setMeta`, and the grid requests the cells. Foreign or stale meta is dropped. A `sheet-unavailable` notice reverts the tab to the previous sheet, or shows a placeholder if there was none.
+  - Formula bar: read-only. The formula text comes from `xlsxRequestCellInput`, with shell ids from 1e9 so they never collide with the grid's ids. Stale formulas get a "Not calculated" marker. The active cell's comment text is shown (the grid's own title tooltip covers hover).
+  - Status bar: selection address plus Sum/Average/Count via `XlsxGridMath.selectionStats`, which uses the raw `v`.
+  - Find: own bar. Enter/Shift+Enter/F3 step through matches, with a match-case toggle, a this-sheet/all-sheets scope and a debounced search. It switches sheets to reach a match. The count shows "1,000+" when truncated.
+  - Copy: Ctrl+C, the toolbar button and the menu send `xlsxCopy` as tsv. There is no Markdown option.
+  - Hyperlinks: Ctrl+click follows http/https/mailto via `openLink`; `#Sheet!A1` links switch sheet and select; other schemes are refused with a hint.
+  - Edit gestures: View mode shows the edit hint and returns false. A protected sheet shows its reason. Otherwise the registered cell editor is offered the gesture.
+  - Menu: a Shift+F10 / right-click context menu with only Copy enabled, plus a provider hook. Per-sheet notices render in `#office-banner`.
+  - Security: textContent only; a test asserts there are no HTML-string sinks.
+  - 29 tests (grid stubbed; real OfficeCommon and XlsxGridMath).
+- **Gate R1 manual checks:**
+  - Layout: grid fills the area with the formula bar above and tabs and status below; tab overflow scrolls; the find bar wraps.
+  - Themes: four themes, forced-colors, and the placement of the context and hidden-sheets menus (the menu is positioned with `position: fixed`).
+  - Keyboard: Ctrl+F, Ctrl+C and Ctrl+PageUp/Down are not swallowed by VS Code; focus returns to the grid after Escape in find and after the menu closes.
+  - Large selections: Ctrl+A then Ctrl+C on `large.xlsx`.
+  - Copy: the TSV lands on the system clipboard.
+  - Links: Ctrl+click on an https link opens the browser; an internal link jumps.
+  - Chart sheets: the placeholder on a chartsheet fixture.
+  - Hidden sheets: the menu and the temporary tab.
+  - Formulas: the formula bar on `formulas.xlsx`, including stale cells.
+  - Reload: reloading after the file changes on disk keeps the sheet.
+  - Notices: the `sheet-unavailable` notice on a damaged sheet.
+  - Theme switch: the grid's `refreshTheme` is not called when the VS Code theme changes live. Check this.
+
+### 2026-11-21 — WP-17 Phase 1 docs and gate run (feature/office-viewers-docs)
+- **README.md:** new "Word and Excel viewers" section (what opens by default, what is shown, what is present but not shown, limits, known limitations including the Phase 1 heading role/aria-level limit from WP-10, how to switch editors via Open With / `workbench.editorAssociations`, privacy and untrusted-workspace statement, "editing is coming"), a Features bullet and an "Office Viewer Settings" table for `vscodeMdEditor.office.sheetAppearance`. The 60 MB Word "large document" notice is in `LIMITS` but not implemented, so the README does not promise it.
+- **CHANGELOG.md:** `[Unreleased]` entry for the viewers; no version bump.
+- **docs/office-gate-r1-checklist.md:** the single consolidated Gate R1 human checklist. 57 items (48 must, 10 nice; one item is both) in sections 0 setup, A Word, B Excel, C errors/security, D theming/a11y, E regression, F the pending Phase 0 S3 Ctrl+Z spike (marked "needed before Word editing, group D"), plus a coverage map back to plan §6/§10, spec §14, §10.3 and the WP-08 to WP-16 manual-check lists. Estimated 50 minutes for the must items, about 20 more for the nice items.
+- **Could not consolidate:** (1) The S3 steps were not in this log (the Phase 0 report only says "Pending"), so they were reconstructed from the spike's `media/spike.js` `s3manual()` and `run-dev.ps1`. (2) No committed fixture has a hidden sheet, a chartsheet or a damaged sheet part, so the hidden-sheets menu, chartsheet placeholder and `sheet-unavailable` notice are [nice] (X12) or unit-test-only. (3) No committed `.gltf`/`.mmd` samples, so regression items say to create scratch ones. (4) Plan §10 items 1-4 (edited outputs in Word/Excel) and the `/code-review` of PR-3/PR-4 are not human Phase 1 checks and are recorded as not applicable/orchestrator in the coverage map.
+- **Automated Gate R1 results (Windows 11, Node 24):**
+  - `npm run check-types`: clean.
+  - `npm run compile`: OK (dev build `dist/extension.js` 459,663 bytes).
+  - `npm test`: 423/423 pass on the second run. The first run had one failure, `xlsxGridMath` "200k indexAt calls took 6583 ms" (limit 3000 ms), right after the compile; 3 isolated re-runs of the file passed (31/31) and the full run passed. A load-sensitive timing assertion, not a logic failure; worth loosening or retiming in a later change.
+  - Production bundle (`node esbuild.js --production`): `dist/extension.js` 263,146 bytes (84,497 gzip); WP-08 recorded 128.9 KB at that point, growth since is the xlsx provider and view code.
+  - `npx @vscode/vsce ls`: no `docs/`, `tests/`, `scripts/` or `spike/` path listed (so the new checklist is excluded by `.vscodeignore` `docs/**`); includes `media/docxEditor.*`, `media/xlsxEditor.*`, `media/xlsxGrid*`, `media/officeCommon.*`, `media/docx-preview.min.js`, `media/jszip.min.js`, `THIRD-PARTY-NOTICES.md`; no warnings. `vsce package --no-dependencies`: 44 files, 2.09 MB (vsix deleted after the check).
+- **Not verified (human):** everything in the checklist; Gate R1 is not yet recorded as passed.
+
+### 2026-11-21 — Synthetic fixtures: hidden sheets, chartsheet, damaged sheet (feature/office-viewers-docs)
+- **scripts/office-fixtures/make-synthetic.mjs:** added `hidden-sheets.xlsx` (basic.xlsx + a hidden and a veryHidden inline-string sheet), `chartsheet.xlsx` (features.xlsx + `xl/chartsheets/sheet1.xml`, its own drawing2 with an absoluteAnchor graphicFrame, workbook rel of type chartsheet, content types; the chart is a copy `chart2.xml` so each drawing owns its chart part) and `damaged-sheet.xlsx` (basic.xlsx + a sheet truncated mid-element). Generator run twice: identical md5 for all three; existing fixtures unchanged.
+- **Tests:** new `tests/office/extraFixtures.test.mjs` (states, chartsheet kind and `not-worksheet` rejection, damaged sheet `SheetLoadError` while others load); the three added to `fixtures.test.mjs` REQUIRED.
+- **Docs:** README fixture table, Gate R1 X12 (now covers all three, and the coverage note about `sheet-unavailable`), todo.md. `.gltf`/`.mmd` samples remain a note. Not opened in Excel (no COM by instruction).

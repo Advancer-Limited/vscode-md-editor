@@ -5,7 +5,7 @@ Committed binaries (`.gitattributes`: `tests/fixtures/office/** binary`), each <
 ```
 pwsh scripts/office-fixtures/make-word.ps1       # real Word, via COM  (needs desktop Word)
 pwsh scripts/office-fixtures/make-excel.ps1      # real Excel, via COM (needs desktop Excel)
-node scripts/office-fixtures/make-synthetic.mjs  # run AFTER the two above (derives from basic.docx / basic.xlsx)
+node scripts/office-fixtures/make-synthetic.mjs  # run AFTER the two above (derives from basic.docx / basic.xlsx / features.xlsx)
 ```
 
 Both PowerShell scripts take `-Only name,name` to regenerate a subset and `-OutDir`.
@@ -58,6 +58,9 @@ Password for `encrypted.docx` / `encrypted.xlsx`: `test`.
 | `prefixed-namespaces.xlsx` | make-synthetic | `x:` prefixed main namespace on workbook, sheet and shared strings |
 | `data-descriptors.xlsx` | make-synthetic | Every entry written with general-purpose flag bit 3 (data descriptor) |
 | `zip64.xlsx` | make-synthetic | `basic.xlsx` with a ZIP64 EOCD record and locator inserted (must be refused; JSZip cannot read it either) |
+| `hidden-sheets.xlsx` | make-synthetic | `basic.xlsx` plus two inline-string worksheets: "Hidden Sheet" (`state="hidden"`) and "Very Hidden Sheet" (`state="veryHidden"`) |
+| `chartsheet.xlsx` | make-synthetic | `features.xlsx` plus a chartsheet "Chart Sheet" (`xl/chartsheets/sheet1.xml`, own drawing and a copy `chart2.xml` of the chart); must never be parsed as a worksheet |
+| `damaged-sheet.xlsx` | make-synthetic | `basic.xlsx` plus a third sheet "Damaged Sheet" whose part is truncated mid-element: the workbook opens, that sheet fails (`sheet-unavailable` notice) |
 
 `expected/styles.pdf`: Excel `ExportAsFixedFormat` of `styles.xlsx`, the visual reference for Gate R1.
 

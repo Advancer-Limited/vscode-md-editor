@@ -1,6 +1,6 @@
 // make-synthetic.mjs - generates the scripted Office fixtures of spec 13.4 (no Office needed).
 // Usage: node scripts/office-fixtures/make-synthetic.mjs [outDir]
-// Requires basic.docx / basic.xlsx (made by make-word.ps1 / make-excel.ps1) in outDir.
+// Requires basic.docx / basic.xlsx / features.xlsx (made by make-word.ps1 / make-excel.ps1) in outDir.
 // Output is byte-deterministic (fixed ZIP timestamps, fixed content).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -180,6 +180,71 @@ async function makeLocalisedDe(dir) {
   return write(dir, 'localised-de.synthetic.docx', await zipOf(out));
 }
 
+// ---- sheet-state / chartsheet / damaged-sheet fixtures (derived from committed Excel files) ----
+const CT_WS = 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
+const small = (a, b) => sheetXml({ cells: [[inl(a), inl(b)], [num(1), num(2)]] });
+/** Apply `edit(textOrUndefined)` per part name (adding the part when absent), keeping part order stable. */
+function patchParts(parts, edits) {
+  const out = parts.map(([n, d]) => (edits[n] ? [n, Buffer.from(edits[n](d.toString('utf8')), 'utf8')] : [n, d]));
+  for (const [n, fn] of Object.entries(edits)) if (!parts.some(([m]) => m === n)) out.push([n, Buffer.from(fn(undefined), 'utf8')]);
+  return out;
+}
+const addTo = (marker, add) => (t) => { if (!t.includes(marker)) throw new Error(`missing ${marker}`); return t.replace(marker, add + marker); };
+
+async function addExtraSheets(dir, name, sheets) {
+  // sheets: [{ file, id, rId, name, state?, xml }] appended after the existing sheets of basic.xlsx
+  const parts = await readParts(path.join(dir, 'basic.xlsx'));
+  const edits = {
+    '[Content_Types].xml': addTo('<Override PartName="/xl/theme/theme1.xml"', sheets.map((x) => `<Override PartName="/xl/worksheets/${x.file}" ContentType="${CT_WS}"/>`).join('')),
+    'xl/workbook.xml': addTo('</sheets>', sheets.map((x) => `<sheet name="${x.name}" sheetId="${x.id}"${x.state ? ` state="${x.state}"` : ''} r:id="${x.rId}"/>`).join('')),
+    'xl/_rels/workbook.xml.rels': addTo('</Relationships>', sheets.map((x) => `<Relationship Id="${x.rId}" Type="${NS_R}/worksheet" Target="worksheets/${x.file}"/>`).join('')),
+  };
+  for (const x of sheets) edits[`xl/worksheets/${x.file}`] = () => x.xml;
+  return write(dir, name, await zipOf(patchParts(parts, edits)));
+}
+function makeHiddenSheets(dir) {
+  return addExtraSheets(dir, 'hidden-sheets.xlsx', [
+    { file: 'sheet3.xml', id: 3, rId: 'rId6', name: 'Hidden Sheet', state: 'hidden', xml: small('Hidden', 'sheet') },
+    { file: 'sheet4.xml', id: 4, rId: 'rId7', name: 'Very Hidden Sheet', state: 'veryHidden', xml: small('Very hidden', 'sheet') },
+  ]);
+}
+function makeDamagedSheet(dir) {
+  const xml = small('Damaged', 'sheet');
+  const cut = xml.indexOf('<row r="2">') + '<row r="2"><c r="A2"><v>1'.length;   // stop mid-element
+  return addExtraSheets(dir, 'damaged-sheet.xlsx', [
+    { file: 'sheet3.xml', id: 3, rId: 'rId6', name: 'Damaged Sheet', xml: xml.slice(0, cut) },
+  ]);
+}
+async function makeChartsheet(dir) {
+  const parts = await readParts(path.join(dir, 'features.xlsx'));
+  const chart = parts.find(([n]) => n === 'xl/charts/chart1.xml');
+  if (!chart) throw new Error('features.xlsx: no xl/charts/chart1.xml');
+  const NS_XDR = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing';
+  const drawing = `${XML_DECL}<xdr:wsDr xmlns:xdr="${NS_XDR}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">`
+    + '<xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="9334500" cy="6191250"/>'
+    + '<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>'
+    + '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>'
+    + '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+    + `<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="${NS_R}" r:id="rId1"/>`
+    + '</a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:absoluteAnchor></xdr:wsDr>';
+  const edits = {
+    '[Content_Types].xml': addTo('<Override PartName="/xl/charts/chart1.xml"',
+      '<Override PartName="/xl/chartsheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml"/>'
+      + '<Override PartName="/xl/drawings/drawing2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+      + '<Override PartName="/xl/charts/chart2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'),
+    'xl/workbook.xml': addTo('</sheets>', '<sheet name="Chart Sheet" sheetId="4" r:id="rId8"/>'),
+    'xl/_rels/workbook.xml.rels': addTo('</Relationships>', `<Relationship Id="rId8" Type="${NS_R}/chartsheet" Target="chartsheets/sheet1.xml"/>`),
+    'xl/chartsheets/sheet1.xml': () => `${XML_DECL}<chartsheet xmlns="${NS_MAIN}" xmlns:r="${NS_R}"><sheetViews><sheetView workbookViewId="0" zoomToFit="1"/></sheetViews>`
+      + '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><drawing r:id="rId1"/></chartsheet>',
+    'xl/chartsheets/_rels/sheet1.xml.rels': () => `${XML_DECL}<Relationships xmlns="${NS_PKG_REL}"><Relationship Id="rId1" Type="${NS_R}/drawing" Target="../drawings/drawing2.xml"/></Relationships>`,
+    'xl/drawings/drawing2.xml': () => drawing,
+    'xl/drawings/_rels/drawing2.xml.rels': () => `${XML_DECL}<Relationships xmlns="${NS_PKG_REL}"><Relationship Id="rId1" Type="${NS_R}/chart" Target="../charts/chart2.xml"/></Relationships>`,
+    // Own copy of the chart: two drawings pointing at one chart part is legal OPC but Excel is happier with one owner each.
+    'xl/charts/chart2.xml': () => chart[1].toString('utf8'),
+  };
+  return write(dir, 'chartsheet.xlsx', await zipOf(patchParts(parts, edits)));
+}
+
 function write(dir, name, buf) {
   fs.writeFileSync(path.join(dir, name), buf);
   console.log(`  wrote ${name} (${buf.length} bytes)`);
@@ -219,6 +284,9 @@ export async function makeSynthetic(dir = DEFAULT_DIR) {
   makeTruncated(dir);
   await makeExternalImage(dir);
   await makeLocalisedDe(dir);
+  await makeHiddenSheets(dir);
+  await makeChartsheet(dir);
+  await makeDamagedSheet(dir);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

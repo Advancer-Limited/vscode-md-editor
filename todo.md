@@ -330,9 +330,11 @@
   - [x] WP-13 Grid maths
   - [x] WP-14 Xlsx provider view path
   - [x] WP-15 Grid component
-  - [ ] WP-16 Excel viewer shell
-  - [ ] WP-17 Phase 1 docs and gate run
-  - [ ] Gate R1
+  - [x] WP-16 Excel viewer shell
+  - [x] WP-17 Phase 1 docs and gate run
+  - [ ] Gate R1 — automated checks green (WP-17); human checks in `docs/office-gate-r1-checklist.md` (57 items, ~50 min) are waiting on the user
+  - [x] Follow-up: synthetic fixtures for a hidden or very hidden sheet, a chartsheet and a damaged sheet part (make-synthetic.mjs, no COM)
+  - [ ] Note: small `.gltf`/`.mmd` samples for the regression checks are still to do
 - [ ] Phase 2 — save pipeline + Excel cell editing
   - [ ] WP-18 Edits, undo/redo, serialise, verify, save core
   - [ ] WP-19 Full CustomEditorProvider

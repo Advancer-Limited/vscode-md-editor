@@ -17,7 +17,7 @@ const REQUIRED = [
   'basic.xlsx', 'styles.xlsx', 'formulas.xlsx', 'tables.xlsx', 'features.xlsx', 'date1904.xlsx',
   'no-date-style.xlsx', 'no-date-style-nocount.xlsx', 'no-styles.xlsx', 'protected-sheet.xlsx', 'protected-structure.xlsx',
   'inline-strings.xlsx', 'no-shared-strings.xlsx', 'prefixed-namespaces.xlsx', 'large.xlsx', 'encrypted.xlsx',
-  'data-descriptors.xlsx', 'zip64.xlsx', 'expected/styles.pdf',
+  'data-descriptors.xlsx', 'zip64.xlsx', 'hidden-sheets.xlsx', 'chartsheet.xlsx', 'damaged-sheet.xlsx', 'expected/styles.pdf',
 ];
 // Producer files only the user can supply (see tests/fixtures/office/README.md for the recipes).
 // A missing one prints a warning instead of failing.
