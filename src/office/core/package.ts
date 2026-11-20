@@ -394,10 +394,25 @@ export class OfficePackage {
       if (data === null) return;
       s = { name, gen: 0, touched: false, changed: false };
       this.parts.set(key, s);
+    } else if (!s.entry && s.data === null && s.name !== name) {
+      // Re-creating a tombstoned part under a different case: same slot (Map.set keeps the
+      // position of an existing key), new name.
+      s = { name, gen: s.gen, touched: false, changed: false, data: null };
+      this.parts.set(key, s);
     }
     if (data === null && !s.entry) {
+      // A created part that is deleted again leaves no trace in the output, but its map slot stays
+      // as a tombstone: re-creating it (undo of the deletion) puts it back at its original position
+      // among the created parts, so every intermediate state has the same ZIP entry order.
+      s.data = null;
       s.gen++;
-      this.parts.delete(key);   // a created part that is deleted again leaves no trace
+      s.doc = undefined;
+      s.origText = undefined;
+      s.pending = undefined;
+      s.bom = undefined;
+      s.utf16 = undefined;
+      s.touched = false;
+      s.changed = false;
       return;
     }
     s.data = data === null ? null : data.slice();
@@ -435,6 +450,7 @@ export class OfficePackage {
     for (const s of all) if (!s.entry) ordered.push(s);
     for (const s of ordered) {
       if (!s.entry) {
+        if (s.data === null) continue;   // tombstone of a created-then-deleted part
         items.push({ add: s.name, data: this.currentBytes(s) });
         changed = true;
         continue;

@@ -3,7 +3,7 @@
 // guard, before-text check), §13.2 G4/G5.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { core, fixture, assertBytesEqual, writeOut, entryTable } from './_helpers.mjs';
+import { core, fixture, assertBytesEqual, writeOut } from './_helpers.mjs';
 import { assertG3, assertG4, assertG5, assertReopenSame, prettyDocx, rng, spanOf } from './_roundtrip.mjs';
 
 const { OfficePackage } = core.pkg;
@@ -559,27 +559,6 @@ function summary(c) {
   return c.kind === 'part' ? `part ${c.part} ${c.before ? 'B' : '-'}${c.after ? 'A' : '-'}` : c.kind === 'attr' ? `attr ${c.part} [${c.path}] ${c.local} ${JSON.stringify(c.before)}->${JSON.stringify(c.after)}` : `node ${c.part} [${c.path}] ${JSON.stringify(c.before.slice(0, 40))}->${JSON.stringify(c.after.slice(0, 40))}`;
 }
 
-/**
- * Same entries byte for byte (compressed data, CRC, central record), original entries in the same
- * order, and only the order of parts created in this session differs. OfficePackage appends a
- * created part that is deleted and re-created (undo of its deletion) after the other created parts;
- * that is the one known intermediate-state difference (full undo is still byte-identical).
- */
-function sameUpToCreatedOrder(a, b, original) {
-  const ta = entryTable(a);
-  const tb = entryTable(b);
-  const orig = new Set(entryTable(original).keys());
-  if (ta.size !== tb.size) return false;
-  for (const [n, ea] of ta) {
-    const eb = tb.get(n);
-    if (!eb || ea.crc !== eb.crc || !sameBytes(ea.compressedBytes, eb.compressedBytes)) return false;
-    if (orig.has(n) && !sameBytes(ea.cdRecordBytes, eb.cdRecordBytes)) return false;
-  }
-  const oa = [...ta.keys()].filter((n) => orig.has(n));
-  const ob = [...tb.keys()].filter((n) => orig.has(n));
-  return oa.join('\u0000') === ob.join('\u0000');
-}
-
 /** Every part's current bytes. */
 function snapshot(pkg) {
   return new Map(pkg.partNames().map((n) => [n, pkg.bytes(n)]));
@@ -655,9 +634,10 @@ test('seeded random sequence of 200 synthetic edits with undo/redo interleaved e
         models.push(snapshot(pkg));
         edits++;
       }
-      // G5 / redo identity at every step: the state is exactly the one recorded for this depth.
+      // G5 / redo identity at every step: the state is exactly the one recorded for this depth,
+      // byte for byte, ZIP entry order included (created parts keep their slot, package.ts tombstones).
       const now = pkg.serialize();
-      if (!sameBytes(now, states[done.length]) && !sameUpToCreatedOrder(now, states[done.length], bytes)) {
+      if (!sameBytes(now, states[done.length])) {
         const want = OfficePackage.open(name, states[done.length]);
         const diff = pkg.partNames().filter((n) => !want.has(n) || !sameBytes(want.bytes(n), pkg.bytes(n)));
         const detail = diff.map((n) => (want.has(n) ? `${n}: ${firstDiff(pkg.text(n), want.text(n))}` : `${n}: unexpected`)).join('\n');
