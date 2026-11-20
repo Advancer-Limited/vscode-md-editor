@@ -315,11 +315,15 @@ test('a stale result refetches, tells the user and drops what was queued behind 
   t.posted.length = 0;
   t.fail(m.requestId, 'stale', 'The workbook changed. Your edit was not applied.');
   assert.match(t.hintText(), /changed/);
+  assert.match(t.hintText(), /Some edits were discarded because the workbook changed\./, 'says the queued edit was dropped (Gate R2 nit b)');
   deq(t.posted.map((x) => x.type), ['xlsxRequestSheetMeta']);
   // The refetched meta carries the host's version: the next edit uses it.
   t.meta(1, { version: 7 });
   t.gesture({ kind: 'type', text: 'c', r: 2, c: 0 }); t.keyOn(t.cell(), { key: 'Enter' });
   assert.strictEqual(t.last('xlsxEdit').baseVersion, 7);
+  // Stale with nothing queued behind it: the host's message only.
+  t.fail(t.last('xlsxEdit').requestId, 'stale', 'The workbook changed. Your edit was not applied.');
+  assert.strictEqual(t.hintText(), 'The workbook changed. Your edit was not applied.');
 });
 
 test('a rejected edit shows the message with hint; a rejected formula reopens the formula bar at the position', () => {
@@ -385,20 +389,66 @@ test('when the cell is not rendered the edit opens in the formula bar', () => {
   assert.strictEqual(t.bar().value, 'z');
 });
 
-test('flushPendingEdits commits the open editor, waits for the reply, then answers flushed', async () => {
+test('flushPendingEdits (backup, auto-save) never commits an open editor: it stays open, nothing is posted (Gate R2 F4)', async () => {
   const t = setup();
   t.open();
   t.gesture({ kind: 'type', text: 'q', r: 0, c: 0 });
   t.typeInto(t.cell(), 'qq');
+  const calls = t.g.calls.length;
   t.send({ type: 'flushPendingEdits', flushId: 9 });
+  await tick();
+  deq(t.last('flushed'), { type: 'flushed', flushId: 9 });
+  assert.strictEqual(t.last('xlsxEdit'), null, 'the half-typed cell was not committed');
+  assert.strictEqual(t.editor.isEditing(), true, 'the editor is still open');
+  assert.strictEqual(t.cell().value, 'qq', 'with the typing intact');
+  assert.strictEqual(t.cell().hidden, false);
+  assert.strictEqual(t.hintText(), null, 'no hint');
+  deq(t.g.calls.slice(calls), [], 'the grid was not moved or refocused');
+  // Enter still commits it afterwards.
+  t.keyOn(t.cell(), { key: 'Enter' });
+  deq(t.last('xlsxEdit').edit.cells, [{ r: 0, c: 0, input: 'qq' }]);
+});
+
+test('flushPendingEdits waits for an edit already in flight, then answers flushed', async () => {
+  const t = setup();
+  t.open();
+  t.gesture({ kind: 'type', text: 'q', r: 0, c: 0 });
+  t.keyOn(t.cell(), { key: 'Enter' });
   const m = t.last('xlsxEdit');
   assert.ok(m, 'the edit was posted');
+  t.send({ type: 'flushPendingEdits', flushId: 9 });
   await tick();
   assert.strictEqual(t.last('flushed'), null, 'not flushed before the host answered');
   t.ok(m.requestId);
   await tick();
   deq(t.last('flushed'), { type: 'flushed', flushId: 9 });
   assert.ok(t.posted.indexOf(t.last('flushed')) > t.posted.indexOf(m));
+});
+
+test('Ctrl/Cmd+S inside the editor commits it and lets VS Code save; its flush waits for that commit (Gate R2 F4)', async () => {
+  for (const mod of [{ ctrlKey: true }, { metaKey: true }]) {
+    const t = setup();
+    t.open();
+    t.gesture({ kind: 'type', text: 'x', r: 2, c: 1 });
+    t.typeInto(t.cell(), 'x42');
+    const ev = t.win.dispatch('keydown', Object.assign({ key: 's', target: t.cell() }, mod));
+    assert.ok(!ev.prevented && !ev.stopped, 'the key goes on to VS Code (its save command)');
+    const m = t.last('xlsxEdit');
+    deq(m.edit.cells, [{ r: 2, c: 1, input: 'x42' }]);
+    assert.strictEqual(t.editor.isEditing(), false);
+    // VS Code's save flushes: answered only after the commit's reply.
+    t.send({ type: 'flushPendingEdits', flushId: 4 });
+    await tick();
+    assert.strictEqual(t.last('flushed'), null);
+    t.ok(m.requestId);
+    await tick();
+    deq(t.last('flushed'), { type: 'flushed', flushId: 4 });
+    // With no editor open Ctrl+S is left alone entirely.
+    const n = t.posted.length;
+    const ev2 = t.win.dispatch('keydown', Object.assign({ key: 's', target: t.doc.body }, mod));
+    assert.ok(!ev2.prevented && !ev2.stopped);
+    assert.strictEqual(t.posted.length, n);
+  }
 });
 
 test('flushPendingEdits with nothing pending answers flushed; a lost reply does not hang it (timeout)', async () => {
@@ -408,6 +458,7 @@ test('flushPendingEdits with nothing pending answers flushed; a lost reply does 
   await tick();
   deq(t.last('flushed'), { type: 'flushed', flushId: 1 });
   t.gesture({ kind: 'type', text: 'a', r: 0, c: 0 });
+  t.keyOn(t.cell(), { key: 'Enter' });   // in flight; its reply never comes
   t.send({ type: 'flushPendingEdits', flushId: 2 });
   await tick();
   assert.strictEqual(t.all('flushed').length, 1);

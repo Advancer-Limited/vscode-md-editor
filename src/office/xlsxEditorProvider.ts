@@ -32,9 +32,25 @@ import type { Validator } from './core/save.js';
 import { xlsxValidator } from './core/xlsx/validate.js';
 import { OFFICE_FLAGS } from './featureFlags.js';
 
-interface Model { wb: Workbook; styles: StyleTable }
+/** `fullCalcAtLoad`: the workbook asks Excel to recalculate on open (`calcPr/@fullCalcOnLoad`, Gate R2 F9). */
+interface Model { wb: Workbook; styles: StyleTable; fullCalcAtLoad: boolean }
 
-/** Spec §9.5: shown once the workbook has any edit (cached formula results may be out of date). */
+/** Whether `workbook.xml` has `calcPr/@fullCalcOnLoad` on: cached formula results may be out of date (§9.5). */
+function hasFullCalcOnLoad(wb: Workbook): boolean {
+  try {
+    const root = wb.pkg.xml(wb.workbookPart).root;
+    const calcPr = child(root, root.ns, 'calcPr');
+    const v = calcPr ? attr(calcPr, '', 'fullCalcOnLoad') : undefined;
+    return v === '1' || v === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Spec §9.5: shown once the workbook has any edit, or when it already asks Excel to recalculate on
+ * open (saved here, or by another tool, without recalculating) — cached formula results may be out of date.
+ */
 export const STALE_FORMULAS_NOTICE: OfficeNotice = {
   severity: 'info',
   code: 'formula-results-stale',
@@ -131,7 +147,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     if (hit) return hit;
     try {
       const wb = Workbook.load(pkg);
-      const m = { wb, styles: StyleTable.load(pkg, wb.stylesPart, wb.themePart) };
+      const m = { wb, styles: StyleTable.load(pkg, wb.stylesPart, wb.themePart), fullCalcAtLoad: hasFullCalcOnLoad(wb) };
       this.models.set(pkg, m);
       return m;
     } catch (e) {
@@ -178,11 +194,22 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
 
   protected onReady(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
     this.sendWorkbook(doc, panel, true);
+    this.sendStaleBanner(doc, panel);
   }
 
   protected onReloaded(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
     this.post(panel, { type: 'xlsxStateChanged', version: doc.version, invalidate: 'workbook' });
     this.sendWorkbook(doc, panel, true);
+    this.sendStaleBanner(doc, panel);
+  }
+
+  /**
+   * `init` carries the notices known before the workbook model is built; `fullCalcOnLoad` is only
+   * known once it is (sendWorkbook builds it). Re-send the notices when that adds the banner.
+   */
+  private sendStaleBanner(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+    if (this.editedAt.get(doc) === doc.generation) return;   // already in the notices sent with init
+    if (this.resultsMayBeStale(doc)) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
   }
 
   /**
@@ -198,9 +225,18 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     this.onReloaded(doc, panel);
   }
 
-  /** The stale-formulas banner once the workbook has been edited (spec §9.5). */
+  /**
+   * Whether cached formula results may be out of date (spec §9.5): the workbook was edited in this
+   * generation, or it was loaded with `fullCalcOnLoad` on (Gate R2 F9: after a save and reopen).
+   */
+  private resultsMayBeStale(doc: OfficeDocument): boolean {
+    if (this.editedAt.get(doc) === doc.generation) return true;
+    return doc.pkg !== null && this.models.get(doc.pkg)?.fullCalcAtLoad === true;
+  }
+
+  /** The stale-formulas banner (spec §9.5). */
   protected kindNotices(doc: OfficeDocument): OfficeNotice[] {
-    return this.editedAt.get(doc) === doc.generation ? [STALE_FORMULAS_NOTICE] : [];
+    return this.resultsMayBeStale(doc) ? [STALE_FORMULAS_NOTICE] : [];
   }
 
   // -------------------------------------------------------------------------------------------
@@ -279,7 +315,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const meta = sheetMeta(m.wb, r.sheet, m.styles, sheetId, version);
     const clamped = clampRange(meta, range);
     if (!clamped) { this.fail(panel, requestId, 'invalid', 'That range is outside the sheet.'); return; }
-    const w = cellWindow(m.wb, r.sheet, m.styles, clamped, this.editedAt.get(doc) === doc.generation);
+    const w = cellWindow(m.wb, r.sheet, m.styles, clamped, this.resultsMayBeStale(doc));
     this.post(panel, {
       type: 'xlsxCells', requestId, sheetId, version, range: clamped, cells: w.cells, styles: w.styles,
     });

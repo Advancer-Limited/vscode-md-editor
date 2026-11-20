@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 import esbuild from 'esbuild';
 import { core, fixture, entryTable } from './_helpers.mjs';
 
@@ -70,6 +71,7 @@ beforeEach(() => {
   Object.assign(host.OFFICE_FLAGS, shipped);
   host.OfficeDocument.saveHooks = undefined;
   host.OfficeDocument.flushTimeoutMs = 1500;
+  host.OfficeDocument.backupDelayMs = 0;
 });
 afterEach(() => { Object.assign(host.OFFICE_FLAGS, shipped); host.OfficeDocument.saveHooks = undefined; });
 
@@ -362,7 +364,7 @@ test('dirty mirror: a save point on a discarded redo branch is never reached aga
 // ---------------------------------------------------------------------------------------------
 // Save (§6.5)
 
-test('save writes the verified bytes atomically (temp + rename); only the edited entry differs (G3)', async () => {
+test('save writes the verified bytes in place (spec §6.5 step 5, Gate R2 F8); only the edited entry differs (G3)', async () => {
   host.OFFICE_FLAGS.docxEdit = true;
   const bytes = fixture('basic.docx');
   const { doc, uri } = await open('basic.docx', bytes);
@@ -374,13 +376,8 @@ test('save writes the verified bytes atomically (temp + rename); only the edited
   assert.ok(same(onDisk, expected.bytes));
   assert.deepStrictEqual(changedEntries(bytes, onDisk), [mainPart(doc)]);
   assert.match(rootTag(onDisk), /vsmdTest="1"/);
-  // Write a sibling temp file, then rename it over the target; no temp file is left behind.
-  assert.strictEqual(S.fsLog.length, 2);
-  const [w, rn] = S.fsLog;
-  assert.strictEqual(w[0], 'write');
-  assert.match(w[1], /^file:\/\/\/ws\/basic\.docx\.[a-z0-9]+\.vsmd-tmp$/);
-  assert.deepStrictEqual(rn, ['rename', w[1], uri.toString()]);
-  assert.deepStrictEqual([...S.files.keys()].filter((k) => k.includes('vsmd-tmp')), []);
+  // One writeFile on the target itself: no temporary file, no rename (the file keeps its identity).
+  assert.deepStrictEqual(S.fsLog, [['write', uri.toString()]]);
   assert.deepStrictEqual(doc.diskStamp, { mtime: S.files.get(uri.toString()).mtime, size: onDisk.length });
   assert.strictEqual(doc.isDirty(), false);
   // Saving again with nothing new rewrites the same verified bytes (no conflict: the stamp moved with us).
@@ -454,9 +451,9 @@ test('a kind validator failure blocks the save; a throwing validator does too', 
 test('locked file: the write error maps to the §10.3 message, the file and the dirty state are kept', async () => {
   host.OFFICE_FLAGS.docxEdit = true;
   const cases = [
-    ['rename EBUSY', (op) => (op === 'rename' ? Object.assign(new Error("EBUSY: resource busy or locked, rename 'x'"), { code: 'EBUSY' }) : undefined)],
-    ['rename NoPermissions', (op) => (op === 'rename' ? vscode.FileSystemError.NoPermissions('EPERM: operation not permitted') : undefined)],
-    ['temp write Unavailable', (op) => (op === 'write' ? vscode.FileSystemError.Unavailable('locked') : undefined)],
+    ['write EBUSY', (op) => (op === 'write' ? Object.assign(new Error("EBUSY: resource busy or locked, open 'x'"), { code: 'EBUSY' }) : undefined)],
+    ['write NoPermissions', (op) => (op === 'write' ? vscode.FileSystemError.NoPermissions('EPERM: operation not permitted') : undefined)],
+    ['write Unavailable', (op) => (op === 'write' ? vscode.FileSystemError.Unavailable('locked') : undefined)],
   ];
   for (const [what, fail] of cases) {
     S.reset();
@@ -469,7 +466,6 @@ test('locked file: the write error maps to the §10.3 message, the file and the 
       return true;
     });
     assert.ok(same(S.read(uri), bytes), what);
-    assert.deepStrictEqual([...S.files.keys()].filter((k) => k.includes('vsmd-tmp')), [], `${what}: temp removed`);
     assert.strictEqual(doc.isDirty(), true, what);
     S.fail = undefined;
     await doc.save(token);   // once the file is free, the same save works
@@ -480,27 +476,37 @@ test('locked file: the write error maps to the §10.3 message, the file and the 
   host.OFFICE_FLAGS.xlsxEdit = true;
   const x = await open('basic.xlsx', fixture('basic.xlsx'), { Provider: host.XlsxEditorProvider });
   tag(x.doc);
-  S.fail = (op) => (op === 'rename' ? Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }) : undefined);
-  await assert.rejects(x.doc.save(token), { message: "Couldn't save basic.xlsx: ENOSPC: no space left on device" });
-  S.fail = (op) => (op === 'rename' ? Object.assign(new Error('EACCES'), { code: 'EACCES' }) : undefined);
+  S.fail = (op) => (op === 'write' ? Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }) : undefined);
+  await assert.rejects(x.doc.save(token), {
+    message: `Couldn't save basic.xlsx: ENOSPC: no space left on device ${host.saveErrors.PARTIAL_WRITE_NOTE}`,
+  });
+  S.fail = (op) => (op === 'write' ? Object.assign(new Error('EACCES'), { code: 'EACCES' }) : undefined);
   await assert.rejects(x.doc.save(token), /probably Excel/);
 });
 
-test('a rename that deleted the target and then failed keeps the temp copy and says where', async () => {
+test('a write that fails part-way: dirty, says the file may be incomplete, and the next save asks nothing (Gate R2 F8)', async () => {
   host.OFFICE_FLAGS.docxEdit = true;
   const { doc, uri } = await open('basic.docx', fixture('basic.docx'));
   tag(doc);
   const expected = doc.serializeVerified().bytes;
-  S.renameDeletesTarget = true;
-  S.fail = (op) => (op === 'rename' ? Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }) : undefined);
+  // The stub's write fails after truncating the file, like an interrupted in-place write.
+  S.fail = (op, u) => {
+    if (op !== 'write' || u !== uri.toString()) return undefined;
+    S.writeFile(uri, expected.subarray(0, 100), ++S.clock);
+    return Object.assign(new Error('EIO: i/o error, write'), { code: 'EIO' });
+  };
   let message = '';
   await assert.rejects(doc.save(token), (e) => { message = e.message; return true; });
-  const tmp = [...S.files.keys()].find((k) => k.includes('vsmd-tmp'));
-  assert.ok(tmp, 'temp kept');
-  assert.ok(same(S.files.get(tmp).data, expected), 'it holds the complete verified bytes');
-  assert.ok(message.includes(tmp.slice(tmp.lastIndexOf('/') + 1)), message);
-  assert.strictEqual(S.read(uri), undefined);
-  assert.strictEqual(doc.isDirty(), true);
+  assert.strictEqual(message, `Couldn't save basic.docx: EIO: i/o error, write ${host.saveErrors.PARTIAL_WRITE_NOTE}`);
+  assert.strictEqual(doc.isDirty(), true, 'the changes are still unsaved');
+  assert.deepStrictEqual([...S.files.keys()].filter((k) => k !== uri.toString()), [], 'no temporary file anywhere');
+  // Our own failed write is not "changed on disk": the retry saves without the conflict modal.
+  S.fail = undefined;
+  S.messages.length = 0;
+  await doc.save(token);
+  assert.ok(same(S.read(uri), expected));
+  assert.ok(!S.messages.some((m) => m[0] === 'warning'), 'no conflict modal');
+  assert.strictEqual(doc.isDirty(), false);
 });
 
 test('conflict on save: Cancel and Overwrite; Revert reverts (VS Code revert when active, else in place)', async () => {
@@ -594,7 +600,11 @@ test('backup → restore (hot exit): backup holds the verified serialisation; re
   tag(doc);
   const dest = vscode.Uri.file('/backups/abc/basic.docx');
   const backup = await doc.backup(dest, token);
-  assert.strictEqual(backup.id, dest.toString());
+  // The id names the backup file and carries the disk base (Gate R2 F3).
+  assert.ok(backup.id.startsWith(host.BACKUP_ID_PREFIX), backup.id);
+  const parsed = host.parseBackupId(backup.id);
+  assert.strictEqual(parsed.source.toString(), dest.toString());
+  assert.deepStrictEqual(parsed.base, { mtime: 1000, size: bytes.length, hash: crypto.createHash('sha256').update(bytes).digest('base64') });
   const backed = S.read(dest);
   assert.ok(same(backed, doc.serializeVerified().bytes));
   assert.deepStrictEqual(changedEntries(bytes, backed), [mainPart(doc)]);
@@ -789,3 +799,235 @@ test('envSaveHooks: only VSMD_OFFICE_CORRUPT_SAVE=1 enables the manual verificat
   const b = new Uint8Array([1, 2, 3]);
   assert.deepStrictEqual([...h.corrupt(b)], [1, 0xfd, 3]);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Gate R2 review fixes (host side)
+
+/** Make the file on disk differ: what Word/Excel would write while VS Code was closed. */
+function otherVersion(bytes, kind = 'docx') {
+  const p = core.pkg.OfficePackage.open(`x.${kind}`, bytes);
+  const part = core.opc.mainPart(p).name;
+  const t = p.text(part);
+  const i = t.indexOf('<', t.startsWith('<?xml') ? t.indexOf('?>') : 0);
+  const j = t.indexOf('>', i);
+  p.setPart(part, new TextEncoder().encode(t.slice(0, j) + ' vsmdOther="1"' + t.slice(j)));
+  return p.serialize();
+}
+
+test('F3: a backup restored after the file changed on disk asks before overwriting it, and says so at once', async () => {
+  host.OFFICE_FLAGS.docxEdit = true;
+  const bytes = fixture('basic.docx');
+  const { doc, uri } = await open('basic.docx', bytes);
+  tag(doc);
+  const backup = await doc.backup(vscode.Uri.file('/backups/f3/basic.docx'), token);
+  doc.dispose();
+  // While VS Code is closed, Word saves a different version.
+  const other = otherVersion(bytes);
+  S.writeFile(uri, other, 5000);
+  const r = await open('basic.docx', undefined, { backupId: backup.id });
+  assert.match(rootTag(r.doc.pkg.originalBytes), /vsmdTest="1"/, 'the backup content is restored');
+  assert.strictEqual(r.doc.restoredConflict, true);
+  assert.deepStrictEqual(r.panel.last('init').notices.map((n) => n.code), ['changed-on-disk'], 'the notice shows at once');
+  // Save: the conflict modal, Cancel keeps Word's version.
+  let asked = 0;
+  S.answer = (msg) => { if (msg === 'basic.docx has changed on disk since it was opened here.') asked++; return undefined; };
+  await assert.rejects(r.doc.save(token), isCancel);
+  assert.strictEqual(asked, 1);
+  assert.ok(same(S.read(uri), other), "the other program's version survives");
+  assert.strictEqual(r.doc.isDirty(), true);
+  // Overwrite writes ours, clears the notice and the flag; the next save asks nothing.
+  S.answer = () => 'Overwrite';
+  await r.doc.save(token);
+  assert.match(rootTag(S.read(uri)), /vsmdTest="1"/);
+  assert.strictEqual(r.doc.restoredConflict, false);
+  assert.deepStrictEqual(r.panel.last('notices').notices, []);
+  S.answer = () => { asked++; return undefined; };
+  tag(r.doc, '2');
+  await r.doc.save(token);
+  assert.strictEqual(asked, 1, 'no second modal');
+});
+
+test('F3: an unchanged file restores without a conflict; one only touched (same bytes) neither; a legacy id is conflicting', async () => {
+  host.OFFICE_FLAGS.docxEdit = true;
+  const bytes = fixture('basic.docx');
+  const { doc, uri } = await open('basic.docx', bytes);
+  tag(doc);
+  const backup = await doc.backup(vscode.Uri.file('/backups/f3b/basic.docx'), token);
+  doc.dispose();
+
+  const quiet = await open('basic.docx', undefined, { backupId: backup.id });
+  assert.strictEqual(quiet.doc.restoredConflict, false);
+  assert.deepStrictEqual(quiet.panel.last('init').notices, []);
+  S.messages.length = 0;
+  await quiet.doc.save(token);
+  assert.ok(!S.messages.some((m) => m[0] === 'warning'), 'no conflict modal');
+  assert.match(rootTag(S.read(uri)), /vsmdTest="1"/);
+
+  // Touched: same bytes, new mtime (a sync client, `touch`): the hash says nothing changed.
+  S.writeFile(uri, bytes, 9000);
+  const touched = await open('basic.docx', undefined, { backupId: backup.id });
+  assert.strictEqual(touched.doc.restoredConflict, false);
+  assert.deepStrictEqual(touched.doc.base, { mtime: 9000, size: bytes.length, hash: crypto.createHash('sha256').update(bytes).digest('base64') });
+
+  // A backup id from before Gate R2 (a bare URI) carries no base: treated as conflicting.
+  S.writeFile(uri, bytes, 1000);
+  const legacy = await open('basic.docx', undefined, { backupId: host.parseBackupId(backup.id).source.toString() });
+  assert.strictEqual(legacy.doc.restoredConflict, true);
+  assert.match(rootTag(legacy.doc.pkg.originalBytes), /vsmdTest="1"/);
+  S.answer = () => undefined;
+  await assert.rejects(legacy.doc.save(token), isCancel);
+  assert.ok(same(S.read(uri), bytes));
+  // Garbage ids and a missing backup fall back to the file.
+  assert.deepStrictEqual(host.parseBackupId(host.BACKUP_ID_PREFIX + '{nope'), { source: null, base: null });
+  assert.deepStrictEqual(host.parseBackupId(host.BACKUP_ID_PREFIX + JSON.stringify({ uri: 'file:///b', base: { mtime: 'x' } })).base, null);
+});
+
+test('F6: undo while the save is writing is refused; disk and memory agree; the dirty mirror errs towards dirty', async () => {
+  host.OFFICE_FLAGS.docxEdit = true;
+  const { doc, uri, events } = await open('basic.docx', fixture('basic.docx'));
+  tag(doc, '777');
+  let undone = false;
+  S.fail = (op) => { if (op === 'write' && !undone) { undone = true; events[0].undo(); } return undefined; };
+  S.messages.length = 0;
+  await doc.save(token);
+  S.fail = undefined;
+  assert.ok(undone);
+  assert.deepStrictEqual(S.messages.filter((m) => m[0] === 'warning').map((m) => m[1]), [host.saveErrors.SAVE_BUSY_MESSAGE]);
+  assert.match(rootTag(doc.pkg.serialize()), /vsmdTest="777"/, 'memory still has the edit');
+  assert.match(rootTag(S.read(uri)), /vsmdTest="777"/, 'and so does the disk');
+  assert.strictEqual(doc.isDirty(), true, 'VS Code moved its pointer: the mirror says dirty, never "clean but different"');
+  assert.strictEqual(doc.version, 1, 'the refused undo changed nothing');
+  // Redo is refused the same way while writing.
+  let redone = false;
+  S.fail = (op) => { if (op === 'write' && !redone) { redone = true; events[0].redo(); } return undefined; };
+  await doc.save(token);
+  S.fail = undefined;
+  assert.ok(redone);
+  assert.match(rootTag(S.read(uri)), /vsmdTest="777"/);
+  // Outside a save, undo works again.
+  await events[0].undo();
+  assert.doesNotMatch(rootTag(doc.pkg.serialize()), /vsmdTest/);
+});
+
+test('F5: backups skip the format validators, serialise once per state, reuse a save\'s verified bytes and post nothing visible', async () => {
+  host.OFFICE_FLAGS.docxEdit = true;
+  let validatorRuns = 0;
+  class Counting extends host.DocxEditorProvider {
+    validators() { return [() => { validatorRuns++; return []; }]; }
+  }
+  const { doc, panel } = await open('basic.docx', fixture('basic.docx'), { Provider: Counting });
+  tag(doc);
+  const pkg = doc.pkg;
+  const realSerialize = pkg.serialize.bind(pkg);
+  let serialized = 0;
+  pkg.serialize = (...a) => { serialized++; return realSerialize(...a); };
+  const n0 = panel.sent.length;
+  const b1 = await doc.backup(vscode.Uri.file('/backups/f5/1.docx'), token);
+  deepTypes(panel.sent.slice(n0), ['flushPendingEdits'], 'a backup posts only the flush request');
+  assert.strictEqual(validatorRuns, 0, 'no format validators for a backup');
+  assert.strictEqual(serialized, 1);
+  // VS Code backs up again (new destination each time): the same state is not serialised again.
+  const b2 = await doc.backup(vscode.Uri.file('/backups/f5/2.docx'), token);
+  assert.strictEqual(serialized, 1);
+  assert.ok(same(S.read(vscode.Uri.file('/backups/f5/2.docx')), S.read(vscode.Uri.file('/backups/f5/1.docx'))));
+  // VS Code deletes the superseded backup: only that file goes.
+  b1.delete();
+  await tick();
+  assert.strictEqual(S.read(vscode.Uri.file('/backups/f5/1.docx')), undefined);
+  assert.ok(S.read(vscode.Uri.file('/backups/f5/2.docx')));
+  void b2;
+  // A save verifies fully (validators run); a backup of that state reuses its bytes.
+  await doc.save(token);
+  assert.strictEqual(validatorRuns, 1);
+  const s1 = serialized;
+  await doc.backup(vscode.Uri.file('/backups/f5/3.docx'), token);
+  assert.strictEqual(serialized, s1, 'the save\'s verified bytes are reused');
+  assert.strictEqual(validatorRuns, 1);
+});
+
+test('F5: a backup waits for a quiet period; an edit landing meanwhile is in the one serialisation it makes', async () => {
+  host.OFFICE_FLAGS.docxEdit = true;
+  host.OfficeDocument.backupDelayMs = 40;
+  const { doc } = await open('basic.docx', fixture('basic.docx'));
+  tag(doc, 'a');
+  const pkg = doc.pkg;
+  const realSerialize = pkg.serialize.bind(pkg);
+  let serialized = 0;
+  pkg.serialize = (...a) => { serialized++; return realSerialize(...a); };
+  const dest = vscode.Uri.file('/backups/q/basic.docx');
+  const pending = doc.backup(dest, token);
+  await tick(15);
+  tag(doc, 'b');   // typing continues: the quiet period restarts
+  await tick(15);
+  assert.strictEqual(serialized, 0, 'nothing serialised while edits keep coming');
+  await pending;
+  assert.strictEqual(serialized, 1);
+  assert.match(rootTag(S.read(dest)), /vsmdTest="b"/);
+  // A cancelled backup writes nothing.
+  tag(doc, 'c');
+  const cancelled = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
+  const p2 = doc.backup(vscode.Uri.file('/backups/q/cancelled.docx'), cancelled);
+  cancelled.isCancellationRequested = true;
+  await assert.rejects(p2, isCancel);
+  assert.strictEqual(S.read(vscode.Uri.file('/backups/q/cancelled.docx')), undefined);
+});
+
+test('F5: the staged save verification gives the same outcome as serializeAndVerify', async () => {
+  const strict = (pkg, touched) => touched.map((t) => `${t}: rejected by test validator`);
+  const cases = [
+    ['basic.docx', [], undefined],
+    ['basic.xlsx', [host.hcore.save.packageValidator], undefined],
+    ['basic.docx', [strict], undefined],
+    ['basic.docx', [], { corrupt: (b) => { b[Math.floor(b.length / 2)] ^= 0xff; return b; } }],
+    ['basic.docx', [() => { throw new Error('boom'); }], undefined],
+  ];
+  for (const [name, validators, hooks] of cases) {
+    const p = host.hcore.pkg.OfficePackage.open(name, fixture(name));
+    const part = host.hcore.opc.mainPart(p).name;
+    const b = new host.hcore.edits.EditBuilder(p, 'x');
+    b.setAttr(part, p.xml(part).root, '', 'vsmdTest', '1');
+    b.finish();
+    const sync = host.hcore.save.serializeAndVerify(p, validators, hooks && { corrupt: (x) => hooks.corrupt(x) });
+    const staged = await host.serializeAndVerifyStaged(p, validators, hooks && { corrupt: (x) => hooks.corrupt(x) });
+    assert.strictEqual(staged.ok, sync.ok, name);
+    if (sync.ok) assert.ok(same(staged.bytes, sync.bytes), name);
+    else assert.deepStrictEqual(staged.failures, sync.failures, name);
+  }
+  // The backup check refuses a truncated or bit-flipped ZIP and accepts a good one.
+  const good = fixture('basic.xlsx');
+  assert.deepStrictEqual(await host.verifyBackupBytes(good, 'xlsx'), []);
+  assert.ok((await host.verifyBackupBytes(good.subarray(0, good.length - 10), 'xlsx')).length > 0);
+  assert.ok((await host.verifyBackupBytes(good, 'docx')).length > 0, 'wrong kind');
+});
+
+test('nit (a): entering Edit on a digitally signed file warns once that saving invalidates the signature', async () => {
+  host.OFFICE_FLAGS.docxEdit = true;
+  const p = core.pkg.OfficePackage.open('basic.docx', fixture('basic.docx'));
+  p.setPart('_xmlsignatures/origin.sigs', new Uint8Array(0));
+  const signed = p.serialize();
+  const { doc, panel } = await open('basic.docx', signed, { editMode: false });
+  assert.strictEqual(doc.signed, true);
+  assert.strictEqual(doc.canEdit, true, 'still editable: the warning is the guard');
+  const warnings = () => S.messages.filter((m) => m[0] === 'warning').map((m) => m[1]);
+  assert.deepStrictEqual(warnings(), []);
+  await panel.send({ type: 'setEditMode', editMode: true });
+  assert.deepStrictEqual(warnings(), [host.saveErrors.signedEditWarning('Word')]);
+  await panel.send({ type: 'setEditMode', editMode: false });
+  await panel.send({ type: 'setEditMode', editMode: true });
+  assert.strictEqual(warnings().length, 1, 'once per document');
+  // startInEditMode warns too; an unsigned file never does.
+  S.messages.length = 0;
+  S.config['vscodeMdEditor.office.startInEditMode'] = true;
+  await open('signed2.docx', signed, { editMode: false });
+  assert.deepStrictEqual(warnings(), [host.saveErrors.signedEditWarning('Word')]);
+  S.messages.length = 0;
+  const plain = await open('plain.docx', fixture('basic.docx'));
+  assert.strictEqual(plain.doc.signed, false);
+  assert.deepStrictEqual(warnings(), []);
+  // A signature-origin relationship alone also counts.
+  assert.strictEqual(host.isSignedPackage(core.pkg.OfficePackage.open('basic.docx', fixture('basic.docx'))), false);
+});
+
+function deepTypes(msgs, types, what) {
+  assert.deepStrictEqual(msgs.map((m) => m.type), types, what);
+}

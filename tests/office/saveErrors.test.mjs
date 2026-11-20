@@ -97,5 +97,9 @@ test('conflict check (§6.5 step 2): stamp comparison and modal text', () => {
 test('other save-path messages', () => {
   assert.strictEqual(SE.VIEW_MODE_MESSAGE, 'Press Edit (Ctrl+E) to make changes.');
   assert.strictEqual(SE.READ_ONLY_MESSAGE, 'This document is open read-only.');
-  assert.strictEqual(SE.tempKeptMessage('a.docx.x1.vsmd-tmp'), 'The saved copy was kept as a.docx.x1.vsmd-tmp next to the file.');
+  assert.strictEqual(SE.tempKeptMessage, undefined, 'the temp + rename write is gone (Gate R2 F8)');
+  assert.match(SE.PARTIAL_WRITE_NOTE, /may be incomplete/);
+  assert.match(SE.CHANGED_ON_DISK_MESSAGE, /changed on disk/);
+  assert.strictEqual(SE.signedEditWarning('Excel'),
+    'This file is digitally signed. Saving changes here will invalidate the signature; sign it again in Excel if you need it.');
 });

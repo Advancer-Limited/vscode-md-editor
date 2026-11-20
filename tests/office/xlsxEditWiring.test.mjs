@@ -344,6 +344,28 @@ test('edited formula cells show "not calculated" (stale, formula text) and the f
   assert.match(wbXml, /fullCalcOnLoad="1"/);
 });
 
+test('Gate R2 F9: reopening a saved workbook (fullCalcOnLoad on) shows the stale banner and stale marks at once', async () => {
+  ENABLE();
+  const h = await open('formulas.xlsx');
+  await edit(h, setOp(1, [[1, 6, '99']]));
+  await h.provider.saveCustomDocument(h.doc, token);
+  const saved = S.read(h.uri);
+  assert.match(core.pkg.OfficePackage.open('x.xlsx', saved).text('xl/workbook.xml'), /fullCalcOnLoad="1"/);
+  h.doc.dispose();
+  // Reopen the saved file in a fresh session: nothing edited yet, but Excel has not recalculated.
+  const r = await open('formulas.xlsx', saved, { editMode: false });
+  const banner = await waitFor(() => r.panel.sent.find((m) => m.type === 'notices' && m.notices.some((n) => n.code === 'formula-results-stale')), 'stale banner');
+  assert.ok(banner);
+  const c = await cells(r, [0, 0, 5, 7]);
+  assert.strictEqual(c.get('1,1').stale, true, 'formula cells are marked stale');
+  assert.strictEqual(r.events.length, 0);
+  // The untouched fixture (no fullCalcOnLoad) still shows neither.
+  const plain = await open('formulas.xlsx', undefined, { editMode: false, uriName: 'plain.xlsx' });
+  await cells(plain, [0, 0, 5, 7]);
+  assert.ok(!plain.panel.sent.some((m) => m.type === 'notices' && m.notices.some((n) => n.code === 'formula-results-stale')));
+  assert.ok(!(await cells(plain, [0, 0, 5, 7])).get('1,1').stale);
+});
+
 test('a rejected formula is answered with the position and changes nothing', async () => {
   ENABLE();
   const h = await open('basic.xlsx');

@@ -13,6 +13,12 @@
 // so a fast typist never races the host's version counter, and `flushPendingEdits` can wait for the
 // last reply before answering `flushed` (the host saves what it has applied).
 //
+// Flushing never commits an open editor (Gate R2 F4): the host flushes for backups and auto-save
+// too, and a half-typed cell must not land, close or move because of them. `flushPendingEdits` only
+// waits for edits already sent. An explicit save from inside the editor (Ctrl/Cmd+S) commits first:
+// the capture-phase key handler posts the commit and lets the key go on to VS Code, whose save then
+// flushes, and that flush waits for the commit's reply because it is in flight. No protocol change.
+//
 // Undo while an edit is open (spec §16 S3, still pending): Ctrl+Z inside the in-progress editor cancels
 // that edit; Ctrl+Y / Ctrl+Shift+Z do nothing there. With no editor open, VS Code's undo applies as usual.
 //
@@ -29,6 +35,7 @@
   const RICH_CODE = 'rich-text-cell';
   const LOCKED_CELL_HINT = "This cell can't be changed here.";
   const DISCARDED_HINT = 'The document changed; your unfinished edit was discarded.';
+  const DROPPED_HINT = 'Some edits were discarded because the workbook changed.';
 
   /**
    * Plain-text TSV (what Excel puts on the clipboard) -> rows of cells. Fields wrapped in double
@@ -169,11 +176,13 @@
         if (item.ctx.announce) { OC.announce(item.ctx.announce); }
       } else {
         const err = msg.error || {};
+        const dropped = err.code === 'stale' ? queue.splice(0) : [];
         if (err.code === 'cancelled') { OC.announce(err.message || 'Cancelled.'); }
+        else if (dropped.length) { OC.hint((err.message ? err.message + ' ' : '') + DROPPED_HINT); }
         else { OC.hint(err.message || 'The edit could not be applied.'); }
         if (err.code === 'stale') {
-          // Everything still queued was built on the same old version: drop it and refetch.
-          queue.splice(0).forEach((q) => q.resolve());
+          // Everything still queued was built on the same old version: drop it (say so) and refetch.
+          dropped.forEach((q) => q.resolve());
           shell.refetch();
         } else if (err.code === 'invalid' && item.ctx.formulaInput !== undefined) {
           reopenAfterFormulaError(item.ctx, err.message);
@@ -336,9 +345,12 @@
     });
 
     // Undo/redo while an editor is open (spec §16 S3 fallback): capture phase, before VS Code sees the key.
+    // Ctrl/Cmd+S commits the open editor and is NOT stopped: VS Code still saves, and its flush waits
+    // for this commit's reply (it is in flight by then), so the save includes the cell (Gate R2 F4).
     win.addEventListener('keydown', (ev) => {
       if (!ed || !(ev.ctrlKey || ev.metaKey) || ev.altKey) { return; }
       const k = String(ev.key).toLowerCase();
+      if (k === 's') { commit({ focus: false }); return; }
       const undo = k === 'z' && !ev.shiftKey;
       const redo = k === 'y' || (k === 'z' && ev.shiftKey);
       if (!undo && !redo) { return; }
@@ -464,22 +476,34 @@
       }
     }
 
-    /** Commit what is open and wait for the host's reply; gives up after FLUSH_WAIT_MS so a save never hangs. */
-    function flush() {
-      const work = (ed ? commit({ focus: false }) : Promise.resolve()).then(() => whenIdle());
+    /** Resolves when `work` does, or after FLUSH_WAIT_MS so a save never hangs on a lost reply. */
+    function bounded(work) {
       return new Promise((resolve) => {
         const timer = setTimer(resolve, FLUSH_WAIT_MS);
         work.then(() => { if (clearTimer) { clearTimer(timer); } resolve(); });
       });
     }
 
+    /**
+     * `flushPendingEdits` (host save, backup, auto-save): wait for the edits already sent. An open
+     * editor stays open and uncommitted (Gate R2 F4).
+     */
+    function flush() {
+      return bounded(whenIdle());
+    }
+
+    /** Turning Edit off (§6.4): commit what is open, then wait for the host's reply. */
+    function commitAndFlush() {
+      return bounded((ed ? commit({ focus: false }) : Promise.resolve()).then(() => whenIdle()));
+    }
+
     shell.registerCellEditor(onGesture);
     shell.registerMessageHandler(onMessage);
     shell.registerFlushHandler(flush);
-    OC.setBeforeEditModeOff(flush);
+    OC.setBeforeEditModeOff(commitAndFlush);
 
     return {
-      onGesture, commit, cancel, flush, whenIdle,
+      onGesture, commit, cancel, flush, commitAndFlush, whenIdle,
       isEditing() { return ed !== null; },
       current() { return ed ? { r: ed.r, c: ed.c, where: ed.where, value: ed.el.value, awaiting: ed.awaiting } : null; },
       cellInput, barInput,

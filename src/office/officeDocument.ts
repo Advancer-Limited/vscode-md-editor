@@ -7,22 +7,31 @@
 //
 // WP-19 (spec §6.2–6.5): edits with generation-guarded undo/redo fired for VS Code's undo stack, a
 // mirror of VS Code's dirty bookkeeping (for the watcher), Edit mode, the flush handshake, and the
-// save pipeline — conflict check, serialise + verify (never write unverified bytes), atomic write,
+// save pipeline — conflict check, serialise + verify (never write unverified bytes), in-place write,
 // error mapping (saveErrors.ts) — plus revert and hot-exit backup. Reachable only while the kind's
 // edit flag is on (featureFlags.ts); the provider registers as read-only otherwise.
+//
+// Gate R2 fixes: the backup id carries the disk state the edits are based on, so a restored backup
+// whose file changed meanwhile goes through the conflict modal (F3); flushing never commits an open
+// editor (F4, webview side); save verification runs in stages that yield to the event loop, backups
+// are coalesced, cached per version and only container-checked (F5); undo/redo are refused while a
+// save is writing and the save point is the state that was serialised (F6); the save writes in place
+// (spec §6.5 step 5, F8); entering Edit on a digitally signed file warns once (§10.3).
 
 import * as vscode from 'vscode';
-import { OfficePackage } from './core/package.js';
+import { createHash } from 'crypto';
+import { OfficePackage, zipLimits } from './core/package.js';
 import type { OfficeKind } from './core/package.js';
 import { OfficeLoadError } from './core/sniff.js';
-import { contentTypeOf } from './core/opc.js';
+import { contentTypeOf, normalizePartName, readRelationships } from './core/opc.js';
 import { decodePart } from './core/xml.js';
+import { crc32, inflateEntry, inflateEntryAsync, readZip } from './core/zip.js';
 import { LIMITS } from './core/limits.js';
 import type { OfficeError, OfficeNotice, ReadOnlyReason } from './core/types.js';
 import { EditBuilder, invertEdit, tryApplyEdit, undoRedoFor } from './core/edits.js';
 import type { EditOutcome, EditTarget, OfficeEdit } from './core/edits.js';
-import { serializeAndVerify } from './core/save.js';
-import type { Validator, VerifyFailure, VerifyResult } from './core/save.js';
+import { packageValidator, serializeAndVerify, verifyBytes } from './core/save.js';
+import type { Validator, ValidatorContext, VerifyFailure, VerifyResult } from './core/save.js';
 import { editFlagFor } from './featureFlags.js';
 import {
   appName, describeLoadFailure, describeReadFailure, describeUnexpectedError, doctypeDetail,
@@ -30,9 +39,10 @@ import {
 } from './loadErrors.js';
 import type { LoadErrorView } from './loadErrors.js';
 import {
-  CONFLICT_DETAIL, CONFLICT_OVERWRITE, CONFLICT_REVERT, READ_ONLY_MESSAGE, REVERTED_MESSAGE, SAVE_BUSY_MESSAGE,
-  SAVE_DIAGNOSTICS_ACTION, VERIFY_FAILED_BACKUP_MESSAGE, VERIFY_FAILED_MESSAGE, VIEW_MODE_MESSAGE, conflictMessage,
-  diagnosticsFileName, diagnosticsText, stampChanged, tempKeptMessage, writeErrorMessage,
+  CHANGED_ON_DISK_MESSAGE, CONFLICT_DETAIL, CONFLICT_OVERWRITE, CONFLICT_REVERT, PARTIAL_WRITE_NOTE, READ_ONLY_MESSAGE,
+  REVERTED_MESSAGE, SAVE_BUSY_MESSAGE, SAVE_DIAGNOSTICS_ACTION, VERIFY_FAILED_BACKUP_MESSAGE, VERIFY_FAILED_MESSAGE,
+  VIEW_MODE_MESSAGE, classifyWriteError, conflictMessage, diagnosticsFileName, diagnosticsText, signedEditWarning,
+  stampChanged, writeErrorMessage,
 } from './saveErrors.js';
 
 /**
@@ -131,7 +141,7 @@ export function siblingLockNames(name: string): string[] {
 
 /** Kind-specific save hooks a provider passes to its documents (plan WP-19). */
 export interface OfficeDocumentHooks {
-  /** Format validators run on the re-opened output of every save and backup (spec §6.5 step 4, §13.3). */
+  /** Format validators run on the re-opened output of every save (spec §6.5 step 4, §13.3); backups get the container check only (§6.2). */
   validators(): Validator[];
   /**
    * Applied (through `b`) to the package before each serialisation of a changed package, then
@@ -173,18 +183,183 @@ export function envSaveHooks(env: Record<string, string | undefined> | undefined
   };
 }
 
-function randomTag(): string {
-  return Math.random().toString(36).slice(2, 10);
+interface PendingFlush { remaining: number; done(): void; }
+
+/** Yield to the event loop (spec §10.2: host work over large input must not starve other extensions). */
+function pause(): Promise<void> {
+  return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-/** Thrown by the atomic write; carries whether the temporary copy was kept. */
-class WriteFailure extends Error {
-  constructor(readonly original: unknown, readonly keptTemp: string | null) {
-    super(errorText(original));
+// ---------------------------------------------------------------------------------------------
+// Disk base and backup ids (Gate R2 F3)
+
+/**
+ * The file on disk the in-memory state is based on: its stamp and, when known, a SHA-256 of its
+ * bytes (base64). Recorded at load and after each save; carried inside the backup id so a restored
+ * backup can tell whether the file changed while VS Code was closed.
+ */
+export interface DiskBase { mtime: number; size: number; hash?: string; }
+
+/** Prefix of the backup ids written since Gate R2. Older ids (a bare URI) carry no base. */
+export const BACKUP_ID_PREFIX = 'vsmd-office-backup:1:';
+
+/** `CustomDocumentBackup.id`: the backup file and the disk base, as an opaque string VS Code hands back. */
+export function encodeBackupId(destination: vscode.Uri, base: DiskBase | null): string {
+  return BACKUP_ID_PREFIX + JSON.stringify({ uri: destination.toString(), base });
+}
+
+function isDiskBase(v: unknown): v is DiskBase {
+  if (typeof v !== 'object' || v === null) return false;
+  const b = v as Record<string, unknown>;
+  return typeof b.mtime === 'number' && Number.isFinite(b.mtime) && typeof b.size === 'number' && Number.isFinite(b.size)
+    && (b.hash === undefined || typeof b.hash === 'string');
+}
+
+/**
+ * Where to read a backup from, and the base it was made against. `base: null` means unknown (an id
+ * from before Gate R2, or a backup of a document whose base was unknown): treated as conflicting.
+ */
+export function parseBackupId(id: string): { source: vscode.Uri | null; base: DiskBase | null } {
+  if (id.startsWith(BACKUP_ID_PREFIX)) {
+    try {
+      const v = JSON.parse(id.slice(BACKUP_ID_PREFIX.length)) as { uri?: unknown; base?: unknown };
+      const source = typeof v.uri === 'string' ? vscode.Uri.parse(v.uri, true) : null;
+      const base = isDiskBase(v.base) ? { mtime: v.base.mtime, size: v.base.size, hash: v.base.hash } : null;
+      return { source, base };
+    } catch {
+      return { source: null, base: null };
+    }
+  }
+  try { return { source: vscode.Uri.parse(id, true), base: null }; } catch { return { source: null, base: null }; }
+}
+
+/** SHA-256 (base64) of `bytes`, hashed in slices with a yield between them for large files. */
+export async function hashBytes(bytes: Uint8Array): Promise<string> {
+  const h = createHash('sha256');
+  const step = LIMITS.asyncParseThresholdBytes * 4;
+  for (let i = 0; i < bytes.length; i += step) {
+    h.update(bytes.subarray(i, Math.min(bytes.length, i + step)));
+    if (i + step < bytes.length) await pause();
+  }
+  return h.digest('base64');
+}
+
+// ---------------------------------------------------------------------------------------------
+// Staged verification (Gate R2 F5)
+
+const lowerPart = (s: string): string => normalizePartName(s).toLowerCase();
+
+/** Attribute "<part>: message" to that part when the prefix names a known part (as core/save.ts does). */
+function toFailure(message: string, known: ReadonlySet<string>): VerifyFailure {
+  const i = message.indexOf(': ');
+  if (i > 0 && known.has(lowerPart(message.slice(0, i)))) return { part: normalizePartName(message.slice(0, i)), message };
+  return { message };
+}
+
+/**
+ * `serializeAndVerify` (core/save.ts) cut into stages with a yield between them, so a save of a large
+ * workbook blocks the extension host for one stage at a time instead of all of them: serialise;
+ * container, CRC, content, re-parse and package checks (`verifyBytes` with no extra validators); then
+ * each format validator on the re-opened output. Same checks, same ok/fail outcome. (One difference:
+ * when the package checks fail the format validators are not run, so the diagnostics list only the
+ * package failures.) The package must not change until it resolves; the save holds `writing` for that.
+ */
+export async function serializeAndVerifyStaged(
+  pkg: OfficePackage, validators: Validator[], hooks?: SaveTestHooks,
+): Promise<VerifyResult> {
+  let bytes: Uint8Array;
+  try {
+    bytes = pkg.serialize();
+  } catch (e) {
+    return { ok: false, failures: [{ message: `Serialisation failed: ${errorText(e)}` }] };
+  }
+  if (hooks?.corrupt) bytes = hooks.corrupt(bytes.slice());
+  await pause();
+  const failures = verifyBytes(pkg, bytes, []);   // steps 1–4 and packageValidator
+  if (failures.length > 0) return { ok: false, failures };
+  const extra = validators.filter((v) => v !== packageValidator);
+  if (extra.length === 0) return { ok: true, bytes };
+  await pause();
+  let reopened: OfficePackage;
+  try {
+    reopened = OfficePackage.open(`verify.${pkg.kind}`, bytes);
+  } catch (e) {
+    return { ok: false, failures: [{ message: `Output does not re-open: ${errorText(e)}` }] };
+  }
+  const touched = pkg.touchedParts();
+  const known = new Set([...reopened.partNames(), ...touched].map(lowerPart));
+  let original: OfficePackage | undefined | null = null;
+  const ctx: ValidatorContext = {
+    original: () => {
+      if (original === null) {
+        try { original = OfficePackage.open(`original.${pkg.kind}`, pkg.originalBytes); } catch { original = undefined; }
+      }
+      return original;
+    },
+  };
+  for (const v of extra) {
+    await pause();
+    let messages: string[];
+    try {
+      messages = v(reopened, touched.slice(), ctx);
+    } catch (e) {
+      failures.push({ message: `Validator ${v.name || '(anonymous)'} threw: ${errorText(e)}` });
+      continue;
+    }
+    if (!Array.isArray(messages)) { failures.push({ message: `Validator ${v.name || '(anonymous)'} returned no message list` }); continue; }
+    for (const m of messages) failures.push(toFailure(String(m), known));
+  }
+  return failures.length > 0 ? { ok: false, failures } : { ok: true, bytes };
+}
+
+/**
+ * The backup check (Gate R2 F5 b): the bytes re-read as a ZIP, every entry inflates and matches its
+ * CRC-32, and they re-open as a package of `kind`. No format validators: a restored backup goes
+ * through the full verification before it can be saved. Yields between entries.
+ */
+export async function verifyBackupBytes(bytes: Uint8Array, kind: OfficeKind): Promise<VerifyFailure[]> {
+  let zip;
+  try {
+    zip = readZip(bytes, zipLimits());
+  } catch (e) {
+    return [{ message: `Output is not a readable ZIP: ${errorText(e)}` }];
+  }
+  let sinceYield = 0;
+  for (const e of zip.entries) {
+    const large = e.uncompressedSize > LIMITS.asyncParseThresholdBytes;
+    try {
+      if (large) {
+        await inflateEntryAsync(zip, e, 30);   // yields while inflating; checks the CRC-32 itself
+      } else {
+        const data = inflateEntry(zip, e);
+        if (crc32(data) !== e.crc32) return [{ part: e.name, message: `${e.name}: CRC-32 mismatch` }];
+      }
+    } catch (err) {
+      return [{ part: e.name, message: `${e.name}: entry does not inflate or fails its CRC-32: ${errorText(err)}` }];
+    }
+    sinceYield += e.uncompressedSize;
+    if (large || sinceYield > LIMITS.asyncParseThresholdBytes) { sinceYield = 0; await pause(); }
+  }
+  try {
+    const p = OfficePackage.open(`backup.${kind}`, bytes);
+    if (p.kind !== kind) return [{ message: `Output re-opens as ${p.kind}, not ${kind}` }];
+  } catch (e) {
+    return [{ message: `Output does not re-open: ${errorText(e)}` }];
+  }
+  return [];
+}
+
+const SIGNATURE_ORIGIN_RE = /\/digital-signature\/origin$/;
+
+/** Whether the package carries an OPC digital signature (`_xmlsignatures/` parts or a signature-origin relationship). */
+export function isSignedPackage(pkg: OfficePackage): boolean {
+  if (pkg.partNames().some((n) => /^\/?_xmlsignatures\//i.test(n))) return true;
+  try {
+    return readRelationships(pkg, '').some((r) => SIGNATURE_ORIGIN_RE.test(r.type));
+  } catch {
+    return false;
   }
 }
-
-interface PendingFlush { remaining: number; done(): void; }
 
 export class OfficeDocument implements vscode.CustomDocument {
   /** Debounce for file-watcher events (Office writes a file in several steps). Tests set 0. */
@@ -193,6 +368,13 @@ export class OfficeDocument implements vscode.CustomDocument {
   static flushTimeoutMs = 1500;
   /** See SaveTestHooks. Tests assign it; the environment variable sets it for manual checks. */
   static saveHooks: SaveTestHooks | undefined = envSaveHooks(typeof process === 'undefined' ? undefined : process.env);
+  /**
+   * Quiet period before a backup serialises (Gate R2 F5 a): an edit landing meanwhile restarts it,
+   * so a burst of typing costs one serialisation. VS Code cancels a superseded backup itself. Tests set 0.
+   */
+  static backupDelayMs = 750;
+  /** Upper bound on the quiet-period wait, so steady typing still gets a backup. */
+  static backupMaxDelayMs = 10_000;
 
   readonly uri: vscode.Uri;
   readonly kind: OfficeKind;
@@ -203,6 +385,16 @@ export class OfficeDocument implements vscode.CustomDocument {
   /** +1 per load, revert or external reload; undo closures check it (§6.3). */
   generation = 0;
   diskStamp: { mtime: number; size: number } | null = null;
+  /**
+   * The disk state the in-memory content is based on (Gate R2 F3): stamp and hash of the file as
+   * loaded or last saved, or, for a document restored from a backup, as recorded in that backup.
+   * Null when unknown (a backup from before Gate R2).
+   */
+  base: DiskBase | null = null;
+  /** Restored from a backup whose base no longer matches the file: the next save asks first (F3). */
+  restoredConflict = false;
+  /** The package carries a digital signature (`_xmlsignatures/`); entering Edit warns once (§10.3). */
+  signed = false;
   readOnlyReason: ReadOnlyReason | null = null;
   /** Host-level notices (open in Office, changed on disk). Kind providers add their own. */
   notices: OfficeNotice[] = [];
@@ -241,6 +433,11 @@ export class OfficeDocument implements vscode.CustomDocument {
   private writing = 0;
   private diskCheckAfterWrite = false;
   private lastBackupFailure = -1;
+  /** Container-checked backup bytes of one state, keyed `generation:version` (F5: one serialisation per state). */
+  private backupCache: { key: string; bytes: Uint8Array } | undefined;
+  /** Backups run one at a time (a later one finds the earlier one's bytes in the cache). */
+  private backupChain: Promise<unknown> = Promise.resolve();
+  private signatureWarned = false;
 
   private readonly flushTargets = new Set<(flushId: number) => boolean>();
   private readonly pendingFlushes = new Map<number, PendingFlush>();
@@ -258,18 +455,64 @@ export class OfficeDocument implements vscode.CustomDocument {
   ): Promise<OfficeDocument> {
     const doc = new OfficeDocument(uri, kind, hooks ?? { validators: () => [] });
     let source = uri;
+    let backupBase: DiskBase | null = null;
     if (backupId) {
-      try { source = vscode.Uri.parse(backupId, true); } catch { source = uri; }
+      const parsed = parseBackupId(backupId);
+      source = parsed.source ?? uri;
+      backupBase = parsed.base;
     }
     await doc.load(source, false);
-    if (doc.readFailed && source !== uri) await doc.load(uri, false);   // unreadable backup: fall back to the file
+    let fromBackupBytes = source !== uri && !doc.readFailed;
+    if (doc.readFailed && source !== uri) {
+      await doc.load(uri, false);   // unreadable backup: fall back to the file
+      fromBackupBytes = false;
+    }
+    if (fromBackupBytes && doc.pkg) await doc.checkRestoredBase(backupBase);
     // VS Code restores a document opened from a backup as dirty (§6.2), whatever we could read.
     doc.fromBackup = backupId !== undefined;
     let start = false;
     try { start = doc.hooks.startInEditMode?.() === true; } catch { start = false; }
     doc.editMode = start && doc.canEdit;
+    if (doc.editMode) doc.warnIfSigned();
     doc.startWatching();
     return doc;
+  }
+
+  /**
+   * Gate R2 F3: the content came from a backup made against `base`. When the file changed since
+   * (stamp differs and, where the backup has a hash, the bytes too) or the base is unknown, the
+   * next save goes through the conflict modal and the "changed on disk" notice shows now.
+   */
+  private async checkRestoredBase(base: DiskBase | null): Promise<void> {
+    const now = this.diskStamp;
+    if (!now) { this.base = base; return; }   // the file is gone: saving recreates it
+    if (base && base.mtime === now.mtime && base.size === now.size) { this.base = base; return; }
+    if (base?.hash && base.size === now.size) {
+      try {
+        const hash = await hashBytes(await vscode.workspace.fs.readFile(this.uri));
+        if (hash === base.hash) { this.base = { ...now, hash }; return; }   // touched, not changed
+      } catch {
+        // unreadable now: treat as changed
+      }
+    }
+    this.base = base;
+    this.restoredConflict = true;
+    this.markChangedOnDisk(false);
+  }
+
+  /** The persistent "changed on disk" notice (§6.1); `fire` posts it to the webviews. */
+  private markChangedOnDisk(fire: boolean): void {
+    if (this.changedOnDisk) return;
+    this.changedOnDisk = true;
+    this.notices = [...this.notices, { severity: 'warning', code: 'changed-on-disk', message: CHANGED_ON_DISK_MESSAGE }];
+    if (fire) this.stateEmitter.fire({ kind: 'notices' });
+  }
+
+  /** §10.3: saving a signed file invalidates its signature; say so once, when Edit first turns on. */
+  private warnIfSigned(): void {
+    if (!this.signed || this.signatureWarned) return;
+    this.signatureWarned = true;
+    void vscode.window.showWarningMessage(signedEditWarning(appName(this.kind)));
   }
 
   get fileName(): string { return baseName(this.uri); }
@@ -287,6 +530,7 @@ export class OfficeDocument implements vscode.CustomDocument {
   /** Switch Edit mode (§6.4); refused (false) unless `canEdit`. Returns the mode now in effect. */
   setEditMode(on: boolean): boolean {
     this.editMode = on && this.canEdit;
+    if (this.editMode) this.warnIfSigned();
     return this.editMode;
   }
 
@@ -390,9 +634,19 @@ export class OfficeDocument implements vscode.CustomDocument {
     const guarded = undoRedoFor(target, edit);
     this.editEmitter.fire({
       label: edit.label,
-      undo: () => { this.position--; this.afterUndoRedo(guarded.undo()); },
-      redo: () => { this.position++; this.afterUndoRedo(guarded.redo()); },
+      undo: () => { this.position--; this.afterUndoRedo(this.undoRedoRefusal() ?? guarded.undo()); },
+      redo: () => { this.position++; this.afterUndoRedo(this.undoRedoRefusal() ?? guarded.redo()); },
     });
+  }
+
+  /**
+   * Gate R2 F6: while a save is between its serialisation and its completion the package must not
+   * change (VS Code would mark the undone state saved while the disk holds the other). The closure
+   * then changes nothing and says why; VS Code has moved its pointer already, so the dirty mirror
+   * moves too and errs towards dirty.
+   */
+  private undoRedoRefusal(): EditOutcome | null {
+    return this.writing > 0 ? { ok: false, error: { code: 'blocked', message: SAVE_BUSY_MESSAGE } } : null;
   }
 
   /** What undo/redo closures read when they run. A disposed document matches no generation. */
@@ -456,7 +710,11 @@ export class OfficeDocument implements vscode.CustomDocument {
   // -------------------------------------------------------------------------------------------
   // Save pipeline (spec §6.5)
 
-  /** The verified bytes of the current state (cached per version), or the verification failures. */
+  /**
+   * The verified bytes of the current state (cached per version), or the verification failures.
+   * Synchronous (one block): tests and callers that need an answer now. Saves use
+   * `serializeVerifiedAsync`, which runs the same checks in stages.
+   */
   serializeVerified(): VerifyResult {
     const pkg = this.pkg;
     if (!pkg) return { ok: false, failures: [{ message: 'The document is not loaded.' }] };
@@ -468,36 +726,83 @@ export class OfficeDocument implements vscode.CustomDocument {
     return result;
   }
 
-  private computeSerialization(pkg: OfficePackage, test: SaveTestHooks | undefined): VerifyResult {
-    let validators: Validator[];
+  private validatorList(): { validators: Validator[] } | { failure: VerifyFailure } {
     try {
-      validators = this.hooks.validators();
+      return { validators: this.hooks.validators() };
     } catch (e) {
-      return { ok: false, failures: [{ message: `Validators unavailable: ${errorText(e)}` }] };
+      return { failure: { message: `Validators unavailable: ${errorText(e)}` } };
     }
+  }
+
+  /**
+   * Apply the save-time preparation when the package's content changed (§6.5, §9.5); an unchanged
+   * one (no edits, or every edit undone) is written as its original bytes (G0). Returns the builder
+   * to abort once the bytes exist (the preparation lives in the bytes only, never in the document),
+   * or the failure.
+   */
+  private prepareSerialization(pkg: OfficePackage): { builder: EditBuilder | null } | { failure: VerifyFailure } {
     const prepare = this.hooks.beforeFirstSerialize;
-    if (prepare) {
-      // Only a package whose content changed gets the save-time preparation: an unchanged one
-      // (no edits, or every edit undone) is written as its original bytes (G0).
-      let plain: Uint8Array;
-      try {
-        plain = pkg.serialize();
-      } catch (e) {
-        return { ok: false, failures: [{ message: `Serialisation failed: ${errorText(e)}` }] };
-      }
-      if (plain !== pkg.originalBytes) {
-        const b = new EditBuilder(pkg, 'Prepare save');
-        try {
-          prepare.call(this.hooks, b);
-          return serializeAndVerify(pkg, validators, test);
-        } catch (e) {
-          return { ok: false, failures: [{ message: `Preparing the save failed: ${errorText(e)}` }] };
-        } finally {
-          b.abort();   // the preparation lives in the bytes only, never in the document
-        }
-      }
+    if (!prepare) return { builder: null };
+    let plain: Uint8Array;
+    try {
+      plain = pkg.serialize();
+    } catch (e) {
+      return { failure: { message: `Serialisation failed: ${errorText(e)}` } };
     }
-    return serializeAndVerify(pkg, validators, test);
+    if (plain === pkg.originalBytes) return { builder: null };
+    const b = new EditBuilder(pkg, 'Prepare save');
+    try {
+      prepare.call(this.hooks, b);
+    } catch (e) {
+      b.abort();
+      return { failure: { message: `Preparing the save failed: ${errorText(e)}` } };
+    }
+    return { builder: b };
+  }
+
+  private computeSerialization(pkg: OfficePackage, test: SaveTestHooks | undefined): VerifyResult {
+    const list = this.validatorList();
+    if ('failure' in list) return { ok: false, failures: [list.failure] };
+    const prep = this.prepareSerialization(pkg);
+    if ('failure' in prep) return { ok: false, failures: [prep.failure] };
+    try {
+      return serializeAndVerify(pkg, list.validators, test);
+    } catch (e) {
+      return { ok: false, failures: [{ message: `Verification failed: ${errorText(e)}` }] };
+    } finally {
+      prep.builder?.abort();
+    }
+  }
+
+  /**
+   * `serializeVerified` for the save path (Gate R2 F5 c): the same checks in stages, yielding to the
+   * event loop between them, sharing the cache. The caller holds `writing`, so no edit, undo or redo
+   * can change the package meanwhile; a reload can, and then the result is not cached.
+   */
+  async serializeVerifiedAsync(): Promise<VerifyResult> {
+    const pkg = this.pkg;
+    if (!pkg) return { ok: false, failures: [{ message: 'The document is not loaded.' }] };
+    const test = OfficeDocument.saveHooks;
+    const version = this.version;
+    const generation = this.generation;
+    const c = this.serialCache;
+    if (!test && c && c.version === version && c.generation === generation) return c.result;
+    const list = this.validatorList();
+    if ('failure' in list) return { ok: false, failures: [list.failure] };
+    const prep = this.prepareSerialization(pkg);
+    if ('failure' in prep) return { ok: false, failures: [prep.failure] };
+    let result: VerifyResult;
+    try {
+      result = await serializeAndVerifyStaged(pkg, list.validators, test);
+    } catch (e) {
+      result = { ok: false, failures: [{ message: `Verification failed: ${errorText(e)}` }] };
+    } finally {
+      prep.builder?.abort();
+    }
+    if (!test && this.pkg === pkg && this.version === version && this.generation === generation) {
+      this.serialCache = { version, generation, result };
+    }
+    return result;
   }
 
   /** `saveCustomDocument`. Rejects (the document stays dirty) on conflict-cancel, verification or write failure. */
@@ -519,29 +824,39 @@ export class OfficeDocument implements vscode.CustomDocument {
     try {
       if (own) await this.checkConflict();
       if (cancellation?.isCancellationRequested) throw new vscode.CancellationError();
-      const result = this.serializeVerified();
+      // Gate R2 F6: the save point is the state being serialised. Nothing changes it until the write
+      // is done (edits, undo and redo are refused while `writing`), but the mirror never assumes so.
+      const pkg = this.pkg;
+      const savedAt = this.position;
+      const result = await this.serializeVerifiedAsync();
       if (!result.ok) {
         void this.reportVerifyFailure(result.failures);
         // Already explained to the user: a cancellation keeps the document dirty without a second message.
         throw new vscode.CancellationError();
       }
+      if (this.pkg !== pkg) throw new vscode.CancellationError();   // reverted or reloaded meanwhile
+      // §6.5 step 5: write in place, so the file keeps its identity (owner, ACLs, links, the inode
+      // Word/Excel and sync clients watch). The bytes are complete and verified before this starts.
       try {
-        await this.writeAtomic(target, result.bytes);
+        await vscode.workspace.fs.writeFile(target, result.bytes);
       } catch (e) {
-        const w = e instanceof WriteFailure ? e : new WriteFailure(e, null);
-        const msg = writeErrorMessage(this.kind, baseName(target), w.original);
-        throw new Error(w.keptTemp ? `${msg} ${tempKeptMessage(w.keptTemp)}` : msg);
+        if (own) this.diskStamp = await this.statDisk();   // our own failed write is not an external change
+        const msg = writeErrorMessage(this.kind, baseName(target), e);
+        throw new Error(classifyWriteError(e) === 'in-use' ? msg : `${msg} ${PARTIAL_WRITE_NOTE}`);
       }
       if (own) {
         this.diskStamp = await this.statDisk();
+        this.base = this.diskStamp ? { ...this.diskStamp, hash: await hashBytes(result.bytes) } : null;
+        this.restoredConflict = false;
         if (this.changedOnDisk) {
           this.changedOnDisk = false;
           this.notices = this.notices.filter((n) => n.code !== 'changed-on-disk');
           this.stateEmitter.fire({ kind: 'notices' });
         }
       }
-      // VS Code moves its save point to the current edit when the save resolves.
-      this.savedPosition = this.position;
+      // VS Code moves its save point to its current edit when the save resolves; the bytes on disk
+      // are the state at `savedAt`.
+      this.savedPosition = savedAt;
       this.fromBackup = false;
     } finally {
       this.writing--;
@@ -549,10 +864,13 @@ export class OfficeDocument implements vscode.CustomDocument {
     }
   }
 
-  /** §6.5 step 2: the file changed on disk since load / last save → Overwrite / Revert / Cancel. */
+  /**
+   * §6.5 step 2: the file changed on disk since load / last save, or (F3) since the backup this
+   * document was restored from was made → Overwrite / Revert / Cancel.
+   */
   private async checkConflict(): Promise<void> {
     const now = await this.statDisk();
-    if (!stampChanged(this.diskStamp, now)) return;
+    if (!this.restoredConflict && !stampChanged(this.diskStamp, now)) return;
     const choice = await vscode.window.showWarningMessage(
       conflictMessage(this.fileName), { modal: true, detail: CONFLICT_DETAIL }, CONFLICT_OVERWRITE, CONFLICT_REVERT,
     );
@@ -608,38 +926,6 @@ export class OfficeDocument implements vscode.CustomDocument {
     }
   }
 
-  /**
-   * Write `bytes` to `target` without ever leaving a partly written file there: write a sibling
-   * temporary file, then rename it over the target. On failure the temporary file is removed,
-   * unless the target is gone too (a file system that deletes before renaming failed half way);
-   * then it is kept and named in the error, because it is the only complete copy.
-   */
-  private async writeAtomic(target: vscode.Uri, bytes: Uint8Array): Promise<void> {
-    const fs = vscode.workspace.fs;
-    const tmpName = `${baseName(target)}.${randomTag()}.vsmd-tmp`;
-    const tmp = vscode.Uri.joinPath(target, '..', tmpName);
-    const exists = async (u: vscode.Uri): Promise<boolean> => {
-      try { await fs.stat(u); return true; } catch { return false; }
-    };
-    const remove = async (u: vscode.Uri): Promise<void> => {
-      try { await fs.delete(u); } catch { /* best effort */ }
-    };
-    try {
-      await fs.writeFile(tmp, bytes);
-    } catch (e) {
-      await remove(tmp);
-      throw new WriteFailure(e, null);
-    }
-    const existed = await exists(target);
-    try {
-      await fs.rename(tmp, target, { overwrite: true });
-    } catch (e) {
-      if (existed && !(await exists(target))) throw new WriteFailure(e, tmpName);
-      await remove(tmp);
-      throw new WriteFailure(e, null);
-    }
-  }
-
   /** `revertCustomDocument`: re-read from `uri`, new package, version and generation bumped (§6.2). */
   async revert(_cancellation?: vscode.CancellationToken): Promise<void> {
     if (this.disposed) return;
@@ -650,27 +936,88 @@ export class OfficeDocument implements vscode.CustomDocument {
     if (applied && !this.disposed) this.stateEmitter.fire({ kind: 'reloaded' });
   }
 
-  /** `backupCustomDocument`: verified serialisation (cached per version) written to `destination`. */
-  async backup(destination: vscode.Uri, cancellation?: vscode.CancellationToken): Promise<vscode.CustomDocumentBackup> {
+  /**
+   * `backupCustomDocument` (§6.2, Gate R2 F3/F4/F5). Never changes anything the user sees: the
+   * webviews are only asked for edits already in flight. Waits for a quiet period (an edit landing
+   * meanwhile restarts it), then writes the bytes of the current state: the save cache when a save
+   * already verified it, else one serialisation per state, container-checked (ZIP re-read, every CRC)
+   * without the format validators — a restored backup is fully verified before it can be saved. The
+   * id carries the disk base so a restore can detect a file that changed meanwhile.
+   */
+  backup(destination: vscode.Uri, cancellation?: vscode.CancellationToken): Promise<vscode.CustomDocumentBackup> {
+    const run = this.backupChain.then(() => this.runBackup(destination, cancellation));
+    this.backupChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async runBackup(destination: vscode.Uri, cancellation: vscode.CancellationToken | undefined): Promise<vscode.CustomDocumentBackup> {
+    const cancelled = (): boolean => cancellation?.isCancellationRequested === true || this.disposed;
+    await this.waitForQuiet(cancelled);
+    if (cancelled()) throw new vscode.CancellationError();
     await this.flush();
-    if (cancellation?.isCancellationRequested) throw new vscode.CancellationError();
+    if (cancelled()) throw new vscode.CancellationError();
     if (!this.pkg) throw new Error(`Couldn't back up ${this.fileName}: the file could not be loaded.`);
-    const result = this.serializeVerified();
-    if (!result.ok) {
-      console.error('[OfficeDocument] backup verification failed', this.uri.toString(), result.failures);
-      if (this.lastBackupFailure !== this.version) {
-        this.lastBackupFailure = this.version;
+    const version = this.version;
+    const r = await this.backupBytes();
+    if (!r.ok) {
+      console.error('[OfficeDocument] backup verification failed', this.uri.toString(), r.failures);
+      if (this.lastBackupFailure !== version) {
+        this.lastBackupFailure = version;
         void vscode.window.showErrorMessage(VERIFY_FAILED_BACKUP_MESSAGE);
       }
       throw new Error(VERIFY_FAILED_BACKUP_MESSAGE);
     }
-    await vscode.workspace.fs.writeFile(destination, result.bytes);
+    if (cancelled()) throw new vscode.CancellationError();
+    await vscode.workspace.fs.writeFile(destination, r.bytes);
+    let deleted = false;
     return {
-      id: destination.toString(),
+      id: encodeBackupId(destination, this.base),
       delete: () => {
+        if (deleted) return;
+        deleted = true;
         vscode.workspace.fs.delete(destination).then(undefined, () => { /* already gone */ });
       },
     };
+  }
+
+  /** Resolves once no edit landed for `backupDelayMs` (at most `backupMaxDelayMs`), or when cancelled. */
+  private async waitForQuiet(cancelled: () => boolean): Promise<void> {
+    const delay = OfficeDocument.backupDelayMs;
+    if (delay <= 0) return;
+    const until = Date.now() + OfficeDocument.backupMaxDelayMs;
+    for (;;) {
+      const seen = `${this.generation}:${this.version}`;
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      if (cancelled() || `${this.generation}:${this.version}` === seen || Date.now() >= until) return;
+    }
+  }
+
+  /** The bytes a backup writes for the current state, serialised at most once per state. */
+  private async backupBytes(): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; failures: VerifyFailure[] }> {
+    const pkg = this.pkg!;
+    const test = OfficeDocument.saveHooks;
+    const key = `${this.generation}:${this.version}`;
+    const c = this.serialCache;
+    if (!test && c && c.result.ok && c.version === this.version && c.generation === this.generation) return { ok: true, bytes: c.result.bytes };
+    const bc = this.backupCache;
+    if (!test && bc && bc.key === key) return { ok: true, bytes: bc.bytes };
+    // Serialise synchronously (the package may change once this yields).
+    const prep = this.prepareSerialization(pkg);
+    if ('failure' in prep) return { ok: false, failures: [prep.failure] };
+    let bytes: Uint8Array;
+    try {
+      bytes = pkg.serialize();
+      if (test?.corrupt) bytes = test.corrupt(bytes.slice());
+    } catch (e) {
+      return { ok: false, failures: [{ message: `Serialisation failed: ${errorText(e)}` }] };
+    } finally {
+      prep.builder?.abort();
+    }
+    await pause();
+    const failures = await verifyBackupBytes(bytes, this.kind);
+    if (failures.length > 0) return { ok: false, failures };
+    if (!test && this.pkg === pkg) this.backupCache = { key, bytes };
+    return { ok: true, bytes };
   }
 
   private afterWrite(): void {
@@ -715,14 +1062,21 @@ export class OfficeDocument implements vscode.CustomDocument {
       }
     }
     const lockNotice = pkg ? await this.lockFileNotice() : null;
+    // The disk base (F3) when the bytes are the file's own; a backup's base comes from its id (create).
+    const fromFile = source.toString() === this.uri.toString();
+    const hash = fromFile && bytes && stamp && this.writableScheme ? await hashBytes(bytes) : undefined;
     if (token !== this.loadToken || this.disposed) return false;
 
     this.pkg = pkg;
     this.loadError = loadError;
     this.diskStamp = stamp;
+    this.base = fromFile && stamp ? { ...stamp, hash } : null;
+    this.restoredConflict = false;
+    this.signed = pkg ? isSignedPackage(pkg) : false;
     this.generation++;
     if (isReload) this.version++;
     this.serialCache = undefined;
+    this.backupCache = undefined;
     this.changedOnDisk = false;
     this.readFailed = bytes === undefined;
     this.readOnlyReason = pkg
@@ -787,7 +1141,7 @@ export class OfficeDocument implements vscode.CustomDocument {
   private async onDiskChanged(): Promise<void> {
     if (this.disposed) return;
     if (this.writing > 0) {
-      // Our own save is in flight (its rename fires the watcher): look again when it is done.
+      // Our own save is in flight (its write fires the watcher): look again when it is done.
       this.diskCheckAfterWrite = true;
       return;
     }
@@ -796,14 +1150,7 @@ export class OfficeDocument implements vscode.CustomDocument {
     const prev = this.diskStamp;
     if (prev && prev.mtime === stamp.mtime && prev.size === stamp.size) return;
     if (this.isDirty()) {
-      if (this.changedOnDisk) return;
-      this.changedOnDisk = true;
-      this.notices = [...this.notices, {
-        severity: 'warning',
-        code: 'changed-on-disk',
-        message: 'This file has changed on disk. Your unsaved changes are kept; saving will ask before overwriting.',
-      }];
-      this.stateEmitter.fire({ kind: 'notices' });
+      this.markChangedOnDisk(true);
       return;
     }
     await this.reload();

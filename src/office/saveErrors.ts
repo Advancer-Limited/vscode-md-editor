@@ -127,7 +127,16 @@ export const VIEW_MODE_MESSAGE = 'Press Edit (Ctrl+E) to make changes.';
 export const READ_ONLY_MESSAGE = 'This document is open read-only.';
 export const REVERTED_MESSAGE = 'Reverted to the version on disk.';
 
-/** After a failed atomic replace in which the original could not be restored by the file system. */
-export function tempKeptMessage(tempName: string): string {
-  return `The saved copy was kept as ${tempName} next to the file.`;
+/** The persistent notice when the file changed on disk under unsaved changes (§6.1), or since a restored backup. */
+export const CHANGED_ON_DISK_MESSAGE = 'This file has changed on disk. Your unsaved changes are kept; saving will ask before overwriting.';
+
+/**
+ * Appended to a write failure other than "in use" (§6.5 step 5, §10.3): the save writes in place,
+ * so a write that failed part-way may have left the file incomplete. The changes are still open.
+ */
+export const PARTIAL_WRITE_NOTE = 'The file on disk may be incomplete. Your changes are still here: save again, or use Save As.';
+
+/** §10.3: shown once when Edit is turned on for a digitally signed file. */
+export function signedEditWarning(app: string): string {
+  return `This file is digitally signed. Saving changes here will invalidate the signature; sign it again in ${app} if you need it.`;
 }

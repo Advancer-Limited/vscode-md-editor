@@ -800,7 +800,7 @@
     // ---------- messages ----------
 
     function runFlush(flushId) {
-      // The host waits for `flushed`: land any in-progress cell edit (and its reply) first.
+      // The host waits for `flushed`: wait for the edits already sent (an open cell editor stays open, Gate R2 F4).
       const done = () => post({ type: 'flushed', flushId });
       let p = null;
       if (flushHandler) { try { p = flushHandler(); } catch (e) { p = null; } }
