@@ -324,7 +324,7 @@
   - [x] WP-07 Protocol contract freeze
   - [x] WP-08 Host shell
   - [x] WP-09 Common webview chrome
-  - [ ] WP-10 Word viewer
+  - [x] WP-10 Word viewer
   - [x] WP-11 Xlsx read model
   - [x] WP-12 Xlsx styles and display formatting
   - [x] WP-13 Grid maths
