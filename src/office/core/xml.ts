@@ -11,6 +11,9 @@
 //
 // Security (§12): any `<!DOCTYPE` is rejected, so there are no DTDs, no external entities and no entity
 // expansion. Only the five predefined entities and numeric character references are recognised.
+// Hostile input is bounded (§10.2): element depth and attributes per start tag are capped, namespace
+// resolution is O(1) per name and duplicate checks use Sets, so parsing stays linear; serialisation
+// is iterative.
 //
 // No `vscode` import here (core rule): this module also runs in the Node test bundle.
 
@@ -24,6 +27,27 @@ export class XmlError extends Error {
     this.name = 'XmlError';
     this.code = code;
     this.offset = offset;
+  }
+}
+
+/**
+ * An inserted fragment (insertAt/replaceNode with `rootScoped`) would not mean at the insertion site
+ * what it means at the root: a prefix is redeclared or unbound in between, or the default namespace
+ * differs. Callers map this to the read-only reason `unsupported-xml-layout` (spec §3.3).
+ */
+export class XmlScopeError extends Error {
+  /** Raw name of the first element or attribute whose namespace differs. */
+  readonly rawName: string;
+  /** Namespace at the root ('' when unbound or not resolvable there). */
+  readonly expectedNs: string;
+  /** Namespace at the insertion site. */
+  readonly actualNs: string;
+  constructor(rawName: string, expectedNs: string, actualNs: string, message?: string) {
+    super(message ?? `"${rawName}" would be in namespace "${actualNs}" at the insertion site, not "${expectedNs}" as at the root`);
+    this.name = 'XmlScopeError';
+    this.rawName = rawName;
+    this.expectedNs = expectedNs;
+    this.actualNs = actualNs;
   }
 }
 
@@ -101,6 +125,7 @@ function isLegalCodePoint(cp: number): boolean {
 
 const HEX_REF = /^#x[0-9a-fA-F]+$/;
 const DEC_REF = /^#[0-9]+$/;
+const LEADING_ZEROS = /^0+/;
 
 /** Replacement text of `&name;`, or null when it is not one of the five predefined entities or a legal numeric reference. */
 function resolveRef(name: string): string | null {
@@ -111,10 +136,16 @@ function resolveRef(name: string): string | null {
     case 'quot': return '"';
     case 'apos': return '\'';
   }
+  // Leading zeros are legal (`&#x0010FFFF;`); the length guard applies to the significant digits only
+  // (U+10FFFF is 6 hex / 7 decimal digits), so parseInt never sees an absurdly long number.
   let cp: number;
-  if (HEX_REF.test(name)) cp = name.length > 9 ? -1 : parseInt(name.slice(2), 16);
-  else if (DEC_REF.test(name)) cp = name.length > 9 ? -1 : parseInt(name.slice(1), 10);
-  else return null;
+  if (HEX_REF.test(name)) {
+    const digits = name.slice(2).replace(LEADING_ZEROS, '');
+    cp = digits.length > 6 ? -1 : parseInt(digits || '0', 16);
+  } else if (DEC_REF.test(name)) {
+    const digits = name.slice(1).replace(LEADING_ZEROS, '');
+    cp = digits.length > 7 ? -1 : parseInt(digits || '0', 10);
+  } else return null;
   return isLegalCodePoint(cp) ? String.fromCodePoint(cp) : null;
 }
 
@@ -203,6 +234,19 @@ export function stripIllegalXmlChars(s: string): string {
 
 /** Decode a part's bytes. UTF-8 (with or without BOM) and UTF-16 (LE/BE, BOM or `<?` sniffed). */
 export function decodePart(bytes: Uint8Array): { text: string; encoding: 'utf-8' | 'utf-16'; bom: boolean } {
+  return decodeBytes(bytes, false);
+}
+
+/**
+ * As `decodePart`, for the first bytes of a part only (e.g. a bounded inflate to read the root start
+ * tag): a multi-byte sequence cut off at the end is dropped instead of being an error. Invalid bytes
+ * before that still throw XmlError('encoding').
+ */
+export function decodePartPrefix(bytes: Uint8Array): { text: string; encoding: 'utf-8' | 'utf-16'; bom: boolean } {
+  return decodeBytes(bytes, true);
+}
+
+function decodeBytes(bytes: Uint8Array, prefix: boolean): { text: string; encoding: 'utf-8' | 'utf-16'; bom: boolean } {
   const b0 = bytes[0], b1 = bytes[1], b2 = bytes[2], b3 = bytes[3];
   let label = 'utf-8';
   let encoding: 'utf-8' | 'utf-16' = 'utf-8';
@@ -215,7 +259,8 @@ export function decodePart(bytes: Uint8Array): { text: string; encoding: 'utf-8'
   else if (b0 === 0x00 && b1 === 0x3C && b2 === 0x00 && b3 === 0x3F) { label = 'utf-16be'; encoding = 'utf-16'; }
   let text: string;
   try {
-    text = new TextDecoder(label, { fatal: true, ignoreBOM: true }).decode(bytes.subarray(start));
+    // `stream: true` keeps an incomplete trailing sequence pending instead of failing on it.
+    text = new TextDecoder(label, { fatal: true, ignoreBOM: true }).decode(bytes.subarray(start), { stream: prefix });
   } catch {
     throw new XmlError('encoding', `part is not valid ${label}`, 0);
   }
@@ -264,23 +309,60 @@ function checkName(name: string, offset: number): void {
   }
 }
 
+/** Few attributes: a linear duplicate scan beats building a Set. */
+const SMALL_ATTR_COUNT = 8;
+
 class Parser {
   private readonly src: string;
   private readonly len: number;
   private pos = 0;
   private readonly stack: ElImpl[] = [];
+  /** Namespace declarations made by each open element (parallel to `stack`; null = none). */
+  private readonly declStack: (Map<string, string> | null)[] = [];
+  /**
+   * prefix -> URIs declared by the open elements of this parse, innermost last. Together with
+   * `baseCache` this makes namespace resolution O(1) per name instead of a walk up the scope chain
+   * (which is O(depth) and made hostile deeply nested input quadratic).
+   */
+  private readonly bindings = new Map<string, string[]>();
+  /** Resolutions against `baseScope` (the scope outside this parse), memoised. */
+  private readonly baseCache = new Map<string, string | undefined>();
   private readonly fragment: boolean;
   private readonly fragParent: XmlElement | null;
   private readonly baseScope: Scope;
+  /** Depth of the element the parse happens inside (0 for a document). */
+  private readonly baseDepth: number;
   private root: ElImpl | null = null;
   readonly out: XmlNode[] = [];
 
-  constructor(src: string, fragment: boolean, baseScope: Scope, fragParent: XmlElement | null) {
+  constructor(src: string, fragment: boolean, baseScope: Scope, fragParent: XmlElement | null, baseDepth = 0) {
     this.src = src;
     this.len = src.length;
     this.fragment = fragment;
     this.baseScope = baseScope;
     this.fragParent = fragParent;
+    this.baseDepth = baseDepth;
+  }
+
+  private resolve(prefix: string): string | undefined {
+    const st = this.bindings.get(prefix);
+    if (st !== undefined && st.length > 0) return st[st.length - 1];
+    if (this.baseCache.has(prefix)) return this.baseCache.get(prefix);
+    const v = lookupNs(this.baseScope, prefix);
+    this.baseCache.set(prefix, v);
+    return v;
+  }
+
+  private pushDecls(decls: Map<string, string>): void {
+    for (const [p, u] of decls) {
+      const st = this.bindings.get(p);
+      if (st) st.push(u); else this.bindings.set(p, [u]);
+    }
+  }
+
+  private popDecls(decls: Map<string, string> | null | undefined): void {
+    if (!decls) return;
+    for (const p of decls.keys()) this.bindings.get(p)!.pop();
   }
 
   /** Parse until done (returns true) or until `deadline` (Date.now() ms) passes (returns false). */
@@ -382,6 +464,7 @@ class Parser {
     if (gt < 0) throw new XmlError('malformed', 'unterminated end tag', lt);
     const top = this.stack.pop();
     if (!top) throw new XmlError('malformed', 'end tag without a matching start tag', lt);
+    this.popDecls(this.declStack.pop());
     const name = top.rawName;
     let ok = src.startsWith(name, lt + 2);
     if (ok) {
@@ -408,8 +491,12 @@ class Parser {
     if (i >= len) throw new XmlError('malformed', 'unterminated start tag', lt);
     const rawName = src.slice(nameStart, i);
     checkName(rawName, nameStart);
+    if (this.baseDepth + this.stack.length + 1 > LIMITS.xmlMaxDepth) {
+      throw new XmlError('malformed', `elements are nested more than ${LIMITS.xmlMaxDepth} deep`, lt);
+    }
 
     const attrs: AttrImpl[] = [];
+    let seen: Set<string> | null = null;   // raw attribute names, once there are more than a few
     let decls: Map<string, string> | null = null;
     let selfClosing = false;
     let tailStart: number;
@@ -425,6 +512,9 @@ class Parser {
         tailStart = wsStart; stEnd = i + 2; selfClosing = true; break;
       }
       if (i === wsStart) throw new XmlError('malformed', 'whitespace is required before an attribute', i);
+      if (attrs.length >= LIMITS.xmlMaxAttributes) {
+        throw new XmlError('malformed', `more than ${LIMITS.xmlMaxAttributes} attributes on <${rawName}>`, i);
+      }
       const an = i;
       for (; i < len; i++) {
         c = src.charCodeAt(i);
@@ -447,7 +537,16 @@ class Parser {
       if (badLt >= 0) throw new XmlError('malformed', '"<" is not allowed in an attribute value', vStart + badLt);
       const value = decodeAttrValue(rawVal, vStart);
       i = vEnd + 1;
-      for (const a of attrs) if (a.rawName === aName) throw new XmlError('malformed', `duplicate attribute "${aName}"`, an);
+      if (seen) {
+        if (seen.has(aName)) throw new XmlError('malformed', `duplicate attribute "${aName}"`, an);
+        seen.add(aName);
+      } else {
+        for (const a of attrs) if (a.rawName === aName) throw new XmlError('malformed', `duplicate attribute "${aName}"`, an);
+        if (attrs.length + 1 >= SMALL_ATTR_COUNT) {
+          seen = new Set(attrs.map((a) => a.rawName));
+          seen.add(aName);
+        }
+      }
       if (aName === 'xmlns') {
         (decls ??= new Map()).set('', value);
       } else if (aName.startsWith('xmlns:')) {
@@ -461,17 +560,18 @@ class Parser {
 
     const parentScope = this.top()?._scope ?? this.baseScope;
     const scope: Scope = decls ? { map: decls, parent: parentScope } : parentScope;
+    if (decls) this.pushDecls(decls);
     let ns: string;
     let local: string;
     const colon = rawName.indexOf(':');
-    if (colon < 0) { ns = lookupNs(scope, '') ?? ''; local = rawName; }
+    if (colon < 0) { ns = this.resolve('') ?? ''; local = rawName; }
     else {
       const p = rawName.slice(0, colon);
-      const u = p === 'xmlns' ? undefined : lookupNs(scope, p);
+      const u = p === 'xmlns' ? undefined : this.resolve(p);
       if (u === undefined) throw new XmlError('malformed', `unbound namespace prefix "${p}"`, nameStart);
       ns = u; local = rawName.slice(colon + 1);
     }
-    if (attrs.length > 0) this.resolveAttrs(attrs, scope, lt);
+    if (attrs.length > 0) this.resolveAttrs(attrs, lt);
 
     const el: ElImpl = {
       type: 'el', ns, local, rawName, attrs: attrs as XmlAttr[], children: [], parent: null,
@@ -484,11 +584,12 @@ class Parser {
     } else {
       this.append(el as unknown as XmlElement);
     }
-    if (!selfClosing) this.stack.push(el);
+    if (selfClosing) this.popDecls(decls);
+    else { this.stack.push(el); this.declStack.push(decls); }
     this.pos = stEnd;
   }
 
-  private resolveAttrs(attrs: AttrImpl[], scope: Scope, lt: number): void {
+  private resolveAttrs(attrs: AttrImpl[], lt: number): void {
     let qualified = false;
     for (let k = 0; k < attrs.length; k++) {
       const a = attrs[k];
@@ -499,12 +600,13 @@ class Parser {
       const p = n.slice(0, colon);
       let u: string | undefined;
       if (p === 'xmlns') u = XMLNS_NS;
-      else u = lookupNs(scope, p);
+      else u = this.resolve(p);
       if (u === undefined) throw new XmlError('malformed', `unbound namespace prefix "${p}" on attribute "${n}"`, lt);
       attrs[k] = { ...a, ns: u, local: n.slice(colon + 1) };
       qualified = true;
     }
-    if (qualified) {
+    if (!qualified) return;   // raw names are already unique
+    if (attrs.length <= SMALL_ATTR_COUNT) {
       for (let x = 0; x < attrs.length; x++) {
         for (let y = x + 1; y < attrs.length; y++) {
           if (attrs[x].ns === attrs[y].ns && attrs[x].local === attrs[y].local) {
@@ -512,6 +614,13 @@ class Parser {
           }
         }
       }
+      return;
+    }
+    const expanded = new Set<string>();
+    for (const a of attrs) {
+      const key = '{' + a.ns + '}' + a.local;   // '}' cannot occur in a local name
+      if (expanded.has(key)) throw new XmlError('malformed', `duplicate attribute ${key}`, lt);
+      expanded.add(key);
     }
   }
 
@@ -552,15 +661,21 @@ export async function parseXmlAsync(text: string, yieldEveryMs: number = LIMITS.
   return p.doc();
 }
 
-function parseFragmentIn(xml: string, scope: Scope, parent: XmlElement | null): XmlNode[] {
-  const p = new Parser(xml, true, scope, parent);
+function depthOf(el: XmlElement): number {
+  let d = 0;
+  for (let p: XmlElement | null = el; p; p = p.parent) d++;
+  return d;
+}
+
+function parseFragmentIn(xml: string, scope: Scope, parent: XmlElement | null, baseDepth: number): XmlNode[] {
+  const p = new Parser(xml, true, scope, parent, baseDepth);
   p.run(Infinity);
   return p.out;
 }
 
 /** Parse a fragment with the root's namespace bindings in scope. The nodes are detached (parent null). */
 export function parseFragment(doc: XmlDoc, xml: string): XmlNode[] {
-  return parseFragmentIn(xml, impl(doc.root)._scope, null);
+  return parseFragmentIn(xml, impl(doc.root)._scope, null, 1);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -576,23 +691,38 @@ function buildStartTag(el: ElImpl): string {
   return s + el._src.slice(el._tailStart, el._stEnd);
 }
 
-function serializeEl(el: ElImpl): string {
-  if (!el._dirty && !el._tagDirty) return el._src.slice(el._s, el._e);
-  const start = el._tagDirty ? buildStartTag(el) : el._src.slice(el._s, el._stEnd);
-  if (!el._dirty) return start + el._src.slice(el._stEnd, el._e);
-  const selfClosingSrc = el._et < 0;
-  const kids = el.children;
-  if (kids.length === 0) return selfClosingSrc ? start : start + el._src.slice(el._et, el._e);
-  const parts: string[] = new Array(kids.length + 2);
-  // A self-closing element that gained children opens with `>` and gets a plain end tag; once it is
-  // empty again it serialises in its original `/>` form.
-  parts[0] = selfClosingSrc ? start.slice(0, -2) + '>' : start;
-  for (let k = 0; k < kids.length; k++) {
-    const n = kids[k];
-    parts[k + 1] = n.type === 'el' ? serializeEl(impl(n)) : n.raw;
+/**
+ * Iterative (an explicit stack, no recursion), so a deep tree built through insertAt cannot overflow
+ * the call stack. Only dirty elements are descended into; clean subtrees are one source slice.
+ */
+function serializeEl(root: ElImpl): string {
+  const out: string[] = [];
+  const stack: { el: ElImpl; k: number }[] = [];
+  /** Emit `el`, or its start tag and push it when its children must be emitted one by one. */
+  const open = (el: ElImpl): void => {
+    if (!el._dirty && !el._tagDirty) { out.push(el._src.slice(el._s, el._e)); return; }
+    const start = el._tagDirty ? buildStartTag(el) : el._src.slice(el._s, el._stEnd);
+    if (!el._dirty) { out.push(start + el._src.slice(el._stEnd, el._e)); return; }
+    const selfClosingSrc = el._et < 0;
+    if (el.children.length === 0) { out.push(selfClosingSrc ? start : start + el._src.slice(el._et, el._e)); return; }
+    // A self-closing element that gained children opens with `>` and gets a plain end tag; once it is
+    // empty again it serialises in its original `/>` form.
+    out.push(selfClosingSrc ? start.slice(0, -2) + '>' : start);
+    stack.push({ el, k: 0 });
+  };
+  open(root);
+  while (stack.length > 0) {
+    const f = stack[stack.length - 1];
+    const kids = f.el.children;
+    if (f.k < kids.length) {
+      const n = kids[f.k++];
+      if (n.type === 'el') open(impl(n)); else out.push(n.raw);
+    } else {
+      stack.pop();
+      out.push(f.el._et < 0 ? '</' + f.el.rawName + '>' : f.el._src.slice(f.el._et, f.el._e));
+    }
   }
-  parts[kids.length + 1] = selfClosingSrc ? '</' + el.rawName + '>' : el._src.slice(el._et, el._e);
-  return parts.join('');
+  return out.join('');
 }
 
 /** Serialise a document or node. An unmodified node serialises as its exact source slice. */
@@ -621,23 +751,79 @@ function checkIndex(parent: XmlElement, index: number, allowEnd: boolean): void 
   }
 }
 
-/** Replace `target` with the nodes parsed from `xml` (may be empty: removal). Marks ancestors modified. */
-export function replaceNode(target: XmlNode, xml: string): XmlNode[] {
+/** Options for `insertAt` / `replaceNode`. */
+export interface FragmentOptions {
+  /**
+   * The fragment's names were chosen for the root's bindings (with `qname`). Require every element
+   * and attribute of it to resolve at the insertion site to the same namespace as at the root;
+   * throws XmlScopeError (and changes nothing) when a prefix is redeclared or unbound in between or
+   * the default namespace differs. Without it, the fragment is simply parsed in the insertion
+   * site's scope (right for re-inserting source text that came from that site, e.g. undo).
+   */
+  readonly rootScoped?: boolean;
+}
+
+/** Elements and attributes of `nodes` in document order, as [rawName, ns] pairs. */
+function namesOf(nodes: readonly XmlNode[]): [string, string][] {
+  const out: [string, string][] = [];
+  const stack: XmlNode[] = [];
+  for (let k = nodes.length - 1; k >= 0; k--) stack.push(nodes[k]);
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (n.type !== 'el') continue;
+    out.push([n.rawName, n.ns]);
+    for (const a of n.attrs) out.push([a.rawName, a.ns]);
+    for (let k = n.children.length - 1; k >= 0; k--) stack.push(n.children[k]);
+  }
+  return out;
+}
+
+/** Throw XmlScopeError unless `xml` (already parsed at the site as `nodes`) means the same at the root. */
+function checkRootScoped(parent: XmlElement, xml: string, nodes: readonly XmlNode[]): void {
+  let root: XmlElement = parent;
+  while (root.parent) root = root.parent;
+  const rootScope = impl(root)._scope;
+  if (impl(parent)._scope === rootScope) return;   // same bindings: nothing can differ
+  let atRoot: XmlNode[];
+  try {
+    atRoot = parseFragmentIn(xml, rootScope, null, 1);
+  } catch (e) {
+    // It parsed at the site, so the only thing that can fail at the root is an unbound prefix.
+    if (e instanceof XmlError) throw new XmlScopeError('', '', '', `fragment is not expressible with the root's namespace bindings: ${e.message}`);
+    throw e;
+  }
+  const a = namesOf(atRoot);
+  const b = namesOf(nodes);
+  for (let k = 0; k < b.length; k++) {
+    if (a[k][1] !== b[k][1]) throw new XmlScopeError(b[k][0], a[k][1], b[k][1]);
+  }
+}
+
+/**
+ * Replace `target` with the nodes parsed from `xml` (may be empty: removal). Marks ancestors modified.
+ * `xml` is parsed in the parent's scope; see FragmentOptions.rootScoped.
+ */
+export function replaceNode(target: XmlNode, xml: string, opts?: FragmentOptions): XmlNode[] {
   const parent = target.parent;
   if (!parent) throw new Error('replaceNode: the node has no parent (the root element cannot be replaced)');
   const index = parent.children.indexOf(target);
   if (index < 0) throw new Error('replaceNode: the node is not a child of its parent');
-  const nodes = parseFragmentIn(xml, impl(parent)._scope, parent);
+  const nodes = parseFragmentIn(xml, impl(parent)._scope, parent, depthOf(parent));
+  if (opts?.rootScoped) checkRootScoped(parent, xml, nodes);
   parent.children.splice(index, 1, ...nodes);
   target.parent = null;
   markDirty(parent);
   return nodes;
 }
 
-/** Insert the nodes parsed from `xml` before child `childIndex` (or at the end). No whitespace is added. */
-export function insertAt(parent: XmlElement, childIndex: number, xml: string): XmlNode[] {
+/**
+ * Insert the nodes parsed from `xml` before child `childIndex` (or at the end). No whitespace is added.
+ * `xml` is parsed in the parent's scope; see FragmentOptions.rootScoped.
+ */
+export function insertAt(parent: XmlElement, childIndex: number, xml: string, opts?: FragmentOptions): XmlNode[] {
   checkIndex(parent, childIndex, true);
-  const nodes = parseFragmentIn(xml, impl(parent)._scope, parent);
+  const nodes = parseFragmentIn(xml, impl(parent)._scope, parent, depthOf(parent));
+  if (opts?.rootScoped) checkRootScoped(parent, xml, nodes);
   if (nodes.length === 0) return nodes;
   parent.children.splice(childIndex, 0, ...nodes);
   markDirty(parent);
@@ -667,12 +853,14 @@ function sameAttrs(a: readonly XmlAttr[], b: readonly XmlAttr[]): boolean {
  * other attributes keep their order, quote style, whitespace and raw text. An attribute that existed at
  * parse time and is set back to its original value gets its original raw text and position back, and
  * once every attribute is back to its parsed state the start tag is emitted from the source again (G5).
- * Throws if `ns` is not bound to a prefix in scope (namespaced attributes need a prefix) or is the
- * xmlns namespace (declarations are never edited).
+ * Throws if `local` is not an NCName (no colon: the prefix comes from `ns`), if `ns` is not bound to a
+ * prefix in scope (namespaced attributes need a prefix), or for a namespace declaration (`ns` the
+ * xmlns namespace, or unqualified `xmlns`): declarations are never edited.
  */
 export function setAttr(el: XmlElement, ns: string, local: string, value: string | null): void {
   const e = impl(el);
-  if (ns === XMLNS_NS) throw new Error('setAttr: namespace declarations cannot be edited');
+  if (!isNcName(local)) throw new Error(`setAttr: "${local}" is not a valid attribute local name (NCName)`);
+  if (ns === XMLNS_NS || (ns === '' && local === 'xmlns')) throw new Error('setAttr: namespace declarations cannot be edited');
   const attrs = el.attrs;
   const idx = attrs.findIndex((a) => a.ns === ns && a.local === local);
   if (value === null ? idx < 0 : idx >= 0 && attrs[idx].value === value) return;   // no change
@@ -723,14 +911,26 @@ function rebuildAttr(a: AttrImpl, value: string): AttrImpl {
   return { rawName: a.rawName, ns: a.ns, local: a.local, value, raw: a.raw.slice(0, open + 1) + escapeAttrFor(value, quote) + quote, pre: a.pre };
 }
 
-/** A non-default prefix bound to `ns` in `scope` and not shadowed by an inner declaration. */
+/** A non-default prefix bound to `ns` in `scope` and not shadowed by an inner declaration. O(declarations in scope). */
 function prefixFor(scope: Scope, ns: string): string | undefined {
+  const shadowed = new Set<string>();   // prefixes already bound by an inner scope
   for (let s: Scope | null = scope; s; s = s.parent) {
     for (const [p, u] of s.map) {
-      if (p !== '' && u === ns && lookupNs(scope, p) === ns) return p;
+      if (shadowed.has(p)) continue;
+      if (p !== '' && u === ns) return p;
+      shadowed.add(p);
     }
   }
   return undefined;
+}
+
+const NC_START = 'A-Z_a-z\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D'
+  + '\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD\\u{10000}-\\u{EFFFF}';
+const NC_NAME = new RegExp(`^[${NC_START}][${NC_START}\\-.0-9\\u00B7\\u0300-\\u036F\\u203F-\\u2040]*$`, 'u');
+
+/** XML Namespaces NCName: an XML Name without colons. */
+function isNcName(s: string): boolean {
+  return NC_NAME.test(s);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -799,7 +999,20 @@ export function textContent(el: XmlElement): string {
  * at the root (the part is then not editable, §3.3).
  */
 export function qname(doc: XmlDoc, ns: string, local: string): string | undefined {
-  const scope = impl(doc.root)._scope;
+  return qnameIn(impl(doc.root)._scope, ns, local);
+}
+
+/**
+ * As `qname`, but for a new child of `parent`: uses the bindings in scope at `parent` (its own
+ * declarations and its ancestors'), so the name means `ns` there even where a prefix is redeclared or
+ * the default namespace is changed below the root. Undefined when `ns` cannot be written there without
+ * adding a declaration.
+ */
+export function qnameAt(parent: XmlElement, ns: string, local: string): string | undefined {
+  return qnameIn(impl(parent)._scope, ns, local);
+}
+
+function qnameIn(scope: Scope, ns: string, local: string): string | undefined {
   const def = lookupNs(scope, '') ?? '';
   if (def === ns) return local;
   if (ns === '') return undefined;

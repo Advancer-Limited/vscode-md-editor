@@ -109,10 +109,14 @@ function getCrcTable(): Uint32Array {
 }
 
 export function crc32(data: Uint8Array): number {
+  return (crc32Update(0xffffffff, data, 0, data.length) ^ 0xffffffff) >>> 0;
+}
+
+/** Running CRC register over data[from, to): start with 0xffffffff, finish with (c ^ 0xffffffff) >>> 0. */
+function crc32Update(c: number, data: Uint8Array, from: number, to: number): number {
   const t = getCrcTable();
-  let c = 0xffffffff;
-  for (let i = 0; i < data.length; i++) c = t[(c ^ data[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
+  for (let i = from; i < to; i++) c = t[(c ^ data[i]) & 0xff] ^ (c >>> 8);
+  return c;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -122,8 +126,106 @@ export function rawDeflate(data: Uint8Array, level: 1 | 6): Uint8Array {
   return deflateSync(data, { level });
 }
 
-/** Input slice size for bounded inflation: limits work done per step when `expectedSize` is given. */
+/** Largest input slice per step of bounded inflation (when `expectedSize` is given). */
 const INFLATE_STEP = 64 * 1024;
+/** Deflate's maximum expansion: one input byte can produce at most ~1032 output bytes. */
+const DEFLATE_MAX_RATIO = 1032;
+/**
+ * Extra input bytes allowed per step beyond what the outstanding output needs at the maximum ratio.
+ * Bounds the output of one step past the declared size to about INFLATE_SLACK * DEFLATE_MAX_RATIO
+ * (~4 MB). Smaller values cost throughput (more, smaller pushes): measured on a 20 MB XML entry,
+ * 4 KB is as fast as fixed 64 KB steps, 1 KB about 30 % slower.
+ */
+const INFLATE_SLACK = 4096;
+
+/**
+ * Inflation bounded by a declared size, pushed through fflate's streaming Inflate in steps whose input
+ * is capped so that even at the maximum deflate ratio a step cannot produce much more than the output
+ * still outstanding. A bomb is therefore refused after a few MB of overshoot instead of after a whole
+ * 64 KB slice (~64 MB). Normal entries still use 64 KB steps until they are close to their end.
+ */
+class BoundedInflate {
+  /** Chunks, not a buffer of `expectedSize`: the size is untrusted, memory follows the data produced. */
+  private readonly chunks: Uint8Array[] = [];
+  private written = 0;
+  private ended = false;
+  private pos = 0;
+  private started = false;
+  private readonly inf: Inflate;
+  private readonly data: Uint8Array;
+  private readonly expectedSize: number;
+
+  constructor(data: Uint8Array, expectedSize: number) {
+    if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) {
+      throw new ZipError('bad-data', `Invalid expected size ${expectedSize}`);
+    }
+    this.data = data;
+    this.expectedSize = expectedSize;
+    this.inf = new Inflate((chunk: Uint8Array, final: boolean) => {
+      if (this.written + chunk.length > expectedSize) {
+        throw new ZipError('bad-data', `Inflated data exceeds the declared size of ${expectedSize} bytes`);
+      }
+      if (chunk.length) this.chunks.push(chunk);
+      this.written += chunk.length;
+      if (final) this.ended = true;
+    });
+  }
+
+  /**
+   * Push input until it is exhausted or at least `want` bytes are out (returns true), or until
+   * `deadline` (Date.now() ms) passes (returns false: call again). Throws ZipError('bad-data').
+   */
+  run(want: number, deadline: number): boolean {
+    const data = this.data;
+    try {
+      if (data.length === 0) {
+        if (!this.started) { this.started = true; this.inf.push(data, true); }
+        return true;
+      }
+      const target = Math.min(want, this.expectedSize);
+      while (this.pos < data.length) {
+        if (this.written >= want) return true;
+        if (this.started && Date.now() >= deadline) return false;
+        this.started = true;
+        const need = Math.ceil(Math.max(0, target - this.written) / DEFLATE_MAX_RATIO) + INFLATE_SLACK;
+        const end = Math.min(this.pos + Math.min(INFLATE_STEP, need), data.length);
+        this.inf.push(data.subarray(this.pos, end), end === data.length);
+        this.pos = end;
+      }
+    } catch (e) {
+      if (e instanceof ZipError) throw e;
+      throw new ZipError('bad-data', `Invalid deflate data: ${errText(e)}`);
+    }
+    return true;
+  }
+
+  /** The complete output; throws ZipError('bad-data') unless the stream ended at exactly `expectedSize`. */
+  result(): Uint8Array {
+    if (!this.ended || this.written !== this.expectedSize) {
+      throw new ZipError('bad-data', `Inflated ${this.written} bytes, expected ${this.expectedSize}`);
+    }
+    return this.concat(this.expectedSize);
+  }
+
+  /** The first `max` bytes produced so far (fewer if fewer were produced). */
+  prefix(max: number): Uint8Array {
+    return this.concat(Math.min(max, this.written));
+  }
+
+  private concat(n: number): Uint8Array {
+    const chunks = this.chunks;
+    if (chunks.length === 1 && chunks[0].length === n) return chunks[0];
+    const out = new Uint8Array(n);
+    let w = 0;
+    for (const c of chunks) {
+      if (w >= n) break;
+      const take = Math.min(c.length, n - w);
+      out.set(take === c.length ? c : c.subarray(0, take), w);
+      w += take;
+    }
+    return out;
+  }
+}
 
 /**
  * Raw-inflate `data`. With `expectedSize`, the output MUST be exactly that long: inflation stops as
@@ -138,43 +240,9 @@ export function rawInflate(data: Uint8Array, expectedSize?: number): Uint8Array 
       throw new ZipError('bad-data', `Invalid deflate data: ${errText(e)}`);
     }
   }
-  if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) {
-    throw new ZipError('bad-data', `Invalid expected size ${expectedSize}`);
-  }
-  // Chunks are collected rather than writing into a buffer of `expectedSize`: the declared size is
-  // untrusted, so memory follows the data actually produced, never the claim.
-  const chunks: Uint8Array[] = [];
-  let written = 0;
-  let ended = false;
-  const inf = new Inflate((chunk: Uint8Array, final: boolean) => {
-    if (written + chunk.length > expectedSize) {
-      throw new ZipError('bad-data', `Inflated data exceeds the declared size of ${expectedSize} bytes`);
-    }
-    if (chunk.length) chunks.push(chunk);
-    written += chunk.length;
-    if (final) ended = true;
-  });
-  try {
-    if (data.length === 0) {
-      inf.push(data, true);
-    } else {
-      for (let pos = 0; pos < data.length; pos += INFLATE_STEP) {
-        const end = Math.min(pos + INFLATE_STEP, data.length);
-        inf.push(data.subarray(pos, end), end === data.length);
-      }
-    }
-  } catch (e) {
-    if (e instanceof ZipError) throw e;
-    throw new ZipError('bad-data', `Invalid deflate data: ${errText(e)}`);
-  }
-  if (!ended || written !== expectedSize) {
-    throw new ZipError('bad-data', `Inflated ${written} bytes, expected ${expectedSize}`);
-  }
-  if (chunks.length === 1 && chunks[0].length === expectedSize) return chunks[0];
-  const out = new Uint8Array(expectedSize);
-  let w = 0;
-  for (const c of chunks) { out.set(c, w); w += c.length; }
-  return out;
+  const b = new BoundedInflate(data, expectedSize);
+  b.run(Infinity, Infinity);
+  return b.result();
 }
 
 function errText(e: unknown): string {
@@ -473,6 +541,70 @@ function memberSet(zip: ZipArchive): Set<ZipEntry> {
 
 function assertMember(zip: ZipArchive, entry: ZipEntry): void {
   if (!memberSet(zip).has(entry)) throw new Error('ZIP entry does not belong to this archive');
+}
+
+function entryData(zip: ZipArchive, entry: ZipEntry): Uint8Array {
+  assertMember(zip, entry);
+  const start = dataOffset(zip.bytes, entry);
+  return zip.bytes.subarray(start, start + entry.compressedSize);
+}
+
+function withName<T>(entry: ZipEntry, f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof ZipError && e.entryName === undefined) throw new ZipError(e.code, e.message, entry.name);
+    throw e;
+  }
+}
+
+/**
+ * The first `maxBytes` bytes of an entry's data (fewer if the entry is shorter), inflating only about
+ * that much (bounded work and memory, whatever the entry's size). No CRC check: the data is partial.
+ * Throws ZipError('bad-data') for a malformed stream or output beyond the declared size.
+ */
+export function inflateEntryPrefix(zip: ZipArchive, entry: ZipEntry, maxBytes: number): Uint8Array {
+  const raw = entryData(zip, entry);
+  if (entry.method === 0) return raw.slice(0, Math.min(maxBytes, raw.length));
+  return withName(entry, () => {
+    const b = new BoundedInflate(raw, entry.uncompressedSize);
+    b.run(maxBytes, Infinity);
+    return b.prefix(maxBytes);
+  });
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof setImmediate === 'function') setImmediate(resolve);
+    else setTimeout(resolve, 0);
+  });
+}
+
+/** CRC-32 bytes processed between deadline checks in `inflateEntryAsync`. */
+const CRC_SLICE = 1024 * 1024;
+
+/**
+ * As `inflateEntry`, yielding to the event loop at least every `yieldEveryMs` ms while inflating and
+ * checking the CRC (spec 10.2: host-side work on large parts must not block). Rejects with ZipError.
+ */
+export async function inflateEntryAsync(zip: ZipArchive, entry: ZipEntry, yieldEveryMs: number): Promise<Uint8Array> {
+  const raw = entryData(zip, entry);
+  let out: Uint8Array;
+  if (entry.method === 0) {
+    out = raw.slice();
+  } else {
+    const b = withName(entry, () => new BoundedInflate(raw, entry.uncompressedSize));
+    while (!withName(entry, () => b.run(Infinity, Date.now() + yieldEveryMs))) await yieldToEventLoop();
+    out = withName(entry, () => b.result());
+  }
+  let c = 0xffffffff;
+  let deadline = Date.now() + yieldEveryMs;
+  for (let pos = 0; pos < out.length; pos += CRC_SLICE) {
+    if (Date.now() >= deadline) { await yieldToEventLoop(); deadline = Date.now() + yieldEveryMs; }
+    c = crc32Update(c, out, pos, Math.min(pos + CRC_SLICE, out.length));
+  }
+  if (((c ^ 0xffffffff) >>> 0) !== entry.crc32) throw new ZipError('bad-crc', 'CRC-32 mismatch', entry.name);
+  return out;
 }
 
 export function inflateEntry(zip: ZipArchive, entry: ZipEntry): Uint8Array {

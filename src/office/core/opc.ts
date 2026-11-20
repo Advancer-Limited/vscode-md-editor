@@ -30,13 +30,19 @@ export function normalizePartName(part: string): string {
 /**
  * Resolve a relationship target to a part name. `sourcePart` '' is the package root. An absolute
  * target ('/x/y.xml') is taken from the package root; a relative one from the source part's folder.
- * '.' and '..' segments are applied; a target that climbs above the package root throws.
+ * '.' and '..' segments are applied; a target that climbs above the package root throws. A '#fragment'
+ * is dropped; a target that is empty after that ('#frag') names the source part itself.
  */
 export function partNameFromTarget(sourcePart: string, target: string): string {
   let t = target;
   const hash = t.indexOf('#');
   if (hash >= 0) t = t.slice(0, hash);
   const src = normalizePartName(sourcePart);
+  // An empty reference ('' or '#fragment' alone) is a same-document reference: the source part itself.
+  if (t === '') {
+    if (src === '') throw new Error(`Relationship target "${target}" does not name a part`);
+    return src;
+  }
   const base = t.startsWith('/') ? [] : src.split('/').slice(0, -1);
   const segs = base.slice();
   for (const seg of t.split('/')) {

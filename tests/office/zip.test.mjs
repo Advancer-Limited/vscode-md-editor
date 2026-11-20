@@ -799,3 +799,81 @@ test('entries tile the archive: extents are contiguous from 0 to the central dir
     }
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// Gate R0 regressions
+
+test('R0: bounded rawInflate refuses a bomb after a few MB, not after a whole 64 KB input step', async () => {
+  // Fresh process so maxRSS reflects only this inflation. The bomb (128 MB of zeros, ~128 KB
+  // compressed) is built with streaming zlib so building it does not raise the peak itself.
+  // Before the fix one 64 KB input step inflated to ~64 MB (plus buffer growth) before the declared
+  // size was enforced: +100 MB or more of peak RSS; now about +20 MB.
+  const { execFileSync } = await import('node:child_process');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const bundle = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.build', 'office-core.cjs');
+  const script = `
+    (async () => {
+    const zlib = require('zlib');
+    const parts = [];
+    const d = zlib.createDeflateRaw({ level: 6 });
+    d.on('data', (c) => parts.push(c));
+    const done = new Promise((r) => d.on('end', r));
+    const zeros = Buffer.alloc(1 << 20);
+    for (let i = 0; i < 128; i++) d.write(zeros);
+    d.end();
+    await done;
+    const bomb = new Uint8Array(Buffer.concat(parts));
+    const z = require(${JSON.stringify(bundle)}).zip;
+    const r0 = process.resourceUsage().maxRSS;
+    const t0 = performance.now();
+    let code = 'none';
+    try { z.rawInflate(bomb, 100); } catch (e) { code = e.code; }
+    process.stdout.write(JSON.stringify({ code, ms: performance.now() - t0, rssMB: (process.resourceUsage().maxRSS - r0) / 1024 }));
+    })();`;
+  const r = JSON.parse(execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: process.cwd() }));
+  assert.strictEqual(r.code, 'bad-data');
+  assert.ok(r.rssMB < 48, `peak RSS grew by ${r.rssMB.toFixed(1)} MB`);
+  assert.ok(r.ms < 2000, `${r.ms.toFixed(0)} ms`);
+});
+
+test('R0: bounded inflation keeps exact sizes at step boundaries', () => {
+  // Sizes around the step arithmetic: tiny, one step, many steps, incompressible.
+  const rnd = (n) => { const b = new Uint8Array(n); let s = 1; for (let i = 0; i < n; i++) { s = (s * 1103515245 + 12345) >>> 0; b[i] = s >>> 24; } return b; };
+  for (const data of [new Uint8Array(0), enc.encode('x'), new Uint8Array(5_000_000), rnd(300_000), enc.encode('<c r="A1"><v>1</v></c>'.repeat(200_000))]) {
+    const packed = rawDeflate(data, 6);
+    assertBytesEqual(rawInflate(packed, data.length), data, `size ${data.length}`);
+    if (data.length > 0) {
+      assert.throws(() => rawInflate(packed, data.length - 1), (e) => e instanceof ZipError && e.code === 'bad-data');
+      assert.throws(() => rawInflate(packed, data.length + 1), (e) => e instanceof ZipError && e.code === 'bad-data');
+    }
+  }
+});
+
+test('R0: inflateEntryPrefix inflates only the prefix; inflateEntryAsync equals inflateEntry', async () => {
+  const { inflateEntryPrefix, inflateEntryAsync } = core.zip;
+  const big = enc.encode('<row r="1"><c><v>12345</v></c></row>'.repeat(300_000));   // ~10 MB
+  const zip = readZip(fflate.zipSync({ 'big.xml': [big, { level: 6 }], 'stored.xml': [big.subarray(0, 100_000), { level: 0 }] }), LIMITS);
+  const [e, stored] = zip.entries;
+  assertBytesEqual(inflateEntryPrefix(zip, e, 65536), big.subarray(0, 65536), 'deflated prefix');
+  assertBytesEqual(inflateEntryPrefix(zip, stored, 1000), big.subarray(0, 1000), 'stored prefix');
+  assert.strictEqual(inflateEntryPrefix(zip, stored, 1 << 20).length, 100_000, 'shorter than asked');
+  // Corrupting the tail of the compressed data does not affect a prefix read (it is never reached).
+  const bytes = zip.bytes.slice();
+  const dataStart = e.extent[0] + 30 + u16(bytes, e.extent[0] + 26) + u16(bytes, e.extent[0] + 28);
+  for (let i = dataStart + e.compressedSize - 200; i < dataStart + e.compressedSize - 10; i++) bytes[i] ^= 0x5a;
+  const bad = readZip(bytes, LIMITS);
+  assertBytesEqual(inflateEntryPrefix(bad, bad.entries[0], 65536), big.subarray(0, 65536), 'prefix of a damaged entry');
+  assert.throws(() => inflateEntry(bad, bad.entries[0]), (err) => err instanceof ZipError && (err.code === 'bad-data' || err.code === 'bad-crc'));
+
+  // Async: same bytes, yields at least once on ~10 MB, rejects (never throws synchronously) on damage.
+  let ticks = 0;
+  const iv = setInterval(() => ticks++, 0);
+  try {
+    assertBytesEqual(await inflateEntryAsync(zip, e, 5), big, 'async');
+  } finally { clearInterval(iv); }
+  assert.ok(ticks > 0, 'the event loop ran during inflateEntryAsync');
+  assertBytesEqual(await inflateEntryAsync(zip, stored, 5), big.subarray(0, 100_000), 'async stored');
+  const p = inflateEntryAsync(bad, bad.entries[0], 5);
+  await assert.rejects(p, (err) => err instanceof ZipError && err.entryName === 'big.xml');
+});

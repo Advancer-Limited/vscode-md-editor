@@ -223,6 +223,8 @@ export interface ZipArchive { readonly bytes: Uint8Array; readonly entries: read
 export interface ZipLimits { maxFileBytes: number; maxTotalUncompressed: number; maxEntryUncompressed: number; }
 export function readZip(bytes: Uint8Array, limits: ZipLimits): ZipArchive;             // throws ZipError; inflates nothing
 export function inflateEntry(zip: ZipArchive, entry: ZipEntry): Uint8Array;            // verifies CRC-32, throws 'bad-crc'
+export function inflateEntryAsync(zip: ZipArchive, entry: ZipEntry, yieldEveryMs: number): Promise<Uint8Array>;  // as inflateEntry, yields (§10.2) [R0]
+export function inflateEntryPrefix(zip: ZipArchive, entry: ZipEntry, maxBytes: number): Uint8Array;  // first maxBytes only, bounded work, no CRC [R0]
 export type ZipWriteItem = { keep: ZipEntry } | { replace: ZipEntry; data: Uint8Array } | { add: string; data: Uint8Array };
 export function writeZip(zip: ZipArchive, items: ZipWriteItem[]): Uint8Array;          // items in output order; omitted = removed
 export function rawDeflate(data: Uint8Array, level: 1 | 6): Uint8Array;
@@ -250,6 +252,8 @@ export function crc32(data: Uint8Array): number;
 
 ```ts
 export class XmlError extends Error { readonly code: 'doctype' | 'malformed' | 'encoding'; readonly offset: number; }
+export class XmlScopeError extends Error { readonly rawName: string; readonly expectedNs: string; readonly actualNs: string; }  // [R0] -> unsupported-xml-layout
+export interface FragmentOptions { readonly rootScoped?: boolean; }   // [R0] names built with qname(): must mean the same at the site as at the root
 export interface XmlAttr { readonly rawName: string; readonly ns: string; readonly local: string; value: string; /* decoded */ readonly raw: string; }
 export interface XmlElement { readonly type: 'el'; readonly ns: string; readonly local: string; readonly rawName: string;
   attrs: XmlAttr[]; children: XmlNode[]; parent: XmlElement | null; }
@@ -257,15 +261,16 @@ export interface XmlText { readonly type: 'text' | 'cdata' | 'comment' | 'pi'; r
 export type XmlNode = XmlElement | XmlText;
 export interface XmlDoc { readonly root: XmlElement; }                      // prolog/epilog kept internally
 export function decodePart(bytes: Uint8Array): { text: string; encoding: 'utf-8' | 'utf-16'; bom: boolean };
+export function decodePartPrefix(bytes: Uint8Array): { text: string; encoding: 'utf-8' | 'utf-16'; bom: boolean };  // [R0] a cut-off trailing sequence is not an error
 export function encodePart(text: string, bom: boolean): Uint8Array;          // UTF-8 only
 export function parseXml(text: string): XmlDoc;
 export function parseXmlAsync(text: string, yieldEveryMs?: number): Promise<XmlDoc>;   // yields to the event loop (§10.2)
 export function serialize(node: XmlDoc | XmlNode): string;                   // unmodified node => its source slice
 export function parseFragment(doc: XmlDoc, xml: string): XmlNode[];          // parsed with the root's namespace bindings in scope
-export function replaceNode(target: XmlNode, xml: string): XmlNode[];        // marks ancestors modified
-export function insertAt(parent: XmlElement, childIndex: number, xml: string): XmlNode[];  // no whitespace added
+export function replaceNode(target: XmlNode, xml: string, opts?: FragmentOptions): XmlNode[];  // marks ancestors modified; parsed in the parent's scope
+export function insertAt(parent: XmlElement, childIndex: number, xml: string, opts?: FragmentOptions): XmlNode[];  // no whitespace added; parent's scope
 export function removeAt(parent: XmlElement, childIndex: number): string;    // returns removed source; never merges text nodes
-export function setAttr(el: XmlElement, ns: string, local: string, value: string | null): void;  // rewrites only the start tag
+export function setAttr(el: XmlElement, ns: string, local: string, value: string | null): void;  // rewrites only the start tag; local must be an NCName, never xmlns
 export function pathOf(node: XmlNode): number[];                             // child-node indexes from root (all node kinds)
 export function nodeAt(doc: XmlDoc, path: readonly number[]): XmlNode | undefined;
 export function child(el: XmlElement, ns: string, local: string): XmlElement | undefined;
@@ -273,6 +278,7 @@ export function childrenOf(el: XmlElement, ns: string, local: string): XmlElemen
 export function attr(el: XmlElement, ns: string, local: string): string | undefined;   // ns '' = unqualified
 export function textContent(el: XmlElement): string;
 export function qname(doc: XmlDoc, ns: string, local: string): string | undefined;     // prefix bound at the root, else undefined
+export function qnameAt(parent: XmlElement, ns: string, local: string): string | undefined;  // [R0] same, from parent's in-scope bindings
 export function escapeText(s: string): string; export function escapeAttr(s: string): string;
 export function stripIllegalXmlChars(s: string): string;
 ```
@@ -316,6 +322,7 @@ export class OfficePackage {
   static open(fileName: string, bytes: Uint8Array): OfficePackage;                     // throws OfficeLoadError
   readonly kind: OfficeKind; readonly originalBytes: Uint8Array; readonly viewOnlyReason: ReadOnlyReason | null;
   partNames(): string[]; has(part: string): boolean;                                   // case-insensitive lookup, original case kept
+  partSize(part: string): { compressed: number; uncompressed: number } | undefined;    // [R0] declared CD sizes; undefined if missing/created/deleted
   bytes(part: string): Uint8Array; text(part: string): string;
   xml(part: string): XmlDoc; xmlAsync(part: string): Promise<XmlDoc>;                  // lazy, cached
   touch(part: string): void;                                                           // mark an XML part modified
