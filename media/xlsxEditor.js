@@ -847,6 +847,12 @@
         onCellClick,
       });
       shell.gridApi = gridApi;
+      // VS Code swaps body classes (vscode-light/-dark/-high-contrast) on a live theme change;
+      // the grid caches resolved theme colours, so tell it to recompute.
+      if (typeof MutationObserver === 'function' && document.body) {
+        new MutationObserver(() => { if (gridApi && gridApi.refreshTheme) { gridApi.refreshTheme(); } })
+          .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      }
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('mousedown', (ev) => {
         if (openMenuEl && !(ev.target && openMenuEl.contains && openMenuEl.contains(ev.target))) {
