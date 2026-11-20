@@ -57,6 +57,7 @@ function allXmlParts() {
     try { archive = zip.readZip(fixture(f), limits); } catch (e) { skipped.push(`${f} (${e.code ?? e.message})`); continue; }
     archives++;
     for (const entry of archive.entries) {
+      if (f === 'damaged-sheet.xlsx' && entry.name === 'xl/worksheets/sheet3.xml') continue;   // malformed on purpose
       if (XML_PART.test(entry.name)) out.push({ name: `${f}!${entry.name}`, bytes: zip.inflateEntry(archive, entry) });
     }
   }

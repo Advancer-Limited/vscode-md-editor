@@ -69,7 +69,7 @@ Open each file from the Explorer by clicking it (it should open in "Word Documen
 - [ ] **X9 [must] Sheet tabs.** Tab buttons switch sheets; arrow keys move between tabs; Ctrl+PageUp/Ctrl+PageDown switch sheets from the grid and are not swallowed by VS Code; many-sheet tab strips scroll. Switching back keeps the earlier selection/scroll sensibly.
 - [ ] **X10 [must] `fx/date1904.xlsx`.** Dates match what Excel shows (the 1904 date system is honoured; they must not be off by 4 years and 1 day).
 - [ ] **X11 [must] Open-all sweep, Excel.** Each opens to a view and none shows an error view or a blank grid: `tables.xlsx`, `protected-sheet.xlsx` and `protected-structure.xlsx` (viewing allowed), `inline-strings.xlsx`, `no-shared-strings.xlsx`, `no-styles.xlsx`, `prefixed-namespaces.xlsx`, `data-descriptors.xlsx`, `no-date-style.xlsx`, `no-date-style-nocount.xlsx`. (The synthetic ones have minimal styling; content is what matters.)
-- [ ] **X12 [nice] Hidden sheets and chart sheets.** No committed fixture has a hidden sheet or a chartsheet. If you have one (or hide a sheet in a copy of `basic.xlsx` in Excel): the hidden sheet is reachable from the "Hidden sheets" menu and then shows a temporary tab; a chartsheet shows a "not displayed" placeholder with **Open in Excel**.
+- [ ] **X12 [nice] Hidden sheets, chart sheets and a damaged sheet.** Open `fx/hidden-sheets.xlsx`: tabs show Values and Second Sheet only; "Hidden Sheet" is reachable from the "Hidden sheets" menu and then shows a temporary tab; "Very Hidden Sheet" is not offered anywhere. Open `fx/chartsheet.xlsx`: "Chart Sheet" shows a "not displayed" placeholder with **Open in Excel**. Open `fx/damaged-sheet.xlsx`: Values and Second Sheet display normally; selecting "Damaged Sheet" shows the `sheet-unavailable` warning notice, not a blank grid or an error view.
 - [ ] **X13 [must] Reload on change.** Open the scratch `basic.xlsx` in the viewer on Second Sheet; change a cell in Excel and save. The viewer reloads with the new value and stays on the same sheet; tab never dirty.
 - [ ] **X14 [nice] `vscodeMdEditor.office.sheetAppearance`.** Set to `light` in Settings, reopen `styles.xlsx` in a dark theme: the grid is drawn light as authored. Set back to `theme`.
 - [ ] **X15 [must] Open in Excel.** The toolbar button opens the file in desktop Excel.
@@ -168,4 +168,4 @@ Not a Phase 1 blocker; it must be recorded before the Word editing work (WP-32/3
 | WP-16 (layout, menus, keyboard, large copy, links, chart/hidden sheets, formulas, reload, notices, live theme switch) | X4-X9, X12, X13, T2, T4 |
 | Phase 0 pending: S3 | F (P0.1-P0.4) |
 
-Not coverable here: the `sheet-unavailable` notice (needs a workbook with a damaged sheet part; no fixture) and the `<!DOCTYPE` refusal (automated tests only). Both are exercised by unit tests.
+Not coverable here: the `<!DOCTYPE` refusal (automated tests only). The `sheet-unavailable` notice is covered by X12 with `fx/damaged-sheet.xlsx`.

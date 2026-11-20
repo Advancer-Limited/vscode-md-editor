@@ -70,6 +70,7 @@ test('G2 across every fixture part', (t) => {
     archives++;
     for (const part of p.partNames()) {
       if (!/\.(xml|rels|vml)$/i.test(part)) continue;
+      if (f === 'damaged-sheet.xlsx' && part === 'xl/worksheets/sheet3.xml') continue;   // malformed on purpose
       const text = p.text(part);
       assert.strictEqual(x.serialize(p.xml(part)), text, `G2 failed for ${f}:${part}`);
       parts++;
