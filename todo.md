@@ -319,7 +319,7 @@
   - [x] WP-04 ZIP container (`core/zip.ts`, 22 tests)
   - [x] WP-05 Lossless XML (`core/xml.ts`, 19 tests)
   - [x] WP-06 OPC, OfficePackage, load classification (`core/opc.ts`, `package.ts`, `sniff.ts`, 20 tests)
-  - [ ] Gate R0 — self-review of zip/xml/package against spec §3.2–3.3 (G1/G2 green on all 31 openable fixtures)
+  - [x] Gate R0 — self-review of zip/xml/package against spec §3.2–3.3 (G1/G2 green on all 31 openable fixtures); review findings 1–7, 10, 11 fixed with regression tests, `partSize` added (nits 8, 9, 12 logged as known limitations)
 - [ ] Phase 1 — read-only viewers
   - [ ] WP-07 Protocol contract freeze
   - [ ] WP-08 Host shell

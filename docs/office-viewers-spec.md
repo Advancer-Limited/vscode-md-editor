@@ -91,6 +91,7 @@ A tokenizer plus a light tree. Each element holds: resolved namespace URI + loca
 MUST:
 - Reject any part containing `<!DOCTYPE` (OOXML never uses DTDs). This removes XXE and entity-expansion attacks by construction. Only the five predefined entities and numeric character references are decoded.
 - Match elements by **namespace URI + local name**, never by prefix. When creating elements, use the prefix (or default namespace) that the part's root element binds to the target namespace. If the needed namespace is not bound at the root, the part is not editable (read-only reason `unsupported-xml-layout`).
+- **Insertion-site scope.** A fragment is parsed in the namespace scope of the element it is inserted into, which can differ from the root's (a prefix redeclared in between, or `xmlns=""`). Contract: a writer that builds names with `qname()` (root bindings) passes `{ rootScoped: true }` to `insertAt`/`replaceNode`; every element and attribute of the fragment must then resolve to the same namespace at the site as at the root, otherwise the call throws `XmlScopeError` and changes nothing, and the caller reports `unsupported-xml-layout`. A writer may instead build names with `qnameAt(parent, ns, local)` (the site's own bindings; `undefined` when not expressible there, which is also `unsupported-xml-layout`). Re-inserting source text taken from the same site (undo/redo of a removal) passes no option. No `xmlns` declaration is ever added by an edit, and `setAttr` refuses namespace declarations and any local name that is not an NCName.
 - Support UTF-8 parts for editing. A UTF-16 part is decoded for viewing and makes the document read-only.
 - Preserve the XML declaration, comments, processing instructions, CDATA, attribute order, quote style and whitespace exactly.
 - New text is escaped (`&`, `<`, `>`, and `"` in attributes); characters illegal in XML 1.0 (C0 controls other than tab/LF/CR) are stripped from user input before writing.
@@ -703,7 +704,16 @@ Other non-goals (v1 editing): cell formatting of any kind (the automatic date fo
 | xlsx: any worksheet part > 64 MB uncompressed or > 500,000 non-empty cells | Whole workbook view-only; that sheet shows its first 50,000 rows with a truncation banner. |
 | xlsx: worksheet part > 300 MB uncompressed | That sheet is not loaded (placeholder with "Open in Excel"). |
 
-Host-side parsing of anything larger than 2 MB MUST yield to the event loop at least every ~30 ms (chunked async), so other extensions are not starved. A worker thread is a post-v1 optimisation.
+Host-side parsing of anything larger than 2 MB MUST yield to the event loop at least every ~30 ms (chunked async), so other extensions are not starved; this includes inflating the part. A worker thread is a post-v1 optimisation.
+
+Hostile-input caps (any XML part; values in `core/limits.ts`, chosen two orders of magnitude above anything Office writes):
+
+| Condition | Result |
+|---|---|
+| Element nesting deeper than 10,000 (`xmlMaxDepth`; real parts nest a few dozen levels, deeply nested tables stay under 200) | `XmlError('malformed')`: the part is damaged; at open (content types, root rels) the file is refused as `damaged`. |
+| More than 4,096 attributes, namespace declarations included, on one start tag (`xmlMaxAttributes`; a Word root has ~40) | Same. |
+| Bounded inflation | Each inflate step's input is capped so its output cannot exceed the declared size by more than ~4 MB; a lying size is refused as `bad-data` after that much work. |
+| `open` and the main part | Reads only the declared sizes and the root start tag from a bounded prefix (64 KB, then at most 1 MB); a root start tag not found within 1 MB is `damaged`. |
 
 ### 10.3 Error and special-case UX
 
@@ -761,7 +771,7 @@ Documents are untrusted input.
 - **altChunk** (embedded HTML/MHT) rendering is disabled (`renderAltChunks: false`).
 - **HTML construction**: our webview code builds DOM with `createElement`/`textContent` only. `innerHTML` MUST NOT be used with document-derived strings anywhere in `media/docx*.js`, `media/xlsx*.js`, `media/officeCommon.js`. docx-preview's own output is the one exception and is contained by the CSP.
 - **Links**: never navigated by the webview. The host accepts only `http:`, `https:`, `mailto:` and opens them with `vscode.env.openExternal` (which applies VS Code's trusted-domain prompt). Everything else is dropped.
-- **XML**: DTDs rejected (§3.3); no external entity or schema is ever fetched. Relationship targets with `TargetMode="External"` are never dereferenced by the host.
+- **XML**: DTDs rejected (§3.3); no external entity or schema is ever fetched. Relationship targets with `TargetMode="External"` are never dereferenced by the host. Element depth and per-element attribute counts are capped (§10.2). **Phase 1 decision:** docx-preview parses parts with the webview's DOMParser, outside the host's DOCTYPE guard. Before sending `docxRender`, the host scans every XML part docx-preview may read (all parts whose content type ends in `+xml` or `/xml`, plus `.rels`) for `<!DOCTYPE` (case-insensitive, after decoding) and, if found, refuses to render with load failure `damaged` and a detail naming the part.
 - **ZIP**: size and ratio limits are checked from the central directory before inflating (§10.2); entry names are treated as opaque keys and never used as file-system paths; nothing is extracted to disk.
 - **Webview → host**: all messages validated (§5). Clipboard writes are limited to text the host itself produced from the document.
 - **Privacy**: no document content leaves the machine. Diagnostics (§6.5) contain part names and validator messages only.
