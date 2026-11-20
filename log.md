@@ -796,3 +796,8 @@ Environment: VS Code 1.147.0 (Electron 43.8.9, Node 24.22.1), Windows 11, isolat
 | S7 library API | **Present with adjustments** — `fx.parse` takes tokens; numfmt has no 1904 option; fflate has no CRC-32 | Notes added to WP-12/21/36 |
 
 Decisions: keep the bookmark hook (no patched docx-preview); keep `bytes: Uint8Array`; keep limits; no tsconfig change. The S1 re-run on LibreOffice/Google files is still required before group D. The "save changes to s3auto.docx?" dialog the user cancelled came from the spike's dev host (not Word/Excel); fixed in the spike.
+
+### 2026-11-20 — WP-03 fixtures and generators (feature/office-fixtures, merged into feature/office-core)
+- **WP-03 (Sonnet)** added `scripts/office-fixtures/make-word.ps1` and `make-excel.ps1`, which drive desktop Word/Excel through COM. Each uses its own hidden instance with alerts off, a fixed author and no RSIDs. Also `make-synthetic.mjs`, which is Node/JSZip, byte-deterministic, and exports `makeHugeXlsx`. Generated 36 fixtures plus `expected/styles.pdf` and a README, and added `tests/office/fixtures.test.mjs`. Office output isn't byte-reproducible (list-template order, docPr/comment/chart ids, calcChain order), so re-runs compare content-equal. Waiting on the user: libreoffice.docx/.xlsx, googledocs.docx, googlesheets.xlsx and localised-de.docx.
+- **G1/G2 on real fixtures:** 30 archives read and 343 XML parts round-trip byte-identical. The negative fixtures are refused as expected.
+- **Fix:** `legacy-renamed.docx`, a real OLE `.doc`, came back as `bad-data` because its bytes happen to contain an EOCD-like signature. `zip.ts` `findEocd` now reports `not-zip` whenever the file doesn't start with a local-file-header signature, before it looks at EOCD candidates. 182/182 tests pass.

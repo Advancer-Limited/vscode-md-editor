@@ -315,7 +315,7 @@
 - [ ] Phase 0 — spikes + core (ZIP container, lossless XML)
   - [x] WP-01 Spikes (S1, S2, S4–S7 pass; S3 Ctrl+Z awaiting a manual run by the user)
   - [x] WP-02 Scaffolding, dependencies, test bundle, housekeeping
-  - [ ] WP-03 Fixtures and generators
+  - [x] WP-03 Fixtures and generators (36 fixtures; PENDING from user: libreoffice.docx/.xlsx, googledocs.docx, googlesheets.xlsx, localised-de.docx — recipes in tests/fixtures/office/README.md)
   - [x] WP-04 ZIP container (`core/zip.ts`, 22 tests)
   - [x] WP-05 Lossless XML (`core/xml.ts`, 19 tests)
   - [ ] WP-06 OPC, OfficePackage, load classification (Gate R0)

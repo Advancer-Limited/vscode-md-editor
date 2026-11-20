@@ -242,11 +242,13 @@ function findEocd(bytes: Uint8Array): number {
       if (end > bytes.length) sawCutOff = true;
     }
   }
+  // A file that does not start like a ZIP (local header) is "not a zip" even if its tail happens to
+  // contain EOCD-like bytes — e.g. a legacy OLE .doc renamed to .docx.
+  const startsLikeZip = bytes.length >= 4 && u32(bytes, 0) === SIG_LOCAL;
+  if (!startsLikeZip) throw new ZipError('not-zip', 'Not a ZIP archive');
   if (sawCutOff) throw new ZipError('truncated', 'Archive comment runs past the end of the file; the file looks truncated');
   if (sawSignature) throw new ZipError('bad-data', 'End of central directory comment length does not match the file');
-  const startsLikeZip = bytes.length >= 4 && u32(bytes, 0) === SIG_LOCAL;
-  if (startsLikeZip) throw new ZipError('truncated', 'End of central directory record not found; the file looks truncated');
-  throw new ZipError('not-zip', 'Not a ZIP archive');
+  throw new ZipError('truncated', 'End of central directory record not found; the file looks truncated');
 }
 
 function hasZip64Extra(bytes: Uint8Array, start: number, len: number): boolean {
