@@ -197,6 +197,40 @@ test('setPart add/delete round-trips through readZip', async () => {
   assert.strictEqual(q.serialize(), bytes);
 });
 
+test('a created part deleted then re-created keeps its position among created parts (tombstone)', () => {
+  const bytes = fixture('basic.docx');
+  const names = (b) => core.zip.readZip(b, core.pkg.zipLimits()).entries.map((e) => e.name);
+  const p = OfficePackage.open('basic.docx', bytes);
+  const a = enc.encode('<a/>');
+  const b = enc.encode('<b/>');
+  const c = enc.encode('<c/>');
+  p.setPart('customXml/a.xml', a);
+  p.setPart('customXml/b.xml', b);
+  p.setPart('customXml/c.xml', c);
+  const created = ['customXml/a.xml', 'customXml/b.xml', 'customXml/c.xml'];
+  const orig = names(bytes);
+  const full = p.serialize();
+  assert.deepStrictEqual(names(full), [...orig, ...created]);
+  // Delete the first created part (an edit), then restore it (its undo).
+  p.setPart('customXml/a.xml', null);
+  assert.strictEqual(p.has('customXml/a.xml'), false);
+  assert.deepStrictEqual(p.partNames().slice(-2), ['customXml/b.xml', 'customXml/c.xml']);
+  assert.deepStrictEqual(names(p.serialize()), [...orig, 'customXml/b.xml', 'customXml/c.xml']);
+  p.setPart('customXml/a.xml', a);
+  assert.deepStrictEqual(p.partNames().slice(-3), created, 'back in its original slot');
+  assertBytesEqual(p.serialize(), full, 'restored state is byte-identical, entry order included');
+  // A re-creation under a different case takes the new case, same slot.
+  p.setPart('customXml/b.xml', null);
+  p.setPart('CustomXml/B.xml', b);
+  assert.deepStrictEqual(p.partNames().slice(-3), ['customXml/a.xml', 'CustomXml/B.xml', 'customXml/c.xml']);
+  // Deleting every created part leaves no trace: nothing touched, original bytes object.
+  for (const n of ['customXml/a.xml', 'customXml/b.xml', 'customXml/c.xml']) p.setPart(n, null);
+  assert.deepStrictEqual(p.touchedParts(), []);
+  assert.strictEqual(p.serialize(), bytes);
+  assert.strictEqual(p.has('customXml/c.xml'), false);
+  assert.throws(() => p.bytes('customXml/c.xml'), /Part not found/);
+});
+
 // ---------------------------------------------------------------------------------------------
 // Further package behaviour
 

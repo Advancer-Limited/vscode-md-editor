@@ -337,7 +337,7 @@
   - [ ] Note: small `.gltf`/`.mmd` samples for the regression checks are still to do
 - [ ] Phase 2 — save pipeline + Excel cell editing
   - [x] WP-18 Edits, undo/redo, serialise, verify, save core
-  - [ ] WP-19 Full CustomEditorProvider
+  - [x] WP-19 Full CustomEditorProvider
   - [ ] WP-20 Xlsx cell write, input classification, calc handling
   - [ ] WP-21 Formula entry, _xlfn, shared formulas
   - [ ] WP-22 Date style patch + xlsx validators

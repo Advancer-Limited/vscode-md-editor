@@ -163,6 +163,11 @@
           "default": "theme",
           "description": "How Excel workbooks are drawn in the viewer: following the VS Code theme, or always as a light sheet."
         },
+        "vscodeMdEditor.office.startInEditMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open editable Word and Excel files with Edit already on. When off, files open in View mode and Edit (Ctrl+E) turns editing on."
+        },
         "vscodeMdEditor.languageTool.enabled": {
           "type": "boolean",
           "default": true,
