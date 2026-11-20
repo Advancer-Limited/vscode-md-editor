@@ -10,13 +10,14 @@ import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
 import { core, fixture, allFixtures, writeOut, assertBytesEqual } from './_helpers.mjs';
 import { assertG3, assertG4, assertG5, rng } from './_roundtrip.mjs';
+import { assertViewMatchesFile } from './_viewCheck.mjs';
 
 const { OfficePackage } = core.pkg;
 const { Workbook } = core.xlsx.workbook;
 const { applyXlsxEdit, refreshAfterEdit } = core.xlsx.ops;
 const { applyEdit, invertEdit, EditBuilder } = core.edits;
 const { serializeAndVerify, packageValidator } = core.save;
-const { validateFormula, translateFormula, addXlfnPrefixes, stripXlfnPrefixes, MAX_FORMULA_CHARS } = core.xlsx.refs;
+const { validateFormula, checkFormulaSyntax, formulaContextOf, translateFormula, addXlfnPrefixes, stripXlfnPrefixes, MAX_FORMULA_CHARS, FUNCTION_ARITY } = core.xlsx.refs;
 const { FUTURE_FUNCTIONS, learnedPrefixes } = core.xlsx.xlfn;
 const SF = core.xlsx.sharedFormula;
 const { editSeed } = core.xlsx.format;
@@ -113,8 +114,44 @@ const synthetic = () => patched('formulas.xlsx', {
 
 const VALID = ['1+1', 'SUM(A1:B2)', "'My Sheet'!A1*2", 'Data!A2+\'O\'\'Brien\'!A1', 'A2*TaxRate', 'A3+[0]!LocalName',
   '_xlfn.XLOOKUP(3,A2:A10,B2:B10)', 'XLOOKUP(3,A2:A10,B2:B10)', 'IF(A8>5,"hi","lo")', '"a""b"&A1', '{1,2;3,4}',
-  'SUM(A1,)', 'A1 B1', '1 + 2', 'SUM( A1 , B2 )', 'LET(x,1,x+1)', 'LAMBDA(a,b,a*b)(2,3)', 'Table1[Col]', '[1]Sheet1!A1',
-  'A:A', '1:1', '-A1%', 'A1^2', 'A1<>B1', '#N/A', 'TRUE', 'A1\n+B1', 'SUM((A1,B1))', 'IF(,1,2)', 'été!A1'];
+  'SUM(A1,)', 'A1 B1', '1 + 2', 'SUM( A1 , B2 )', 'LET(x,1,x+1)', 'LAMBDA(a,b,a*b)(2,3)', 'Table1[Col]',
+  'A:A', '1:1', '-A1%', 'A1^2', 'A1<>B1', '#N/A', 'TRUE', 'A1\n+B1', 'SUM((A1,B1))', 'IF(,1,2)', 'été!A1',
+  // Gate R2 F2: what the semantic checks must keep accepting.
+  'TRUE()', 'NOW()', 'ROW()', 'IF(A1,,)', 'ROUND(1.5,0)', 'A1:A2:A3', 'SUM(A1:A2,B1:B2)', '{1,2;3,4}', '{"a";"b"}',
+  '"' + 'x'.repeat(255) + '"', '9.99999999999999E+307', '-9.99999999999999E+307', '1E-307', "'Sheet 1'!A1", "'A1'!B1",
+  '[0]!LocalName', 'Sheet1:Sheet3!A1', 'foo(1,2,3)', '_xlfn.FUTUREFN()', 'LAMBDA(B,A1:B)(C1)', 'LET(B,A2,A1:B)',
+  'XLOOKUP(1,A:A,B:B,,0,1)', 'SUM(' + Array(255).fill('1').join(',') + ')', 'CHOOSE(1,2)',
+  'SUM(Table1[[#This Row],[a]])', 'Table1[#All]', 'R1C1', 'XFE1'];
+
+// Gate R2 F2: formulas that parse but Excel refuses (or that would write a reference out of the
+// workbook). [formula, message pattern, code?]
+const REFUSED = [
+  ['IF()', /IF needs at least 2 arguments/], ['ROUND(1.5)', /ROUND needs at least 2/], ['IF(1,2,3,4)', /IF takes at most 3/],
+  ['VLOOKUP(A1)', /VLOOKUP needs at least 3/], ['PI(1)', /PI takes no arguments/], ['SUM()', /SUM needs at least 1/],
+  ['_xlfn.XLOOKUP(1)', /XLOOKUP needs at least 3/], ['xlookup(1,A:A)', /XLOOKUP needs at least 3/],
+  ['SUM(,)', /SUM needs a value/], ['IF(,)', /IF needs a value/], ['foo(' + Array(256).fill('1').join(',') + ')', /at most 255 arguments/],
+  ['{1,2;3}', /same number of values/], ['"' + 'x'.repeat(256) + '"', /limited to 255 characters/],
+  ['1e999', /between -9.99999999999999E\+307/], ['1E308', /between/], ['-1e400', /between/],
+  ['A1..B2', /a range is written with ":"/], ['A1:B', /"B" is not a reference here/], ['B:A1', /"B" is not a reference/],
+  ['Sheet 1!A1', /sheet name "1" must be in single quotes/], ['A1!B1', /sheet name "A1" must be in single quotes/],
+  ['R1C1!A1', /single quotes/], ['A1,B1', /union of references/], ['(A1),B1', /union/],
+  ['[@Col]', /needs its table name/],
+  ['[1]Sheet1!A1', /other workbooks/, 'blocked'], ['[Book2.xlsx]Sheet1!A1', /other workbooks/, 'blocked'],
+  ['[1]!Name', /other workbooks/, 'blocked'], ['SUM([2]Sheet1!A1:B2)', /other workbooks/, 'blocked'],
+  ['[1]!Table1[Col]', /other workbooks/, 'blocked'],
+];
+// Refused only with the workbook context (formulas.xlsx: Data, My Sheet, O'Brien, NoCache; tables.xlsx:
+// Scores, SalesTable).
+const REFUSED_IN_CONTEXT = [
+  ['formulas.xlsx', 'NoSuch!A1', /no sheet named "NoSuch"/], ['formulas.xlsx', "'No Such'!A1", /no sheet named "No Such"/],
+  ['formulas.xlsx', 'Data:NoSuch!A1', /no sheet named "NoSuch"/], ['formulas.xlsx', 'Table9[Col]', /no table named "Table9"/],
+  ['tables.xlsx', 'SalesTable[NoColumn]', /Table "SalesTable" has no column "NoColumn"/],
+  ['tables.xlsx', 'SUM(Scores[[#This Row],[Column3]])', /no column "Column3"/],
+];
+const ACCEPTED_IN_CONTEXT = [
+  ['formulas.xlsx', "data!A1+'my sheet'!B2+'O''Brien'!C3+Data:NoCache!A1+TaxRate"], ['formulas.xlsx', 'A1:TaxRate'],
+  ['tables.xlsx', 'SUM(SalesTable[Units])+salestable[[#Totals],[price]]+Scores[[Column1]:[Column2]]+SalesTable[#Headers]'],
+];
 const INVALID = [
   ['SUM(A1', 6], ['1+', 2], [')', 0], ['foo(', 4], ['"abc', 4], ['=A1', 0], ['A1#', 2], ['@A1:A3', 0], ['{A1}', 3],
   ['SUM(A1:A3)#', 10], ['a b c', 4], [' ', 1], ['A1+\u0001', 3], ['A1+\ud800', 3], ['x'.repeat(MAX_FORMULA_CHARS + 1), MAX_FORMULA_CHARS],
@@ -131,6 +168,129 @@ test('validateFormula rejects unparseable formulas with a position', () => {
     assert.ok(typeof v.message === 'string' && v.message.length > 0);
     assert.ok(Math.abs(v.position - pos) <= 1, `${JSON.stringify(f.slice(0, 20))}: position ${v.position}, expected about ${pos}`);
   }
+});
+
+const contextOf = (name) => formulaContextOf(OfficePackage.open(name, fixture(name)));
+
+test('F2: validateFormula refuses what parses but Excel refuses (arity, empty calls, arrays, literals, names, quoting, unions, other workbooks)', () => {
+  for (const [f, re, code] of REFUSED) {
+    for (const ctx of [undefined, contextOf('formulas.xlsx')]) {
+      const v = validateFormula(f, ctx);
+      assert.strictEqual(v.ok, false, `${f.slice(0, 40)} must be refused`);
+      assert.match(v.message, re, f.slice(0, 40));
+      assert.strictEqual(v.code, code, `${f.slice(0, 40)}: code`);
+      assert.ok(v.position >= 0 && v.position <= f.length);
+    }
+    // The syntax-only check (used by the save validator for formulas already in the file) accepts them.
+    assert.deepStrictEqual(checkFormulaSyntax(f), { ok: true }, f.slice(0, 40));
+  }
+});
+
+test('F2: with the workbook context, unknown sheets, tables and table columns are refused (names compare case-insensitively)', () => {
+  for (const [name, f, re] of REFUSED_IN_CONTEXT) {
+    assert.deepStrictEqual(validateFormula(f), { ok: true }, `${f}: without a context only syntax and shape are checked`);
+    const v = validateFormula(f, contextOf(name));
+    assert.strictEqual(v.ok, false, `${name}: ${f}`);
+    assert.match(v.message, re, f);
+  }
+  for (const [name, f] of ACCEPTED_IN_CONTEXT) assert.deepStrictEqual(validateFormula(f, contextOf(name)), { ok: true }, `${name}: ${f}`);
+});
+
+test('F2: every formula of every fixture validates in its own workbook context (shared dependants through their master)', async () => {
+  let n = 0;
+  for (const name of allFixtures('xlsx')) {
+    let pkg, wb;
+    try { pkg = OfficePackage.open(name, fixture(name)); wb = Workbook.load(pkg); } catch { continue; }
+    const ctx = formulaContextOf(pkg);
+    assert.ok(ctx, `${name}: context`);
+    for (const e of wb.sheets) {
+      if (e.kind !== 'worksheet') continue;
+      let s;
+      try { s = await wb.sheet(e.id); } catch { continue; }
+      for (const cell of s.cellsIn([0, 0, 1_048_575, 16_383])) {
+        const f = SF.cellFormula(s, cell);
+        if (f === undefined || cell.arrayRef !== undefined && f === '') continue;
+        assert.deepStrictEqual(validateFormula(f, ctx), { ok: true }, `${name} ${e.name}!R${cell.r + 1}C${cell.c + 1}: ${f}`);
+        n++;
+      }
+    }
+  }
+  assert.ok(n >= 40, `checked ${n} fixture formulas`);
+});
+
+test('F2: the arity table ([MS-XLS] Ftab + Excel 2007 built-ins + every _xlfn function)', () => {
+  assert.ok(FUNCTION_ARITY.size >= 500, `${FUNCTION_ARITY.size} functions`);
+  for (const [name, [min, max]] of FUNCTION_ARITY) {
+    assert.ok(/^[A-Z][A-Z0-9.]*$/.test(name), name);
+    assert.ok(Number.isInteger(min) && Number.isInteger(max) && min >= 0 && min <= max && max <= 255, `${name} ${min}..${max}`);
+  }
+  // Every future function is listed, except the ones parsed as syntax (LET, LAMBDA) and those whose
+  // signature is not published (Python and Power Query plumbing).
+  const unlisted = new Set(['LET', 'LAMBDA', 'PY', 'PYTHON_STR', 'PYTHON_TYPE', 'PYTHON_TYPENAME', 'PQSOURCE', 'QUERYSTRING']);
+  for (const name of FUTURE_FUNCTIONS.keys()) if (!unlisted.has(name)) assert.ok(FUNCTION_ARITY.has(name), `${name} missing`);
+  const spot = { IF: [2, 3], SUM: [1, 255], ROUND: [2, 2], VLOOKUP: [3, 4], INDEX: [2, 4], TEXT: [2, 2], NOW: [0, 0], ROW: [0, 1],
+    IFERROR: [2, 2], SUMIFS: [3, 255], EDATE: [2, 2], NETWORKDAYS: [2, 3], XLOOKUP: [3, 6], FILTER: [2, 3], SEQUENCE: [1, 4],
+    TEXTJOIN: [3, 255], CONCATENATE: [1, 255], WEEKDAY: [1, 2], TRUNC: [1, 2], FIXED: [1, 3], LINEST: [1, 4] };
+  for (const [name, want] of Object.entries(spot)) assert.deepStrictEqual([...FUNCTION_ARITY.get(name)], want, name);
+  for (const macroOnly of ['GET.CELL', 'EVALUATE', 'GOTO', 'YEN']) assert.ok(!FUNCTION_ARITY.has(macroOnly), macroOnly);
+});
+
+test('F2: formula entry refuses in context (invalid / blocked), writes nothing; re-committing a file formula that fails today is a no-op', async () => {
+  const { pkg, wb, bytes } = load('formulas.xlsx');
+  for (const [input, code, re] of [['=IF()', 'invalid', /IF needs at least 2 arguments \(at character 2\)\.$/],
+    ['=NoSuch!A1', 'invalid', /no sheet named "NoSuch"/], ['=Table9[Col]', 'invalid', /no table named "Table9"/],
+    ['=[1]Sheet1!A1', 'blocked', /^This formula can't be used: References to other workbooks can't be entered here\.$/],
+    ['=SUM([Book2.xlsx]Sheet1!A1:B2)', 'blocked', /other workbooks/], ['=A1,B1', 'invalid', /union/]]) {
+    for (const [r, c] of [[1, 6], [1, 1], [20, 20]]) {
+      const res = await run(wb, pkg, set(1, [[r, c, input]]));
+      assert.strictEqual(res.ok, false, input);
+      assert.strictEqual(res.error.code, code, input);
+      assert.match(res.error.message, re, res.error.message);
+    }
+    const paste = await run(wb, pkg, set(1, [[1, 6, '7'], [2, 6, input]]));
+    assert.strictEqual(paste.ok, false);
+  }
+  assertBytesEqual(pkg.serialize({ force: true }), bytes, 'unchanged');
+  assert.deepStrictEqual(validateFormula('NoCache!A1+Data!A1', formulaContextOf(pkg)), { ok: true });
+
+  // A formula already in the file that today's checks refuse is shown, and committing it back changes nothing.
+  const legacy = await patched('formulas.xlsx', { [SHEET1]: (t) => t.replace('<c r="G2"><v>', '<c r="G2"><f>[1]Old!A1+NoSuch!B2+IF(1)</f><v>') });
+  const l = load('legacy.xlsx', legacy);
+  const ls = await l.wb.sheet(1);
+  const seed = editSeed(ls.cell(1, 6), core.xlsx.ops.stylesFor(l.wb), false);
+  assert.strictEqual(seed, '=[1]Old!A1+NoSuch!B2+IF(1)');
+  const again = await run(l.wb, l.pkg, set(1, [[1, 6, seed]]));
+  assert.deepStrictEqual({ ok: again.ok, edit: again.edit }, { ok: true, edit: null });
+  const changed = await run(l.wb, l.pkg, set(1, [[1, 6, seed + '+1']]));
+  assert.strictEqual(changed.ok, false);
+  assert.strictEqual(changed.error.code, 'blocked');
+});
+
+test('F2: the save validator checks changed formulas in context, and not formulas the file already had', async () => {
+  const { xlsxValidator } = core.xlsx.validate;
+  const validators = [packageValidator, xlsxValidator];
+  // A formula written behind the validators' back (not through setFormula) that names a missing sheet.
+  const { pkg, wb, bytes } = load('formulas.xlsx');
+  await wb.sheet(1);
+  const b = new EditBuilder(pkg, 'raw');
+  const doc = pkg.xml(SHEET1);
+  const find = (n, ref) => { if (n.type === 'el' && n.local === 'c' && n.attrs.some((a) => a.local === 'r' && a.value === ref)) return n; for (const ch of n.children ?? []) { const x = find(ch, ref); if (x) return x; } return undefined; };
+  b.replaceNode(SHEET1, find(doc.root, 'G2'), '<c r="G2"><f>NoSuch!A1+IF(1)</f></c>');
+  b.finish();
+  // serializeAndVerify hands the validators the package as loaded (from pkg.originalBytes).
+  const r = serializeAndVerify(pkg, validators);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.failures.some((f) => /cell G2 has a formula Excel would refuse \(There is no sheet named "NoSuch"/.test(f.message)), JSON.stringify(r.failures));
+  // The xlsx validator itself: without a loaded package there is no telling what changed, so only syntax is checked.
+  assert.deepStrictEqual(xlsxValidator(OfficePackage.open('x.xlsx', pkg.serialize()), [SHEET1]).filter((m) => /would refuse/.test(m)), []);
+
+  // The same formula already in the file: an unrelated edit to the sheet saves.
+  const legacy = await patched('formulas.xlsx', { [SHEET1]: (t) => t.replace('<c r="G2"><v>', '<c r="G2"><f>NoSuch!A1+IF(1)</f><v>') });
+  const l = load('legacy.xlsx', legacy);
+  const e = await run(l.wb, l.pkg, set(1, [[0, 6, '5']]));
+  assert.ok(e.ok && e.edit);
+  const saved = serializeAndVerify(l.pkg, validators);
+  assert.ok(saved.ok, JSON.stringify(saved.failures));
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -414,6 +574,61 @@ test('2-D synthetic groups: $-anchors, quoted sheets, strings, whole rows/column
   for (const ref of ['C2', 'B3', 'C3']) assert.strictEqual(ws.getCell(ref).formula, SYN_EXPECTED[ref], ref);
 });
 
+// Gate R2 F7: two groups reusing si="0" (Excel never writes this, but files do arrive so).
+const TWO_MASTERS = '<sheetData>'
+  + '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f t="shared" ref="B1:B3" si="0">A1*2</f><v>2</v></c></row>'
+  + '<row r="2"><c r="A2"><v>2</v></c><c r="B2"><f t="shared" si="0"/><v>4</v></c></row>'
+  + '<row r="3"><c r="A3"><v>3</v></c><c r="B3"><f t="shared" si="0"/><v>6</v></c></row>'
+  + '<row r="6"><c r="A6"><v>6</v></c><c r="B6"><f t="shared" ref="B6:B7" si="0">A6+100</f><v>106</v></c></row>'
+  + '<row r="7"><c r="A7"><v>7</v></c><c r="B7"><f t="shared" si="0"/><v>107</v></c></row>'
+  + '</sheetData>';
+const onSheet3 = (data) => patched('formulas.xlsx', {
+  [SHEET3]: (t) => t.replace(/<sheetData>.*<\/sheetData>/s, data).replace('<dimension ref="A1:B1"/>', '<dimension ref="A1:B9"/>'),
+});
+
+test('F7: a reused si: each dependant reads its own master; materialising either group is refused (blocked), nothing written', async () => {
+  const bytes = await onSheet3(TWO_MASTERS);
+  const { pkg, wb } = load('two-masters.xlsx', bytes);
+  const s = await wb.sheet(3);
+  assert.strictEqual(s.sharedMastersOf(0).length, 2);
+  assert.strictEqual(SF.displayFormula(s, s.cell(2, 1)), 'A3*2', 'B3 from B1');
+  assert.strictEqual(SF.displayFormula(s, s.cell(6, 1)), 'A7+100', 'B7 from B6 (its own master, not B1)');
+  for (const op of [set(3, [[0, 1, '5']]), set(3, [[5, 1, '=A6']]), set(3, [[5, 1, '']]), { op: 'clearCells', sheetId: 3, range: [0, 1, 0, 1] },
+    { op: 'clearCells', sheetId: 3, range: [4, 0, 6, 1] }, set(3, [[8, 0, 'x'], [0, 1, '1']])]) {
+    const res = await run(wb, pkg, op);
+    assert.strictEqual(res.ok, false, JSON.stringify(op));
+    assert.strictEqual(res.error.code, 'blocked');
+    assert.match(res.error.message, /group 0 on this sheet has 2 master cells \(B1, B6\)/);
+  }
+  const b = new EditBuilder(pkg, 'x');
+  assert.throws(() => SF.materialiseAll(b, s), (e) => e.officeError?.code === 'blocked');
+  b.abort();
+  assertBytesEqual(pkg.serialize({ force: true }), bytes, 'unchanged');
+  await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), 'after the refusals');
+  // A dependant itself can still be overwritten (no materialisation needed).
+  const dep = await run(wb, pkg, set(3, [[6, 1, '9']]));
+  assert.ok(dep.ok && dep.edit);
+  assert.ok(pkg.text(SHEET3).includes('<c r="B7"><v>9</v></c>'));
+});
+
+test('F7: a member outside its master\'s ref is refused (blocked); a dependant no master covers shows no formula', async () => {
+  const outside = '<sheetData>'
+    + '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f t="shared" ref="B1:B2" si="0">A1*2</f><v>2</v></c></row>'
+    + '<row r="2"><c r="B2"><f t="shared" si="0"/><v>4</v></c></row>'
+    + '<row r="5"><c r="B5"><f t="shared" si="0"/><v>10</v></c></row>'
+    + '</sheetData>';
+  const bytes = await onSheet3(outside);
+  const { pkg, wb } = load('outside.xlsx', bytes);
+  const s = await wb.sheet(3);
+  assert.strictEqual(SF.displayFormula(s, s.cell(1, 1)), 'A2*2');
+  assert.strictEqual(SF.displayFormula(s, s.cell(4, 1)), undefined, 'B5 is outside B1:B2');
+  const res = await run(wb, pkg, set(3, [[0, 1, '5']]));
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error.code, 'blocked');
+  assert.match(res.error.message, /B5 lies outside its group's range B1:B2/);
+  assertBytesEqual(pkg.serialize({ force: true }), bytes, 'unchanged');
+});
+
 test('materialiseAll rewrites every group in one undoable edit; orphan dependants are refused', async () => {
   const bytes = await synthetic();
   const { pkg, wb } = load('syn.xlsx', bytes);
@@ -493,6 +708,9 @@ test('formula entry refuses read-only cells (array members) and keeps G5 on NoCa
 const POOL = ['', '1', '-2.5', 'TRUE', 'text', "'=quoted", '2024-03-15', '=1+1', '=A2*3', '=SUM(A1:A3)', '=XLOOKUP(1,A:A,B:B)',
   '=LET(x,A1,x*2)', '=CONCAT("a",B2)', "='My Sheet'!A1+1", '=SUM(', '==A1', '=A1#', '=IF(A1>1,"x&y","<z>")', '=FILTER(A1:A3,A1:A3>0)'];
 
+/** Formulas the contextual checks refuse, mixed into multi-cell pastes after good values (Gate R2 F1/F2). */
+const BAD = ['=IF(', '=ROUND(1.5)', '=NoSuch!A1', '=Table9[Col]', '=[1]Sheet1!A1', '=A1,B1', '=1e999'];
+
 async function randomRun(name, bytes, seed, withRefresh) {
   const { pkg, wb } = load(name, bytes);
   const rand = rng(seed);
@@ -508,6 +726,7 @@ async function randomRun(name, bytes, seed, withRefresh) {
       applyEdit(pkg, invertEdit(e));
       if (withRefresh) refreshAfterEdit(wb, e);
       undone.push(e); undos++;
+      if (withRefresh) await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `undo ${i}`, [0, 0, 15, 9]);
       continue;
     }
     if (x < 0.22 && undone.length) {
@@ -515,6 +734,7 @@ async function randomRun(name, bytes, seed, withRefresh) {
       applyEdit(pkg, e);
       if (withRefresh) refreshAfterEdit(wb, e);
       done.push(e);
+      if (withRefresh) await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `redo ${i}`, [0, 0, 15, 9]);
       continue;
     }
     let sheetId = pick(sheetIds);
@@ -533,10 +753,13 @@ async function randomRun(name, bytes, seed, withRefresh) {
       const n = 1 + Math.floor(rand() * 3);
       const cells = new Map();
       for (let k = 0; k < n; k++) cells.set(`${Math.floor(rand() * 12)},${Math.floor(rand() * 7)}`, pick(POOL));
-      op = set(sheetId, [...cells].map(([rc, input]) => [...rc.split(',').map(Number), input]));
+      const list = [...cells].map(([rc, input]) => [...rc.split(',').map(Number), input]);
+      if (list.length > 1 && rand() < 0.2) list[list.length - 1][2] = pick(BAD);
+      op = set(sheetId, list);
     }
     const beforeText = pkg.text(wb.entry(sheetId).part);
     const res = await run(wb, pkg, op);
+    if (withRefresh) await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `step ${i}`, [0, 0, 15, 9]);
     if (!res.ok) {
       refused++;
       assert.strictEqual(pkg.text(wb.entry(sheetId).part), beforeText, 'a refused op changes nothing');

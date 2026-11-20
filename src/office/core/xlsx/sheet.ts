@@ -179,7 +179,7 @@ export class Sheet {
   private rowMap = new Map<number, RowIndex>();
   private maxRow = -1;
   private maxCol = -1;
-  private sharedMasters: Map<number, SharedFormulaMaster> | null = null;
+  private sharedMasters: Map<number, SharedFormulaMaster[]> | null = null;
   private tableCache: TableInfo[] | null = null;
   private linkCache: Map<string, string> | null = null;
   private roAreas: Array<{ range: Range; why: string }> | null = null;
@@ -495,11 +495,20 @@ export class Sheet {
   /**
    * Master cell of shared-formula group `si`, or undefined. A dependant (`shared.master === false`)
    * has no `formula` of its own; its formula is the master's with relative references offset
-   * (WP-21 materialises that on write).
+   * (WP-21 materialises that on write). With (r, c): the master whose `ref` covers that cell, so a
+   * sheet that reuses an `si` for two groups reads each dependant from its own master (§9.4);
+   * undefined when no master of `si` covers it.
    */
-  sharedMaster(si: number): SharedFormulaMaster | undefined {
+  sharedMaster(si: number, r?: number, c?: number): SharedFormulaMaster | undefined {
+    const list = this.sharedMastersOf(si);
+    if (r === undefined || c === undefined) return list[0];
+    return list.find((m) => m.ref !== undefined && r >= m.ref[0] && r <= m.ref[2] && c >= m.ref[1] && c <= m.ref[3]);
+  }
+
+  /** Every master cell of shared-formula group `si`, in sheet order (more than one is a malformed sheet). */
+  sharedMastersOf(si: number): readonly SharedFormulaMaster[] {
     if (!this.sharedMasters) {
-      const m = new Map<number, SharedFormulaMaster>();
+      const m = new Map<number, SharedFormulaMaster[]>();
       for (const r of this.rowList) {
         const ri = this.rowMap.get(r)!;
         for (let j = 0; j < ri.cells.length; j++) {
@@ -507,13 +516,15 @@ export class Sheet {
           if (!f || attr(f, '', 't') !== 'shared') continue;
           const ref = attr(f, '', 'ref');
           const s = intAttr(f, 'si');
-          if (ref === undefined || s === undefined || m.has(s)) continue;
-          m.set(s, { si: s, r, c: ri.cols[j], formula: textContent(f), ref: a1ToRange(ref), refText: ref });
+          if (ref === undefined || s === undefined) continue;
+          const entry: SharedFormulaMaster = { si: s, r, c: ri.cols[j], formula: textContent(f), ref: a1ToRange(ref), refText: ref };
+          const list = m.get(s);
+          if (list) list.push(entry); else m.set(s, [entry]);
         }
       }
       this.sharedMasters = m;
     }
-    return this.sharedMasters.get(si);
+    return this.sharedMasters.get(si) ?? [];
   }
 
   /** Ranges of legacy array formulas (`f t="array" ref`), from their master cells. */

@@ -8,12 +8,13 @@
 //                                           cells without an apostrophe)
 //   starts with "'"                      -> text (the rest of the input)
 //   '=' followed by at least one char    -> formula (text without the '=')
-//   ^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$ and finite -> number
+//   ^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$ in Excel's range -> number (0, or a magnitude within
+//                                           2.2250738585072E-308 … 9.99999999999999E+307)
 //   <number>% in a percent-formatted cell -> number / 100
 //   TRUE / FALSE (any case)              -> boolean
 //   ISO date / date-time in range        -> date (serial in the workbook's date system)
 //   anything else                        -> text (including '#N/A'-like literals, '12%' outside a
-//                                           percent cell, numbers that overflow to Infinity, dates
+//                                           percent cell, numbers outside Excel's range, dates
 //                                           outside §9.3.1's range, and surrounding whitespace)
 //
 // No locale-dependent guessing. No `vscode` import here (core rule).
@@ -28,6 +29,24 @@ export type Classified =
 
 export interface ClassifyContext { isPercentStyle: boolean; isTextStyle: boolean; date1904: boolean }
 
+/** Excel's number range: it refuses larger magnitudes (1E+308) and stores smaller non-zero ones as text. */
+export const MAX_CELL_NUMBER = 9.99999999999999e307;
+export const MIN_CELL_NUMBER = 2.2250738585072e-308;
+
+/** Whether `n` is a number Excel can hold in a cell. */
+export function inExcelRange(n: number): boolean {
+  if (!Number.isFinite(n)) return false;
+  const a = Math.abs(n);
+  return a === 0 || (a >= MIN_CELL_NUMBER && a <= MAX_CELL_NUMBER);
+}
+
+/** `text` (matching NUMBER_RE) divided by `divisor`, when the result is in Excel's range; a non-zero number that underflows to 0 is not. */
+function excelNumber(text: string, divisor: number): number | undefined {
+  const n = Number(text) / divisor;
+  if (n === 0 && /[1-9]/.test(text.split(/[eE]/)[0])) return undefined;
+  return inExcelRange(n) ? n : undefined;
+}
+
 const NUMBER_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/;
 
@@ -37,14 +56,14 @@ export function classifyInput(input: string, ctx: ClassifyContext): Classified {
   if (input.charCodeAt(0) === 39 /* ' */) return { kind: 'text', text: input.slice(1) };
   if (input.charCodeAt(0) === 61 /* = */ && input.length > 1) return { kind: 'formula', text: input.slice(1) };
   if (NUMBER_RE.test(input)) {
-    const n = Number(input);
-    return Number.isFinite(n) ? { kind: 'number', value: n } : { kind: 'text', text: input };
+    const n = excelNumber(input, 1);
+    return n !== undefined ? { kind: 'number', value: n } : { kind: 'text', text: input };
   }
   if (ctx.isPercentStyle && input.length > 1 && input.endsWith('%')) {
     const rest = input.slice(0, -1);
     if (NUMBER_RE.test(rest)) {
-      const n = Number(rest) / 100;
-      if (Number.isFinite(n)) return { kind: 'number', value: n };
+      const n = excelNumber(rest, 100);
+      if (n !== undefined) return { kind: 'number', value: n };
     }
   }
   const upper = input.toUpperCase();

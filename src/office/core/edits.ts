@@ -500,6 +500,11 @@ export class EditBuilder {
   /** Number of changes recorded so far. */
   get size(): number { return this.changes.length; }
 
+  /** The parts the changes recorded so far touch (as recorded, in first-touch order). */
+  changedParts(): string[] {
+    return [...new Set(this.changes.map((c) => c.part))];
+  }
+
   private open(): void {
     if (this.closed) throw new Error('EditBuilder: already finished or aborted');
   }

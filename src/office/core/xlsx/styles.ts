@@ -258,6 +258,8 @@ export class StyleTable {
 
   formatCode(styleIndex: number): string { return this.fmt(styleIndex).code; }
   isDateStyle(styleIndex: number): boolean { return this.fmt(styleIndex).date; }
+  /** Whether the style's number format is General: id 0, or a custom `numFmts` entry whose code is "General" (§9.3.1). */
+  isGeneralStyle(styleIndex: number): boolean { return this.fmt(styleIndex).code.trim().toUpperCase() === 'GENERAL'; }
   isTextStyle(styleIndex: number): boolean { return this.fmt(styleIndex).text; }
   isPercentStyle(styleIndex: number): boolean { return this.fmt(styleIndex).percent; }
 

@@ -11,6 +11,7 @@ import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
 import { core, fixture, writeOut, assertBytesEqual } from './_helpers.mjs';
 import { assertG3, assertG4, assertG5, rng } from './_roundtrip.mjs';
+import { assertViewMatchesFile } from './_viewCheck.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { OfficePackage } = core.pkg;
@@ -255,9 +256,16 @@ test('writing into an empty sheet (<sheetData/>) creates the row; dimension grow
 });
 
 test('a new cell inside the dimension changes only the insertion point (G4)', async () => {
-  const bytes = await patched('basic.xlsx', { [SHEET1]: replaceOnce('<c r="A23" t="s"><v>46</v></c><c r="C23"', '<c r="A23" t="s"><v>46</v></c><c r="C23"') });
-  await checkEdit({ name: 'basic.xlsx', bytes, op: set(1, [[22, 1, '5']]), touched: BASIC_FIRST,
+  // Preconditions: B23 is a gap between two cells of an existing row, inside the dimension.
+  const orig = partText(fixture('basic.xlsx'), SHEET1);
+  assert.ok(orig.includes('<dimension ref="A1:C23"/>'), 'basic.xlsx: dimension A1:C23');
+  assert.ok(orig.includes('<c r="A23" t="s"><v>46</v></c><c r="C23"'), 'basic.xlsx: A23 and C23 adjacent');
+  const { text } = await checkEdit({ name: 'basic.xlsx', op: set(1, [[22, 1, '5']]), touched: BASIC_FIRST,
     span: (t) => { const i = cellSpan(t, 'C23').start; return { start: i, end: i }; }, out: 'new-cell-in-row' });
+  // Exactly the new cell was inserted there; the dimension and the row element are unchanged.
+  assert.ok(text.includes('<c r="A23" t="s"><v>46</v></c><c r="B23"><v>5</v></c><c r="C23"'));
+  assert.ok(text.includes('<dimension ref="A1:C23"/>'));
+  assert.strictEqual(text.length, orig.length + '<c r="B23"><v>5</v></c>'.length);
 });
 
 test('a new cell outside the dimension: the dimension is an attr change, the rest is the new row', async () => {
@@ -314,6 +322,75 @@ test('paste 3x3 is one edit', async () => {
   assertBytesEqual(pkg.serialize(), fixture('basic.xlsx'), 'one undo');
   const ws = (await excel(after)).getWorksheet('Values');
   assert.strictEqual(ws.getCell('C32').value, 312);
+});
+
+// Gate R2 F1: a refused multi-cell edit must leave the read model describing the (unchanged) file.
+
+test('F1: a paste refused by a bad formula after a good value leaves no phantom value in the view', async () => {
+  const { pkg, wb, bytes } = load('basic.xlsx');
+  const styles = core.xlsx.ops.stylesFor(wb);
+  const res = await run(wb, pkg, set(1, [[1, 1, '777'], [2, 1, '=IF(']]));
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error.code, 'invalid');
+  assertBytesEqual(pkg.serialize({ force: true }), bytes, 'package unchanged');
+  const sheet = await wb.sheet(1);
+  assert.strictEqual(sheet.cell(1, 1).value.v, 42, 'B2 still reads 42');
+  assert.strictEqual(core.xlsx.format.editSeed(sheet.cell(1, 1), styles, wb.date1904), '42');
+  // A new cell in a new row, refused by the next cell: not in the view either.
+  const res2 = await run(wb, pkg, set(1, [[40, 0, 'phantom'], [41, 0, '=1+']]));
+  assert.strictEqual(res2.ok, false);
+  assert.strictEqual(sheet.cell(40, 0), undefined);
+  assert.deepStrictEqual(sheet.cellsIn([39, 0, 42, 3]), []);
+  await assertViewMatchesFile(wb, pkg, styles, 'after refused pastes');
+  // An unrelated edit afterwards does not resurrect them, and the saved file agrees.
+  const ok = await run(wb, pkg, set(1, [[29, 4, '1']]));
+  assert.ok(ok.ok && ok.edit);
+  await assertViewMatchesFile(wb, pkg, styles, 'after a later edit');
+  assert.ok(partText(save(pkg), SHEET1).includes('<c r="B2"><v>42</v></c>'));
+});
+
+// Two shared groups reusing si="0" (malformed: materialising either is refused) after plain cells, so a
+// refusal happens after earlier cells of the same edit were written (the rollback path, not the pre-check).
+const DUP_SI_DATA = '<sheetData>'
+  + '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f t="shared" ref="B1:B2" si="0">A1+1</f><v>2</v></c></row>'
+  + '<row r="2"><c r="A2"><v>2</v></c><c r="B2"><f t="shared" si="0"/><v>3</v></c></row>'
+  + '<row r="4"><c r="A4"><v>4</v></c></row>'
+  + '<row r="6"><c r="A6"><v>6</v></c><c r="B6"><f t="shared" ref="B6:B7" si="0">A6+100</f><v>106</v></c></row>'
+  + '<row r="7"><c r="A7"><v>7</v></c><c r="B7"><f t="shared" si="0"/><v>107</v></c></row>'
+  + '</sheetData>';
+const dupSi = () => patched('basic.xlsx', {
+  [SHEET1]: (t) => t.replace(/<sheetData>.*<\/sheetData>/s, DUP_SI_DATA),
+});
+
+test('F1: a refusal after cells and a date style were written rolls the index and the style table back', async () => {
+  const bytes = await dupSi();
+  const { pkg, wb } = load('dup.xlsx', bytes);
+  const styles = core.xlsx.ops.stylesFor(wb);
+  const xfs = styles.xfCount;
+  const sheet = await wb.sheet(1);
+  // A4 (value), A5 (new row), A8 (date: appends a date xf), then B1 (master of a reused si: blocked).
+  const res = await run(wb, pkg, set(1, [[3, 0, '777'], [4, 0, 'new'], [7, 0, '2024-03-15'], [0, 1, '5']]));
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error.code, 'blocked');
+  assert.match(res.error.message, /2 master cells/);
+  assertBytesEqual(pkg.serialize({ force: true }), bytes, 'package unchanged');
+  assert.strictEqual(styles.xfCount, xfs, 'style table reloaded');
+  assert.strictEqual(sheet.cell(3, 0).value.v, 4);
+  assert.strictEqual(sheet.cell(4, 0), undefined);
+  assert.strictEqual(sheet.cell(7, 0), undefined);
+  await assertViewMatchesFile(wb, pkg, styles, 'after the refused paste');
+  // clearCells: A4 is cleared before B6 (a master of the reused si) refuses.
+  const clr = await run(wb, pkg, { op: 'clearCells', sheetId: 1, range: [3, 0, 5, 1] });
+  assert.strictEqual(clr.ok, false);
+  assert.strictEqual(clr.error.code, 'blocked');
+  assert.strictEqual(sheet.cell(3, 0).value.v, 4);
+  await assertViewMatchesFile(wb, pkg, styles, 'after the refused clear');
+  // The next edit still lands exactly and appends the date style once.
+  const ok = await run(wb, pkg, set(1, [[7, 0, '2024-03-15']]));
+  assert.ok(ok.ok && ok.edit);
+  assert.strictEqual(styles.xfCount, xfs + 1);
+  await assertViewMatchesFile(wb, pkg, styles, 'after a later edit');
+  save(pkg);
 });
 
 test('paste onto a table header is refused and changes nothing', async () => {
@@ -513,6 +590,8 @@ test('an undo applied from outside without refresh: the next edit detects the st
 
 const POOL = ['', '', '0', '42', '-3.25', '1e5', '.5', '5.', 'TRUE', 'false', 'text', "'007", '  spaced  ', 'café 😀', '2024-03-15',
   '2024-03-15T08:30', '12%', '#N/A', 'a & <b>', '_x0041_', '=1+1', 'line\nbreak'];
+/** Inputs every paste containing one is refused for (Gate R2 F1: mixed into pastes after good values). */
+const BAD = ['=IF(', '=SUM(,)', '=NoSuch!A1', '=[1]Sheet1!A1', '=ROUND(1.5)', '={1,2;3}'];
 
 async function randomRun(name, seed, withRefresh) {
   const { pkg, wb, bytes } = load(name);
@@ -532,6 +611,7 @@ async function randomRun(name, seed, withRefresh) {
       if (withRefresh) refreshAfterEdit(wb, e);
       undone.push(e);
       undos++;
+      if (withRefresh) await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `${name} undo ${i}`);
       continue;
     }
     if (x < 0.22 && undone.length) {
@@ -539,6 +619,7 @@ async function randomRun(name, seed, withRefresh) {
       applyEdit(pkg, e);
       if (withRefresh) refreshAfterEdit(wb, e);
       done.push(e);
+      if (withRefresh) await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `${name} redo ${i}`);
       continue;
     }
     const sheetId = pick(sheetIds);
@@ -550,11 +631,16 @@ async function randomRun(name, seed, withRefresh) {
       const n = 1 + Math.floor(rand() * 4);
       const cells = new Map();
       for (let k = 0; k < n; k++) cells.set(`${Math.floor(rand() * 35)},${Math.floor(rand() * 9)}`, pick(POOL));
-      op = set(sheetId, [...cells].map(([rc, input]) => [...rc.split(',').map(Number), input]));
+      const list = [...cells].map(([rc, input]) => [...rc.split(',').map(Number), input]);
+      if (list.length > 1 && rand() < 0.15) list[list.length - 1][2] = pick(BAD);
+      op = set(sheetId, list);
     }
     const res = await run(wb, pkg, op);
-    if (!res.ok) { refused++; continue; }
-    if (res.edit) { done.push(res.edit); undone.length = 0; applied++; }
+    if (!res.ok) refused++;
+    else if (res.edit) { done.push(res.edit); undone.length = 0; applied++; }
+    // With refresh after every outside undo/redo the view must read what the file says at every step.
+    if (withRefresh) await assertViewMatchesFile(wb, pkg, core.xlsx.ops.stylesFor(wb), `${name} step ${i}`);
+    if (!res.ok) continue;
     if (i % 25 === 0) {
       for (const sid of sheetIds) {
         const part = wb.entry(sid).part;
@@ -568,7 +654,8 @@ async function randomRun(name, seed, withRefresh) {
   await excel(final);   // G6: ExcelJS loads the edited workbook
   while (done.length) applyEdit(pkg, invertEdit(done.pop()));
   assertBytesEqual(pkg.serialize(), bytes, `${name}: full undo`);
-  assert.ok(applied >= 80 && undos >= 15, `exercised: ${applied} edits, ${undos} undos`);
+  assert.ok(applied >= 70 && undos >= 15, `exercised: ${applied} edits, ${undos} undos`);
+  assert.ok(refused >= 5, `bad pastes exercised: ${refused} refusals`);
   return refused;
 }
 
