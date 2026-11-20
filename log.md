@@ -860,3 +860,18 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - (c) Trailing bytes after a complete deflate stream inside an entry are ignored, not refused. The CRC and size checks still hold. (Found during the fix; this is not one of the review's numbered nits.)
   - (d) The review's nit 12, name spoofing: a CD Unicode-Path extra field (0x7075) can make Info-ZIP-style readers see a different name, and the duplicate-name check does not treat `\` and `/` as equivalent. Both are kept verbatim on save. This is not a corruption risk. Correction by the orchestrator: (a) is nit 9, (b) is nit 8 and (d) is nit 12.
 - **Verification:** `npm run check-types`, `npm run compile` and `npm test` pass (219 tests, was 202). G0–G5 tests are unchanged and green.
+
+### 2026-11-20 — WP-10 Word viewer (merged into feature/office-word-viewer; completes PR-3)
+- **WP-10 (Sonnet):** `core/docx/notices.ts` (`detectDocxNotices`) flags tracked changes, comments with a count, embedded objects, charts and SmartArt, equations, altChunk, macros and external pictures. Also `media/docxEditor.js` and `.css`, and `kindNotices` on the provider, cached per package.
+- **Rendering:** docx-preview with exactly the §7.1 options. Renders are serialised, and only the newest queued render runs.
+- **Toolbar:** zoom 50–200% plus Fit width, a section count, Open in Word and About.
+- **Links:** http, https and mailto go to the host. `#bookmark` scrolls within the page. Any other link is dropped.
+- **Errors:** a failed render shows the error view.
+- Tests: `docxNotices.test.mjs` (4) and `docxViewer.test.js` (14, DOM shim with a stubbed renderAsync).
+- **Gate R1 manual checks:**
+  - Real rendering and theming.
+  - The fit-width margin (`FIT_MARGIN_PX` = 40).
+  - The find widget.
+  - Bookmark jumps.
+  - No network requests for external images.
+  - Reload after saving in Word.
