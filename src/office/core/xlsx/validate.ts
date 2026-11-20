@@ -26,12 +26,16 @@
 // edit can never add a problem. "Formulas were touched" means a touched sheet's formulas differ from the
 // loaded ones (without a context: a touched sheet has any formula).
 //
+// `xlsxValidator.async` runs the same rules with yields to the event loop (large parts parsed with the
+// yielding parser, scans paused every few thousand cells); the save path uses it (Gate R2 F5).
+//
 // The validator reads the XML trees directly — it shares no code with the writers it checks except the
 // lossless parser, the A1 parser and the formula checks (refs.checkFormulaSyntax / validateFormula).
 //
 // No `vscode` import here (core rule).
 
-import type { Validator } from '../save.js';
+import type { Validator, ValidatorContext } from '../save.js';
+import { LIMITS } from '../limits.js';
 import type { OfficePackage } from '../package.js';
 import { attr, child, childrenOf, serialize, textContent } from '../xml.js';
 import type { XmlElement } from '../xml.js';
@@ -201,7 +205,52 @@ interface SheetScan {
   effective: Map<string, string>;
 }
 
-function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: number): SheetScan {
+// ---------------------------------------------------------------------------------------------------
+// Stepping: the rules are generators so the same code runs in one block (xlsxValidator) or with
+// yields to the event loop (xlsxValidator.async, spec §10.2). A generator yields TICK at points where
+// a pause is cheap (every TICK_CELLS cells, every TICK_ITEMS list items), and a Need before it reads a
+// part's tree, so the async driver can parse a large part with the yielding parser first; the
+// synchronous driver ignores both, and `pkg.xml` then parses (or throws) exactly as before.
+
+const TICK = 0;
+interface Need { pkg: OfficePackage; part: string }
+type Step = typeof TICK | Need;
+type Steps<T> = Generator<Step, T, void>;
+const TICK_CELLS = 2000;
+const TICK_ITEMS = 500;
+
+function runSync<T>(g: Steps<T>): T {
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof setImmediate === 'function') setImmediate(resolve);
+    else setTimeout(resolve, 0);
+  });
+}
+
+async function runAsync<T>(g: Steps<T>, yieldEveryMs: number): Promise<T> {
+  let deadline = Date.now() + yieldEveryMs;
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+    if (r.value !== TICK) {
+      const { pkg, part } = r.value;
+      // Errors are left for the generator's own pkg.xml call to raise, as the sync path does.
+      if (pkg.has(part)) await pkg.xmlAsync(part).catch(() => undefined);
+      deadline = Date.now() + yieldEveryMs;
+    } else if (Date.now() >= deadline) {
+      await yieldToEventLoop();
+      deadline = Date.now() + yieldEveryMs;
+    }
+  }
+}
+
+function* scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: number): Steps<SheetScan> {
   const problems: Problem[] = [];
   const formulas: string[] = [];
   const explicit: Array<[string, string]> = [];
@@ -209,9 +258,11 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
   const done = (): SheetScan => ({ problems, formulas, explicit, effective });
   const add = (key: string, message: string): void => { problems.push({ key: `${lower(part)}|${key}`, message: `${part}: ${message}` }); };
   let root: XmlElement;
+  yield { pkg, part };
   try { root = pkg.xml(part).root; } catch (e) { add('xml', errText(e)); return done(); }
   const ns = root.ns;
   if (root.local !== 'worksheet' || !isMainNs(ns)) { add('root', 'root element is not a SpreadsheetML worksheet'); return done(); }
+  let tick = 0;
   const masterAt = new Map<string, { r: number; c: number; text: string }>();
   const dependantsAt: Array<{ label: string; si: string; r: number; c: number }> = [];
 
@@ -221,6 +272,7 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
   const sheetData = child(root, ns, 'sheetData');
   let prevRow = 0;
   for (const row of sheetData ? childrenOf(sheetData, ns, 'row') : []) {
+    if (++tick >= TICK_CELLS) { tick = 0; yield TICK; }
     const rAttr = uintAttr(row, 'r');
     const r = rAttr === undefined ? prevRow + 1 : rAttr;
     if (!Number.isInteger(r) || r < 1 || r > MAX_ROWS) { add(`row-r:${attr(row, '', 'r')}`, `row r="${attr(row, '', 'r')}" is not a row number inside the sheet`); continue; }
@@ -228,6 +280,7 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
     prevRow = Math.max(prevRow, r);
     let prevCol = -1;
     for (const c of childrenOf(row, ns, 'c')) {
+      if (++tick >= TICK_CELLS) { tick = 0; yield TICK; }
       const ref = attr(c, '', 'r');
       let rc: [number, number] | undefined;
       if (ref === undefined) rc = prevCol + 1 < MAX_COLS ? [r - 1, prevCol + 1] : undefined;
@@ -275,6 +328,7 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
     }
   }
   for (const d of dependantsAt) {
+    if (++tick >= TICK_ITEMS) { tick = 0; yield TICK; }
     const m = masterAt.get(d.si);
     if (!m || m.text === '') continue;
     try { effective.set(d.label, translateFormula(m.text, d.r - m.r, d.c - m.c)); } catch { /* not comparable */ }
@@ -301,6 +355,7 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
   }
   merges.sort((a, b) => a.rg[0] - b.rg[0]);
   for (let i = 0; i < merges.length; i++) {
+    if (++tick >= TICK_ITEMS) { tick = 0; yield TICK; }
     const a = merges[i].rg;
     for (let j = i + 1; j < merges.length && merges[j].rg[0] <= a[2]; j++) {
       const b = merges[j].rg;
@@ -314,16 +369,19 @@ function scanSheet(pkg: OfficePackage, part: string, xfCount: number, sstCount: 
  * Formulas of `cur` the edit changed (text differs from the loaded cell's formula in `orig`) that
  * refs.validateFormula refuses in `fctx`, unless the loaded sheet had a formula refused for the same reason.
  */
-function changedFormulaProblems(part: string, cur: SheetScan, orig: SheetScan | undefined, fctx: FormulaContext): Problem[] {
+function* changedFormulaProblems(part: string, cur: SheetScan, orig: SheetScan | undefined, fctx: FormulaContext): Steps<Problem[]> {
   const out: Problem[] = [];
   let before: Set<string> | undefined;
+  let tick = 0;
   for (const [label, text] of cur.explicit) {
+    if (++tick >= TICK_ITEMS) { tick = 0; yield TICK; }
     if (orig?.effective.get(label) === text) continue;
     const check = validateFormula(text, fctx);
     if (check.ok) continue;
     if (!before) {
       before = new Set();
       for (const t of orig?.effective.values() ?? []) {
+        if (++tick >= TICK_ITEMS) { tick = 0; yield TICK; }
         const v = validateFormula(t, fctx);
         if (!v.ok) before.add(v.message);
       }
@@ -394,18 +452,23 @@ function stylesProblems(pkg: OfficePackage, part: string): Problem[] {
 // ---------------------------------------------------------------------------------------------------
 
 /** Every rule for `pkg` within the scope of `touched` (lower-case part names). */
-function problemsOf(pkg: OfficePackage, touched: ReadonlySet<string>): { problems: Problem[]; facts?: WorkbookFacts; formulas: Map<string, string[]>; scans: Map<string, SheetScan> } {
+interface ScopeResult { problems: Problem[]; facts?: WorkbookFacts; formulas: Map<string, string[]>; scans: Map<string, SheetScan> }
+
+function* problemsOf(pkg: OfficePackage, touched: ReadonlySet<string>): Steps<ScopeResult> {
   const facts = workbookFacts(pkg);
   const formulas = new Map<string, string[]>();
   const scans = new Map<string, SheetScan>();
   if (Array.isArray(facts)) return { problems: facts, formulas, scans };
   const problems = facts.problems.slice();
+  if (facts.stylesPart) yield { pkg, part: facts.stylesPart };
   const xfCount = cellXfCount(pkg, facts.stylesPart);
   let sstCount: number | undefined;
   for (const s of facts.sheets) {
     if (!s.worksheet || !s.part || !touched.has(lower(s.part))) continue;
+    if (sstCount === undefined && facts.sstPart) yield { pkg, part: facts.sstPart };
     sstCount ??= sharedStringCount(pkg, facts.sstPart);
-    const scan = scanSheet(pkg, s.part, xfCount, sstCount);
+    yield TICK;
+    const scan = yield* scanSheet(pkg, s.part, xfCount, sstCount);
     problems.push(...scan.problems);
     formulas.set(lower(s.part), scan.formulas);
     scans.set(lower(s.part), scan);
@@ -421,19 +484,37 @@ const sameList = (a: readonly string[] | undefined, b: readonly string[] | undef
  * Every §13.3 xlsx rule (styles rules when the styles part is touched). Messages are prefixed with the
  * part they concern. See the header for scope and the comparison with the loaded package.
  */
-export const xlsxValidator: Validator = function xlsxValidator(pkg, touched, ctx) {
+export const xlsxValidator: Validator = Object.assign(
+  // A method, so the function's name stays "xlsxValidator" (failure messages use it) whatever a
+  // bundler renames: a named function expression here would shadow the const and be renamed.
+  {
+    xlsxValidator(pkg: OfficePackage, touched: string[], ctx?: ValidatorContext): string[] {
+      return runSync(xlsxChecks(pkg, touched, ctx));
+    },
+  }.xlsxValidator,
+  {
+    /** The same checks and messages, yielding to the event loop between and within large parts (§10.2). */
+    async: (pkg: OfficePackage, touched: string[], ctx?: ValidatorContext): Promise<string[]> =>
+      runAsync(xlsxChecks(pkg, touched, ctx), LIMITS.parseYieldMs),
+  },
+);
+
+function* xlsxChecks(pkg: OfficePackage, touched: string[], ctx: ValidatorContext | undefined): Steps<string[]> {
   const scope = new Set(touched.map(lower));
-  const { problems, facts, formulas, scans } = problemsOf(pkg, scope);
+  const { problems, facts, formulas, scans } = yield* problemsOf(pkg, scope);
   if (!facts) return problems.map((p) => p.message);
   const original = ctx?.original();
-  let loadedScan: ReturnType<typeof problemsOf> | undefined;
-  const loaded = (o: OfficePackage): ReturnType<typeof problemsOf> => (loadedScan ??= problemsOf(o, scope));
+  let loadedScan: ScopeResult | undefined;
+  function* loaded(o: OfficePackage): Steps<ScopeResult> {
+    loadedScan ??= yield* problemsOf(o, scope);
+    return loadedScan;
+  }
 
   // Calc chain absent whenever formulas were touched (§9.5, §13.3).
   if (hasCalcChain(pkg, facts)) {
     let changed = false;
     if (original) {
-      const before = loaded(original).formulas;
+      const before = (yield* loaded(original)).formulas;
       for (const [part, list] of formulas) if (!sameList(list, before.get(part))) { changed = true; break; }
     } else {
       for (const list of formulas.values()) if (list.length > 0) { changed = true; break; }
@@ -443,14 +524,19 @@ export const xlsxValidator: Validator = function xlsxValidator(pkg, touched, ctx
 
   let out = problems;
   if (out.length > 0 && original) {
-    const before = new Set(loaded(original).problems.map((p) => p.key));
+    const before = new Set((yield* loaded(original)).problems.map((p) => p.key));
     out = out.filter((p) => !before.has(p.key));
   }
 
   // Changed formulas pass the contextual checks (only with the loaded package to tell what changed).
   if (original) {
     const fctx = formulaContextOf(pkg);
-    if (fctx) for (const [part, scan] of scans) out.push(...changedFormulaProblems(part, scan, loaded(original).scans.get(part), fctx));
+    if (fctx) {
+      for (const [part, scan] of scans) {
+        const orig = (yield* loaded(original)).scans.get(part);
+        out.push(...(yield* changedFormulaProblems(part, scan, orig, fctx)));
+      }
+    }
   }
 
   // Every cellXfs record that existed at load is still present, at the same index, with identical text.
@@ -468,4 +554,4 @@ export const xlsxValidator: Validator = function xlsxValidator(pkg, touched, ctx
     }
   }
   return out.map((p) => p.message);
-};
+}

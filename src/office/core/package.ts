@@ -13,7 +13,7 @@
 
 import type { ReadOnlyReason } from './types.js';
 import { LIMITS } from './limits.js';
-import { ZipError, readZip, inflateEntry, inflateEntryAsync, inflateEntryPrefix, writeZip, crc32 } from './zip.js';
+import { ZipError, readZip, inflateEntry, inflateEntryAsync, inflateEntryPrefix, writeZip, writeZipAsync, crc32, crc32Async } from './zip.js';
 import type { ZipArchive, ZipEntry, ZipLimits, ZipRefusal, ZipWriteItem } from './zip.js';
 import { XmlError, decodePart, decodePartPrefix, encodePart, parseXml, parseXmlAsync, serialize as serializeXml } from './xml.js';
 import type { XmlDoc } from './xml.js';
@@ -462,6 +462,88 @@ export class OfficePackage {
     }
     if (!changed && !force) return this.originalBytes;
     return writeZip(this.zip, items);
+  }
+
+  /**
+   * As `serialize` (byte-identical result, same errors), but the expensive work (CRC-32 and byte
+   * comparison of replaced parts against their originals, deflating every new or changed part)
+   * yields to the event loop at least every `LIMITS.parseYieldMs` ms and between parts (§6.5, §10.2).
+   *
+   * The package state is captured synchronously, before the promise is returned: each changed
+   * part's current bytes are produced then (a tree is serialised once; no deflating). Anything done
+   * to the package after the call returns — an edit, or rolling back a temporary EditBuilder — does
+   * not affect the result.
+   */
+  serializeAsync(opts?: { force?: boolean }): Promise<Uint8Array> {
+    const force = opts?.force === true;
+    if (!force && this.touchedParts().length === 0) return Promise.resolve(this.originalBytes);
+    type Step = { item: ZipWriteItem } | { entry: ZipEntry; data: Uint8Array };
+    const steps: Step[] = [];
+    let changed = false;
+    try {
+      // Same order and the same decisions as serialize().
+      const all = [...this.parts.values()];
+      const ordered = all.filter((s) => s.entry).sort((a, b) => a.entry!.extent[0] - b.entry!.extent[0]);
+      for (const s of all) if (!s.entry) ordered.push(s);
+      for (const s of ordered) {
+        if (!s.entry) {
+          if (s.data === null) continue;
+          steps.push({ item: { add: s.name, data: this.currentBytes(s) } });
+          changed = true;
+          continue;
+        }
+        if (s.data === null) { changed = true; continue; }
+        if (!s.changed) { steps.push({ item: { keep: s.entry } }); continue; }
+        if (s.touched && s.doc && s.origText !== undefined) {
+          const text = serializeXml(s.doc);
+          if (text === s.origText) { steps.push({ item: { keep: s.entry } }); continue; }
+          steps.push({ item: { replace: s.entry, data: encodePart(text, s.bom ?? false) } });
+          changed = true;
+          continue;
+        }
+        // Compared with the original entry below (after a yield): kept when identical.
+        steps.push({ entry: s.entry, data: this.currentBytes(s) });
+      }
+    } catch (e) {
+      return Promise.reject(e);
+    }
+    return (async () => {
+      const items: ZipWriteItem[] = [];
+      for (const st of steps) {
+        if ('item' in st) { items.push(st.item); continue; }
+        if (await this.sameAsEntryAsync(st.entry, st.data)) { items.push({ keep: st.entry }); continue; }
+        items.push({ replace: st.entry, data: st.data });
+        changed = true;
+      }
+      if (!changed && !force) return this.originalBytes;
+      return writeZipAsync(this.zip, items, LIMITS.parseYieldMs);
+    })();
+  }
+
+  /** `sameAsOriginal` for bytes already produced, yielding while it CRCs and inflates. */
+  private async sameAsEntryAsync(e: ZipEntry, data: Uint8Array): Promise<boolean> {
+    if (data.length !== e.uncompressedSize) return false;
+    if (await crc32Async(data, LIMITS.parseYieldMs) !== e.crc32) return false;
+    const orig = await inflateEntryAsync(this.zip, e, LIMITS.parseYieldMs);
+    for (let i = 0; i < data.length; i++) if (data[i] !== orig[i]) return false;
+    return true;
+  }
+
+  /**
+   * Whether `serialize()` (without `force`) would return `originalBytes` itself: nothing changed, or
+   * every change was undone. Deflates nothing; a part replaced by setPart with bytes of its original
+   * size and CRC is compared with the inflated original.
+   */
+  serializesToOriginal(): boolean {
+    for (const s of this.parts.values()) {
+      if (!s.entry) {
+        if (s.data === null) continue;
+        return false;
+      }
+      if (s.data === null) return false;
+      if (s.changed && !this.sameAsOriginal(s)) return false;
+    }
+    return true;
   }
 
   private sameAsOriginal(s: PartState): boolean {

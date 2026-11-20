@@ -13,8 +13,9 @@
 //
 // Gate R2 fixes: the backup id carries the disk state the edits are based on, so a restored backup
 // whose file changed meanwhile goes through the conflict modal (F3); flushing never commits an open
-// editor (F4, webview side); save verification runs in stages that yield to the event loop, backups
-// are coalesced, cached per version and only container-checked (F5); undo/redo are refused while a
+// editor (F4, webview side); serialisation, save verification and the format validators yield to the
+// event loop (core serializeAsync / serializeAndVerifyAsync), backups are coalesced, cached per
+// version and only container-checked (F5); undo/redo are refused while a
 // save is writing and the save point is the state that was serialised (F6); the save writes in place
 // (spec §6.5 step 5, F8); entering Edit on a digitally signed file warns once (§10.3).
 
@@ -23,15 +24,15 @@ import { createHash } from 'crypto';
 import { OfficePackage, zipLimits } from './core/package.js';
 import type { OfficeKind } from './core/package.js';
 import { OfficeLoadError } from './core/sniff.js';
-import { contentTypeOf, normalizePartName, readRelationships } from './core/opc.js';
+import { contentTypeOf, readRelationships } from './core/opc.js';
 import { decodePart } from './core/xml.js';
 import { crc32, inflateEntry, inflateEntryAsync, readZip } from './core/zip.js';
 import { LIMITS } from './core/limits.js';
 import type { OfficeError, OfficeNotice, ReadOnlyReason } from './core/types.js';
 import { EditBuilder, invertEdit, tryApplyEdit, undoRedoFor } from './core/edits.js';
 import type { EditOutcome, EditTarget, OfficeEdit } from './core/edits.js';
-import { packageValidator, serializeAndVerify, verifyBytes } from './core/save.js';
-import type { Validator, ValidatorContext, VerifyFailure, VerifyResult } from './core/save.js';
+import { serializeAndVerify, serializeAndVerifyAsync } from './core/save.js';
+import type { Validator, VerifyFailure, VerifyResult } from './core/save.js';
 import { editFlagFor } from './featureFlags.js';
 import {
   appName, describeLoadFailure, describeReadFailure, describeUnexpectedError, doctypeDetail,
@@ -247,69 +248,16 @@ export async function hashBytes(bytes: Uint8Array): Promise<string> {
 // ---------------------------------------------------------------------------------------------
 // Staged verification (Gate R2 F5)
 
-const lowerPart = (s: string): string => normalizePartName(s).toLowerCase();
-
-/** Attribute "<part>: message" to that part when the prefix names a known part (as core/save.ts does). */
-function toFailure(message: string, known: ReadonlySet<string>): VerifyFailure {
-  const i = message.indexOf(': ');
-  if (i > 0 && known.has(lowerPart(message.slice(0, i)))) return { part: normalizePartName(message.slice(0, i)), message };
-  return { message };
-}
-
 /**
- * `serializeAndVerify` (core/save.ts) cut into stages with a yield between them, so a save of a large
- * workbook blocks the extension host for one stage at a time instead of all of them: serialise;
- * container, CRC, content, re-parse and package checks (`verifyBytes` with no extra validators); then
- * each format validator on the re-opened output. Same checks, same ok/fail outcome. (One difference:
- * when the package checks fail the format validators are not run, so the diagnostics list only the
- * package failures.) The package must not change until it resolves; the save holds `writing` for that.
+ * The save path's verification (Gate R2 F5): core `serializeAndVerifyAsync`, the same checks and the
+ * same result as `serializeAndVerify`, with the serialisation, every verification stage and the format
+ * validators yielding to the event loop, so a save of a large workbook never blocks the extension host
+ * for a whole stage. The package must not change until it resolves; the save holds `writing` for that.
  */
-export async function serializeAndVerifyStaged(
+export function serializeAndVerifyStaged(
   pkg: OfficePackage, validators: Validator[], hooks?: SaveTestHooks,
 ): Promise<VerifyResult> {
-  let bytes: Uint8Array;
-  try {
-    bytes = pkg.serialize();
-  } catch (e) {
-    return { ok: false, failures: [{ message: `Serialisation failed: ${errorText(e)}` }] };
-  }
-  if (hooks?.corrupt) bytes = hooks.corrupt(bytes.slice());
-  await pause();
-  const failures = verifyBytes(pkg, bytes, []);   // steps 1–4 and packageValidator
-  if (failures.length > 0) return { ok: false, failures };
-  const extra = validators.filter((v) => v !== packageValidator);
-  if (extra.length === 0) return { ok: true, bytes };
-  await pause();
-  let reopened: OfficePackage;
-  try {
-    reopened = OfficePackage.open(`verify.${pkg.kind}`, bytes);
-  } catch (e) {
-    return { ok: false, failures: [{ message: `Output does not re-open: ${errorText(e)}` }] };
-  }
-  const touched = pkg.touchedParts();
-  const known = new Set([...reopened.partNames(), ...touched].map(lowerPart));
-  let original: OfficePackage | undefined | null = null;
-  const ctx: ValidatorContext = {
-    original: () => {
-      if (original === null) {
-        try { original = OfficePackage.open(`original.${pkg.kind}`, pkg.originalBytes); } catch { original = undefined; }
-      }
-      return original;
-    },
-  };
-  for (const v of extra) {
-    await pause();
-    let messages: string[];
-    try {
-      messages = v(reopened, touched.slice(), ctx);
-    } catch (e) {
-      failures.push({ message: `Validator ${v.name || '(anonymous)'} threw: ${errorText(e)}` });
-      continue;
-    }
-    if (!Array.isArray(messages)) { failures.push({ message: `Validator ${v.name || '(anonymous)'} returned no message list` }); continue; }
-    for (const m of messages) failures.push(toFailure(String(m), known));
-  }
-  return failures.length > 0 ? { ok: false, failures } : { ok: true, bytes };
+  return serializeAndVerifyAsync(pkg, validators, hooks);
 }
 
 /**
@@ -743,13 +691,14 @@ export class OfficeDocument implements vscode.CustomDocument {
   private prepareSerialization(pkg: OfficePackage): { builder: EditBuilder | null } | { failure: VerifyFailure } {
     const prepare = this.hooks.beforeFirstSerialize;
     if (!prepare) return { builder: null };
-    let plain: Uint8Array;
+    // Whether serialize() would return the original bytes, without deflating anything (F5).
+    let unchanged: boolean;
     try {
-      plain = pkg.serialize();
+      unchanged = pkg.serializesToOriginal();
     } catch (e) {
       return { failure: { message: `Serialisation failed: ${errorText(e)}` } };
     }
-    if (plain === pkg.originalBytes) return { builder: null };
+    if (unchanged) return { builder: null };
     const b = new EditBuilder(pkg, 'Prepare save');
     try {
       prepare.call(this.hooks, b);
@@ -1001,17 +950,22 @@ export class OfficeDocument implements vscode.CustomDocument {
     if (!test && c && c.result.ok && c.version === this.version && c.generation === this.generation) return { ok: true, bytes: c.result.bytes };
     const bc = this.backupCache;
     if (!test && bc && bc.key === key) return { ok: true, bytes: bc.bytes };
-    // Serialise synchronously (the package may change once this yields).
+    // The package may change once this yields: serializeAsync captures the state (with the save-time
+    // preparation applied) before it returns, then deflates with yields (F5).
     const prep = this.prepareSerialization(pkg);
     if ('failure' in prep) return { ok: false, failures: [prep.failure] };
+    let pending: Promise<Uint8Array>;
+    try {
+      pending = pkg.serializeAsync();
+    } finally {
+      prep.builder?.abort();
+    }
     let bytes: Uint8Array;
     try {
-      bytes = pkg.serialize();
+      bytes = await pending;
       if (test?.corrupt) bytes = test.corrupt(bytes.slice());
     } catch (e) {
       return { ok: false, failures: [{ message: `Serialisation failed: ${errorText(e)}` }] };
-    } finally {
-      prep.builder?.abort();
     }
     await pause();
     const failures = await verifyBackupBytes(bytes, this.kind);
