@@ -921,6 +921,8 @@ test('F5: backups skip the format validators, serialise once per state, reuse a 
   const realSerialize = pkg.serialize.bind(pkg);
   let serialized = 0;
   pkg.serialize = (...a) => { serialized++; return realSerialize(...a); };
+  const realSerializeAsync = pkg.serializeAsync.bind(pkg);
+  pkg.serializeAsync = (...a) => { serialized++; return realSerializeAsync(...a); };
   const n0 = panel.sent.length;
   const b1 = await doc.backup(vscode.Uri.file('/backups/f5/1.docx'), token);
   deepTypes(panel.sent.slice(n0), ['flushPendingEdits'], 'a backup posts only the flush request');
@@ -954,6 +956,8 @@ test('F5: a backup waits for a quiet period; an edit landing meanwhile is in the
   const realSerialize = pkg.serialize.bind(pkg);
   let serialized = 0;
   pkg.serialize = (...a) => { serialized++; return realSerialize(...a); };
+  const realSerializeAsync = pkg.serializeAsync.bind(pkg);
+  pkg.serializeAsync = (...a) => { serialized++; return realSerializeAsync(...a); };
   const dest = vscode.Uri.file('/backups/q/basic.docx');
   const pending = doc.backup(dest, token);
   await tick(15);

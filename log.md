@@ -1079,3 +1079,20 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
 - **`OFFICE_FLAGS.xlsxEdit` stays false** until the user's Gate R2 checks:
   - `verify-office-open.ps1` on `r2\excel-check` and `tests\.out`; any repair on f01–f19 means tightening F2 further;
   - the Extension Development Host checklist.
+
+### 2026-11-21 — Gate R2 F5 follow-up: non-blocking save/verify core (feature/office-xlsx-edit-ui, 7e9c268)
+- **`core/deflate.ts`:** a pausable copy of fflate 0.8.3's one-shot compressor. It is byte-identical to deflateSync, yields every ~30 ms, keeps the MIT notice and is listed in THIRD-PARTY-NOTICES. fflate's streaming Deflate produces different bytes, and Node zlib is not allowed in core.
+- **Async core functions** with the same results as their sync versions:
+  - `zip.ts`: rawDeflateAsync, crc32Async and writeZipAsync.
+  - `package.ts`: serializeAsync (state captured synchronously) and serializesToOriginal().
+  - `save.ts`: verifyBytesAsync and serializeAndVerifyAsync.
+  - `xlsxValidator.async`.
+- **Host:** the save and backup paths use the async core.
+- **Longest event-loop block on large.xlsx:**
+  - backup: 497–784 ms → 42–85 ms
+  - save: 1,567–2,079 ms → 83–187 ms
+
+  These are idle-machine figures; under the full parallel npm test the blocks reach about 0.9 s.
+- **Tests:**
+  - saveAsync.test.mjs, an equivalence matrix between the async and sync paths.
+  - saveBlocking.test.mjs, which requires the longest block to stay under 1,000 ms. It allows up to 3 attempts and is the one test that might flake on a loaded CI machine.

@@ -15,7 +15,8 @@
 
 import { OfficePackage, zipLimits } from './package.js';
 import { OfficeLoadError } from './sniff.js';
-import { ZipError, crc32, inflateEntry, readZip } from './zip.js';
+import { LIMITS } from './limits.js';
+import { ZipError, crc32, inflateEntry, inflateEntryAsync, readZip } from './zip.js';
 import type { ZipArchive, ZipEntry } from './zip.js';
 import { XmlError, decodePart, parseXml, serialize as serializeXml } from './xml.js';
 import {
@@ -38,7 +39,13 @@ export interface ValidatorContext {
  * `touched` the parts changed since load (deleted parts included). Prefix a message with
  * `<part name>: ` to attribute it to a part.
  */
-export type Validator = (pkg: OfficePackage, touched: string[], ctx?: ValidatorContext) => string[];
+export type Validator = ((pkg: OfficePackage, touched: string[], ctx?: ValidatorContext) => string[]) & {
+  /**
+   * The same checks with the same messages, yielding to the event loop while it works (§10.2). Used
+   * by `verifyBytesAsync` when present; the validator itself is called otherwise.
+   */
+  readonly async?: (pkg: OfficePackage, touched: string[], ctx?: ValidatorContext) => Promise<string[]>;
+};
 export interface VerifyFailure { part?: string; message: string; }
 
 export type VerifyResult = { ok: true; bytes: Uint8Array } | { ok: false; failures: VerifyFailure[] };
@@ -184,6 +191,157 @@ export function verifyBytes(pkg: OfficePackage, bytes: Uint8Array, validators: V
     let messages: string[];
     try {
       messages = v(reopened, touched.slice(), ctx);
+    } catch (e) {
+      failures.push({ message: `Validator ${v.name || '(anonymous)'} threw: ${errText(e)}` });
+      continue;
+    }
+    if (!Array.isArray(messages)) { failures.push({ message: `Validator ${v.name || '(anonymous)'} returned no message list` }); continue; }
+    for (const m of messages) failures.push(toFailure(String(m), known));
+  }
+  return failures;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Async variants (spec §6.5 step 4 "in stages with a yield to the event loop between them", §10.2)
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof setImmediate === 'function') setImmediate(resolve);
+    else setTimeout(resolve, 0);
+  });
+}
+
+/**
+ * As `serializeAndVerify` (same result for the same package), with `OfficePackage.serializeAsync` and
+ * `verifyBytesAsync`: no single synchronous block covers a whole stage of a large part. The package
+ * must not change until it resolves (it is compared with the output); a save holds edits off for that.
+ */
+export async function serializeAndVerifyAsync(pkg: OfficePackage, validators: Validator[], hooks?: { corrupt?(bytes: Uint8Array): Uint8Array }): Promise<VerifyResult> {
+  let bytes: Uint8Array;
+  try {
+    bytes = await pkg.serializeAsync();
+  } catch (e) {
+    return { ok: false, failures: [{ message: `Serialisation failed: ${errText(e)}` }] };
+  }
+  if (hooks?.corrupt) bytes = hooks.corrupt(bytes.slice());
+  await yieldToEventLoop();
+  const failures = await verifyBytesAsync(pkg, bytes, validators);
+  return failures.length > 0 ? { ok: false, failures } : { ok: true, bytes };
+}
+
+/**
+ * As `verifyBytes` (the same failures, in the same order), yielding between entries and stages,
+ * inflating and CRC-checking large entries with `inflateEntryAsync`, re-parsing large parts with the
+ * async parser and running each validator's `async` variant when it has one.
+ */
+export async function verifyBytesAsync(pkg: OfficePackage, bytes: Uint8Array, validators: Validator[]): Promise<VerifyFailure[]> {
+  const yieldMs = LIMITS.parseYieldMs;
+  const failures: VerifyFailure[] = [];
+  const touched = pkg.touchedParts();
+  const touchedSet = new Set(touched.map(lower));
+  const expected = new Map(pkg.partNames().map((n) => [lower(n), n] as const));
+
+  // 1. Container.
+  let zip: ZipArchive;
+  try {
+    zip = readZip(bytes, zipLimits());
+  } catch (e) {
+    return [{ message: `Output is not a readable ZIP: ${e instanceof ZipError ? `${e.code}: ${e.message}` : errText(e)}` }];
+  }
+  let originalEntries: Map<string, ZipEntry> | undefined;
+  try {
+    originalEntries = new Map(readZip(pkg.originalBytes, zipLimits()).entries.map((e) => [lower(e.name), e] as const));
+  } catch {
+    originalEntries = undefined;
+  }
+  await yieldToEventLoop();
+
+  // 2–3. Every entry. The inflated data of changed parts is kept for the re-parse below.
+  const inflated = new Map<string, Uint8Array>();
+  const seen = new Set<string>();
+  let deadline = Date.now() + yieldMs;
+  for (const e of zip.entries) {
+    if (Date.now() >= deadline) { await yieldToEventLoop(); deadline = Date.now() + yieldMs; }
+    const key = lower(e.name);
+    seen.add(key);
+    const large = e.uncompressedSize > LIMITS.asyncParseThresholdBytes;
+    let data: Uint8Array;
+    try {
+      if (large) {
+        // Checks the CRC-32 itself: a mismatch is reported as the sync path's `inflateEntry` does.
+        data = await inflateEntryAsync(zip, e, yieldMs);
+      } else {
+        data = inflateEntry(zip, e);
+      }
+    } catch (err) {
+      failures.push({ part: e.name, message: `${e.name}: entry does not inflate: ${err instanceof ZipError ? `${err.code}: ${err.message}` : errText(err)}` });
+      continue;
+    }
+    if (!large && crc32(data) !== e.crc32) failures.push({ part: e.name, message: `${e.name}: CRC-32 mismatch` });
+    if (e.name.endsWith('/')) continue;
+    const name = expected.get(key);
+    if (name === undefined) { failures.push({ part: e.name, message: `${e.name}: unexpected entry in the output` }); continue; }
+    if (name !== e.name) failures.push({ part: e.name, message: `${e.name}: entry name case differs from part ${name}` });
+    if (touchedSet.has(key)) {
+      let want: Uint8Array;
+      try { want = pkg.bytes(name); } catch (err) { failures.push({ part: name, message: `${name}: cannot read the part: ${errText(err)}` }); continue; }
+      if (!sameBytes(data, want)) failures.push({ part: name, message: `${name}: entry content differs from the edited part` });
+      else inflated.set(key, data);
+      if (large) { await yieldToEventLoop(); deadline = Date.now() + yieldMs; }
+    } else if (originalEntries) {
+      const o = originalEntries.get(key);
+      if (!o) failures.push({ part: name, message: `${name}: unchanged part has no original entry` });
+      else if (o.crc32 !== e.crc32 || o.compressedSize !== e.compressedSize || o.uncompressedSize !== e.uncompressedSize || o.method !== e.method) {
+        failures.push({ part: name, message: `${name}: unchanged part's entry differs from the original` });
+      }
+    }
+  }
+  for (const [key, name] of expected) {
+    if (!seen.has(key)) failures.push({ part: name, message: `${name}: part is missing from the output` });
+  }
+  if (failures.length > 0) return failures;
+  await yieldToEventLoop();
+
+  // 4. Re-open and re-parse changed XML parts. The tree parsed here is the re-opened package's own
+  // (xmlAsync caches it), so the validators do not parse the part again.
+  let reopened: OfficePackage;
+  try {
+    reopened = OfficePackage.open(`verify.${pkg.kind}`, bytes);
+  } catch (e) {
+    return [{ message: `Output does not re-open: ${e instanceof OfficeLoadError ? `${e.failure}: ${e.detail}` : errText(e)}` }];
+  }
+  if (reopened.kind !== pkg.kind) return [{ message: `Output re-opens as ${reopened.kind}, not ${pkg.kind}` }];
+  for (const part of touched) {
+    if (!reopened.has(part) || !isXmlPart(reopened, part)) continue;
+    await yieldToEventLoop();
+    try {
+      const data = inflated.get(lower(part)) ?? reopened.bytes(part);
+      const text = decodePart(data).text;
+      const doc = data.length > LIMITS.asyncParseThresholdBytes ? await reopened.xmlAsync(part) : parseXml(text);
+      if (serializeXml(doc) !== text) failures.push({ part, message: `${part}: does not round-trip through the XML parser` });
+    } catch (e) {
+      failures.push({ part, message: `${part}: not well-formed XML: ${e instanceof XmlError ? `${e.code}: ${e.message}` : errText(e)}` });
+    }
+  }
+  if (failures.length > 0) return failures;
+
+  // 5. Validators (packageValidator always, once), one at a time with a yield before each.
+  let original: OfficePackage | undefined | null = null;
+  const ctx: ValidatorContext = {
+    original: () => {
+      if (original === null) {
+        try { original = OfficePackage.open(`original.${pkg.kind}`, pkg.originalBytes); } catch { original = undefined; }
+      }
+      return original;
+    },
+  };
+  const known = new Set([...reopened.partNames().map(lower), ...touchedSet]);
+  const all = [packageValidator, ...validators.filter((v) => v !== packageValidator)];
+  for (const v of all) {
+    await yieldToEventLoop();
+    let messages: string[];
+    try {
+      messages = v.async ? await v.async(reopened, touched.slice(), ctx) : v(reopened, touched.slice(), ctx);
     } catch (e) {
       failures.push({ message: `Validator ${v.name || '(anonymous)'} threw: ${errText(e)}` });
       continue;

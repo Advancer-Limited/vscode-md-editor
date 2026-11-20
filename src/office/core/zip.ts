@@ -12,6 +12,7 @@
 // Nothing here inflates during readZip; limits are checked from the central directory first.
 
 import { Inflate, deflateSync, inflateSync } from 'fflate';
+import { deflateRawAsync } from './deflate.js';
 
 export type ZipRefusal = 'not-zip' | 'truncated' | 'zip64' | 'multi-disk' | 'encrypted' | 'unsupported-compression'
   | 'duplicate-name' | 'unsafe-name' | 'overlap' | 'too-large' | 'bad-crc' | 'bad-data';
@@ -124,6 +125,22 @@ function crc32Update(c: number, data: Uint8Array, from: number, to: number): num
 
 export function rawDeflate(data: Uint8Array, level: 1 | 6): Uint8Array {
   return deflateSync(data, { level });
+}
+
+/** As `rawDeflate` (byte-identical output), yielding to the event loop every `yieldEveryMs` ms (§10.2). */
+export function rawDeflateAsync(data: Uint8Array, level: 1 | 6, yieldEveryMs: number): Promise<Uint8Array> {
+  return deflateRawAsync(data, level, yieldEveryMs);
+}
+
+/** As `crc32`, yielding to the event loop every `yieldEveryMs` ms. */
+export async function crc32Async(data: Uint8Array, yieldEveryMs: number): Promise<number> {
+  let c = 0xffffffff;
+  let deadline = Date.now() + yieldEveryMs;
+  for (let pos = 0; pos < data.length; pos += CRC_SLICE) {
+    if (Date.now() >= deadline) { await yieldToEventLoop(); deadline = Date.now() + yieldEveryMs; }
+    c = crc32Update(c, data, pos, Math.min(pos + CRC_SLICE, data.length));
+  }
+  return (c ^ 0xffffffff) >>> 0;
 }
 
 /** Largest input slice per step of bounded inflation (when `expectedSize` is given). */
@@ -687,6 +704,30 @@ function checkU32(n: number, what: string, name?: string): void {
  * bytes: their whole extent, and their central record with only the local-header offset patched.
  */
 export function writeZip(zip: ZipArchive, items: ZipWriteItem[]): Uint8Array {
+  return writeZipWith(zip, items, (data) => ({ packed: rawDeflate(data, 6), crc: crc32(data) }));
+}
+
+/**
+ * As `writeZip` (byte-identical output, same errors), deflating and CRC-checking the new data with
+ * yields to the event loop every `yieldEveryMs` ms (spec §10.2). `items` and their data must not
+ * change until it resolves.
+ */
+export async function writeZipAsync(zip: ZipArchive, items: ZipWriteItem[], yieldEveryMs: number): Promise<Uint8Array> {
+  const packs = new Map<Uint8Array, Packed>();
+  for (const item of items) {
+    if ('keep' in item || packs.has(item.data)) continue;
+    if (item.data.length > U32_MAX) continue;   // writeZipWith refuses it before deflating
+    const packed = await rawDeflateAsync(item.data, 6, yieldEveryMs);
+    const crc = await crc32Async(item.data, yieldEveryMs);
+    packs.set(item.data, { packed, crc });
+    await yieldToEventLoop();
+  }
+  return writeZipWith(zip, items, (data) => packs.get(data)!);
+}
+
+interface Packed { packed: Uint8Array; crc: number; }
+
+function writeZipWith(zip: ZipArchive, items: ZipWriteItem[], pack: (data: Uint8Array) => Packed): Uint8Array {
   const src = zip.bytes;
   const members = memberSet(zip);
   const used = new Set<ZipEntry>();
@@ -729,9 +770,8 @@ export function writeZip(zip: ZipArchive, items: ZipWriteItem[]): Uint8Array {
       const rawName = src.slice(cd + CENTRAL_HEADER_LEN, cd + CENTRAL_HEADER_LEN + nameLen);
       const comment = src.slice(cd + CENTRAL_HEADER_LEN + nameLen + extraLen, cd + CENTRAL_HEADER_LEN + nameLen + extraLen + commentLen);
       checkU32(item.data.length, 'Entry size', e.name);
-      const packed = rawDeflate(item.data, 6);
+      const { packed, crc } = pack(item.data);
       checkU32(packed.length, 'Entry size', e.name);
-      const crc = crc32(item.data);
       const flags = e.flags & FLAG_UTF8;
       const head = localHeader(rawName, flags, 8, e.dosTime, e.dosDate, crc, packed.length, item.data.length);
       locals.push(head, packed);
@@ -748,9 +788,8 @@ export function writeZip(zip: ZipArchive, items: ZipWriteItem[]): Uint8Array {
       const rawName = utf8Encoder.encode(name);
       if (rawName.length > U16_MAX) throw new ZipError('unsafe-name', 'Entry name is too long', name);
       checkU32(item.data.length, 'Entry size', name);
-      const packed = rawDeflate(item.data, 6);
+      const { packed, crc } = pack(item.data);
       checkU32(packed.length, 'Entry size', name);
-      const crc = crc32(item.data);
       // eslint-disable-next-line no-control-regex
       const flags = /^[\x00-\x7f]*$/.test(name) ? 0 : FLAG_UTF8;
       const head = localHeader(rawName, flags, 8, 0, DOS_DATE_1980_01_01, crc, packed.length, item.data.length);

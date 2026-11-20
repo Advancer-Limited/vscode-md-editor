@@ -43,6 +43,7 @@ This extension bundles or vendors the open-source libraries below. Each section 
 - Copyright (c) 2026 Arjun Barrett
 - Bundled into the extension host (dist/extension.js)
 - Licence file: `node_modules/fflate/LICENSE` in the published package
+- Modified copy: `src/office/core/deflate.ts` is a copy of fflate 0.8.3's one-shot DEFLATE compressor, changed only so its main loop can pause and resume (yielding to the event loop); output is byte-identical to `deflateSync`. It keeps fflate's MIT notice in its header.
 
 ## numfmt 4.1.4
 
