@@ -376,8 +376,10 @@ test('rename: sparkline (extLst xm:f) formulas follow; charts and pivot caches a
 
 test('rename: table formulas and data-validation / conditional-format formulas follow', async () => {
   // tables.xlsx plus a second sheet whose CF, DV and a table calculated column reference "Sales".
+  // The CF rule has no dxfId: tables.xlsx has <dxfs count="0"/>, and a dangling dxfId="0" makes Excel
+  // repair the file ("Repaired Records: Conditional formatting") before and after the rename.
   const bytes = await patched('tables.xlsx', {
-    'xl/worksheets/sheet1.xml': (t) => replaceOnce('</sheetData>', '</sheetData><conditionalFormatting sqref="H1"><cfRule type="expression" dxfId="0" priority="1"><formula>Sales!$A$1="x"</formula></cfRule></conditionalFormatting><dataValidations count="1"><dataValidation type="list" allowBlank="1" sqref="H2"><formula1>Sales!$A$2:$A$4</formula1></dataValidation></dataValidations>')(t.replace(/<conditionalFormatting[\s\S]*?<\/conditionalFormatting>|<dataValidations[\s\S]*?<\/dataValidations>/g, '')),
+    'xl/worksheets/sheet1.xml': (t) => replaceOnce('</sheetData>', '</sheetData><conditionalFormatting sqref="H1"><cfRule type="expression" priority="1"><formula>Sales!$A$1="x"</formula></cfRule></conditionalFormatting><dataValidations count="1"><dataValidation type="list" allowBlank="1" sqref="H2"><formula1>Sales!$A$2:$A$4</formula1></dataValidation></dataValidations>')(t.replace(/<conditionalFormatting[\s\S]*?<\/conditionalFormatting>|<dataValidations[\s\S]*?<\/dataValidations>/g, '')),
     'xl/tables/table1.xml': replaceOnce('<calculatedColumnFormula>', '<calculatedColumnFormula>0*Sales!$Z$1+'),
   });
   const { wb } = load('tables.xlsx', bytes);
