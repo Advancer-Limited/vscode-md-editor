@@ -342,7 +342,7 @@
   - [x] WP-21 Formula entry, _xlfn, shared formulas
   - [x] WP-22 Date style patch + xlsx validators
   - [ ] WP-23 Xlsx editing wiring
-  - [ ] WP-24 verify-office-open.ps1, OpenXmlValidator script
+  - [x] WP-24 verify-office-open.ps1, OpenXmlValidator script
   - [ ] Gate R2 (Fable)
 - [ ] Phase 3 — Word editing
   - [ ] WP-25 Docx block/segment model

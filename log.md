@@ -1019,3 +1019,12 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - Outputs have not been opened in desktop Excel (Gate R2, WP-24 script).
   - ExcelJS cannot read an `x:`-prefixed styles part at all, so that case is checked by the validators only.
   - A UTF-16 styles part is not exercised: the package can't write UTF-16 parts.
+
+### 2026-11-21 — WP-24 Office verification scripts (merged into feature/office-xlsx-edit-ui)
+- **WP-24 (Sonnet):** `scripts/verify-office-open.ps1` is the COM gate. It starts its own hidden Office instances, opens each file read-only with repair disabled, recalculates and reads `.expect.json` back, prints a JSON summary, and supports -DryRun/-WhatIf.
+  - The script was only parser-checked and dry-run, because Office must not be launched while the user is away.
+  - Also added: `scripts/validate-openxml/` (net8.0, DocumentFormat.OpenXml 3.1.1) and `tests/office/README.md`. `writeOut` gains an optional `expect` argument.
+- **OpenXmlValidator on committed fixtures**, with the deliberately broken ones excluded: 29/33 valid, and the 4 "failures" are SDK false positives.
+  - `chartsheet.xlsx` and `features.xlsx` report "'uri' attribute is not declared" on extLst.
+  - `formulas.xlsx` and `tables.xlsx` report "style index 1 missing". That `s="1"` is in `xl/calcChain.xml`, where `s` is the calc-chain new-sheet/level flag, not a style index (confirmed by the orchestrator).
+- **User, at Gate R2:** run `verify-office-open.ps1` on the WP-20/21/22 outputs in real Office and paste the results here.
