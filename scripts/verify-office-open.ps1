@@ -109,14 +109,16 @@ if ($docx.Count -gt 0) {
         $doc = $null
         $name = Get-RelName $f.FullName
         try {
-          $missing = [Type]::Missing
           # Open(FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate,
           #      Revert, WritePasswordDocument, WritePasswordTemplate, Format, Encoding, Visible, OpenAndRepair,
           #      DocumentDirection, NoEncodingDialog, XMLTransform)
           # OpenAndRepair=$false: a damaged file raises an error instead of being silently repaired.
+          # Every argument is an explicit value: PowerShell 7 cannot pass [Type]::Missing to COM
+          # ("Missing parameter does not have a default value"). Format 0 = wdOpenFormatAuto,
+          # Encoding 50001 = msoEncodingAutoDetect, DocumentDirection 0 = wdLeftToRight.
           $doc = $word.Documents.Open([ref]$f.FullName, [ref]$false, [ref]$true, [ref]$false, [ref]'', [ref]'',
-            [ref]$false, [ref]'', [ref]'', [ref]$missing, [ref]$missing, [ref]$false, [ref]$false,
-            [ref]$missing, [ref]$true, [ref]$missing)
+            [ref]$false, [ref]'', [ref]'', [ref]0, [ref]50001, [ref]$false, [ref]$false,
+            [ref]0, [ref]$true, [ref]'')
           $problems = @()
           try { [void]$doc.Paragraphs.Count; [void]$doc.Content.Text.Length } catch { $problems += "content unreadable: $($_.Exception.Message)" }
           if ($problems.Count -eq 0) { Add-Result $results $name 'Word' $true 'opened without repair' }
@@ -189,17 +191,21 @@ if ($xlsx.Count -gt 0) {
         $wb = $null
         $name = Get-RelName $f.FullName
         try {
-          $missing = [Type]::Missing
           # Open(Filename, UpdateLinks=0, ReadOnly=true, Format, Password, WriteResPassword, IgnoreReadOnlyRecommended,
           #      Origin, Delimiter, Editable, Notify, Converter, AddToMru, Local, CorruptLoad=xlNormalLoad(0))
           # xlNormalLoad never auto-repairs: damaged files raise an error instead of opening in a repaired state.
-          $wb = $excel.Workbooks.Open($f.FullName, 0, $true, $missing, $missing, $missing, $true,
-            $missing, $missing, $missing, $missing, $missing, $false, $missing, 0)
+          # Every argument is an explicit value: PowerShell 7 cannot pass [Type]::Missing to COM
+          # ("Missing parameter does not have a default value"). Format 5 = no delimiter, Origin 2 = xlWindows;
+          # Format/Delimiter/Converter only apply to text files.
+          $wb = $excel.Workbooks.Open($f.FullName, 0, $true, 5, '', '', $true,
+            2, "`t", $false, $false, 0, $false, $false, 0)
           $problems = @()
           try { [void]$wb.Worksheets.Count } catch { $problems += "sheets unreadable: $($_.Exception.Message)" }
           $exp = Get-ExpectPath $f.FullName
           if (Test-Path -LiteralPath $exp) {
-            try { $problems += @(Test-ExpectCells -Workbook $wb -ExpectPath $exp -Tol $Tolerance) }
+            # Test-ExpectCells returns its list as one object (return ,$problems): iterate it so each
+            # problem is a string, not a nested array that prints as "System.Object[]".
+            try { foreach ($p in (Test-ExpectCells -Workbook $wb -ExpectPath $exp -Tol $Tolerance)) { $problems += [string]$p } }
             catch { $problems += "expect.json: $($_.Exception.Message)" }
           }
           if ($problems.Count -eq 0) { Add-Result $results $name 'Excel' $true 'opened without repair' }

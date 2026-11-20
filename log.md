@@ -1147,3 +1147,8 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
 - **Added `docs/office-gate-checklist.md`:** one human checklist for Gates R1, R2 and R4, built from the R1 checklist plus the WP-19/22/23/24 "not verified" lists, the Gate R2 review and fixes (F1-F10), the F5 follow-up, WP-36-41, plan §6/§10/§13, `tests/office/README.md` and spec §16. `docs/office-gate-r1-checklist.md` is now a one-line pointer; `todo.md` updated.
 - **Contents (113 checkboxes, about 3 h 45 min):** 0 setup incl. how to flip `xlsxEdit`/`xlsxStructure` locally and `VSMD_OFFICE_CORRUPT_SAVE=1` (9), 1 items needed from the user (3), 2 S3 spike (4), 3 Gate R1 (47), 4 Gate R2 (30: 6 Office/validator, 24 dev host), 5 Gate R4 (19: 4 Office, 15 dev host), 6 WP-37 goldens (1 plus the list of `[WP-37]` cases), 7 what to tell Claude when a gate passes.
 - **Note:** WP-41's log entry holds no numbered manual list; the R4 dev-host items (K1-K15) were derived from its description. Nothing was run and no Office was launched.
+## 2026-11-21 — verify-office-open.ps1: PowerShell 7 COM argument fix
+
+- First real run of V1-V3 (Gate R2 checklist) showed every early file failing with "Missing parameter does not have a default value". Cause: PowerShell 7 cannot pass `[Type]::Missing` to COM. `Workbooks.Open` and `Documents.Open` now pass explicit values (Excel: Format 5, Origin 2, CorruptLoad 0; Word: Format 0, Encoding 50001, DocumentDirection 0). Repair stays disabled.
+- `.expect.json` problems were added as a nested array, so an empty result counted as a failure and printed "System.Object[]". Problems are now added one string at a time.
+- Files changed: `scripts/verify-office-open.ps1`, `log.md`.
