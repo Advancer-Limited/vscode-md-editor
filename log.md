@@ -1053,3 +1053,29 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - **`xlsxCellEditor.test.js` (28):** editor lifecycle, keyboard, paste, flush, errors, textContent-only.
   - `xlsxProviderLogic` script-list expectation updated.
 - **Not verified:** a real Extension Development Host (VS Code undo stack, the real modal, the `paste` event from the system clipboard, focus/blur, Ctrl+Z routing) and real Excel on the saved outputs. Those are the Gate R2 checklist. `OFFICE_FLAGS.xlsxEdit` is still false.
+
+### 2026-11-21 — Gate R2 (Fable independent review) + fixes (feature/office-xlsx-edit-ui)
+- **Review verdict:** switch xlsxEdit on **after fixes**. The save pipeline is sound: nothing found writes a package that fails verification, drops unrelated parts or applies an edit twice. Blockers:
+  - **F1:** a refused multi-cell edit left phantom values in the view.
+  - **F2:** formula validation was syntax-only.
+  
+  The reviewer built 23 workbooks for checking in Excel, in the scratchpad at `r2\excel-check`.
+- **Core fixes (Opus, feature/office-r2-core 9abfcdb):**
+  - **F1:** every formula is pre-checked before any write, and the index and styles are rebuilt after an aborted write. A new `_viewCheck.mjs` compares the view with a fresh model at every random-test step; mismatching steps went from 43–64/150 to 0.
+  - **F2:** contextual `validateFormula(text, ctx)` with a 520-function arity table in `xlsx/functions.ts` ([MS-XLS] Ftab via Apache POI metadata, Excel 2007 built-ins, every `_xlfn` function). Also literal, array and number range checks, and existing sheets/tables/columns. External refs are blocked. The save validator checks changed formulas only.
+  - **F7:** groups that reuse a shared-formula `si` are refused.
+  - **F10:** MAX_CELL_XFS is 65,430 (the Open XML SDK `CellFormats` maxOccurs).
+  - Small items: Excel's number range, a custom "General" numFmt, and a no-op test patch.
+- **Host fixes (Opus, c4fb20f):**
+  - **F3:** the backup id carries the disk base (mtime, size, SHA-256), and the restore checks it for conflicts.
+  - **F4:** flush never commits an open cell editor; Ctrl/Cmd+S inside the editor commits it first.
+  - **F5:** backups are coalesced, a backup gets the container check only, and save verification is staged. The longest block on large.xlsx went from 2.3–3.3 s to 0.54–0.73 s (backup) and 1.06–1.25 s (save). The rest needs async core work (follow-up).
+  - **F6:** undo is refused while a save is writing, and the save point is captured.
+  - **F8:** saves write in place with `workspace.fs.writeFile`; temp+rename is removed (the orchestrator reversed its earlier choice).
+  - **F9:** the stale banner shows when a workbook opens with fullCalcOnLoad on.
+  - Small items: a warning when editing a signed file, and a hint when edits are dropped.
+- **Spec:** §6, §9.3, §9.3.1, §9.4 and §10.3 updated by the agents. The orchestrator added the §9.5 cross-references for F2 and F9.
+- **Combined:** check-types clean, compile OK, 645 pass / 1 skipped.
+- **`OFFICE_FLAGS.xlsxEdit` stays false** until the user's Gate R2 checks:
+  - `verify-office-open.ps1` on `r2\excel-check` and `tests\.out`; any repair on f01–f19 means tightening F2 further;
+  - the Extension Development Host checklist.
