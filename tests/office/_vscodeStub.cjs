@@ -35,7 +35,9 @@ const state = {
   clipboard: undefined,
   messages: [],
   registered: [],
+  config: {},
   reset() {
+    this.config = {};
     this.files.clear(); this.watchers.length = 0; this.opened.length = 0;
     this.clipboard = undefined; this.messages.length = 0; this.registered.length = 0;
   },
@@ -61,6 +63,10 @@ const workspace = {
       if (scheme === 'git') return false;
       return undefined;
     },
+  },
+  /** Settings: tests put values in `__state.config` keyed 'section.key'. */
+  getConfiguration(section) {
+    return { get: (key, dflt) => { const k = `${section}.${key}`; return k in state.config ? state.config[k] : dflt; } };
   },
   createFileSystemWatcher(pattern) {
     const change = new EventEmitter(), create = new EventEmitter(), del = new EventEmitter();

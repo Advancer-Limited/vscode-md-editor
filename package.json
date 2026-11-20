@@ -91,6 +91,16 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.xlsx",
+        "displayName": "Excel Workbook Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.xlsx"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "commands": [
@@ -143,6 +153,16 @@
     "configuration": {
       "title": "VS Code MD Editor",
       "properties": {
+        "vscodeMdEditor.office.sheetAppearance": {
+          "type": "string",
+          "enum": ["theme", "light"],
+          "enumDescriptions": [
+            "Follow the VS Code color theme.",
+            "Always show the sheet on a light background, as authored."
+          ],
+          "default": "theme",
+          "description": "How Excel workbooks are drawn in the viewer: following the VS Code theme, or always as a light sheet."
+        },
         "vscodeMdEditor.languageTool.enabled": {
           "type": "boolean",
           "default": true,
