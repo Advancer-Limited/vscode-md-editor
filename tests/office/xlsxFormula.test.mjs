@@ -84,9 +84,15 @@ function assertFormulasSound(sheetXml, msg = 'formulas') {
 
 // ---------------------------------------------------------------------------------------------
 // Synthetic shared groups (on formulas.xlsx sheet "O'Brien", xl/worksheets/sheet3.xml)
+//
+// Real Excel refuses (repair prompt, "Removed Records: Shared formula") a shared formula whose master
+// has a sheet-qualified reference (`Data!A1`, `'O''Brien'!$B$1`, even to its own sheet); Excel itself
+// writes such fills as one plain <f> per cell. Group 0 keeps its `'My Sheet'!B2` on purpose — it is
+// the group the tests materialise, so the edited output has plain formulas only — but group 1, which
+// stays shared in synthetic-2d-master.xlsx, must be a group Excel can load (verify-office-open.ps1).
 
 const M0 = "A1+$A$1+A$1+$A1+'My Sheet'!B2+LEN(\"A1\")+SUM(A:A)+SUM(10:10)+TaxRate+_xlfn.XLOOKUP(A1,A:A,B:B)";
-const M1 = "D4*2+'O''Brien'!$B$1+Data!A1";
+const M1 = 'D4*2+$B$1+LocalName';
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const SYN_SHEET_DATA = '<sheetData>'
   + '<row r="1"><c r="A1"><v>5</v></c><c r="B1"><f>\'My Sheet\'!A1*TaxRate</f><v>2</v></c></row>'
@@ -102,8 +108,8 @@ const SYN_EXPECTED = {
   B3: "A2+$A$1+A$1+$A2+'My Sheet'!B3+LEN(\"A1\")+SUM(A:A)+SUM(11:11)+TaxRate+_xlfn.XLOOKUP(A2,A:A,B:B)",
   C3: "B2+$A$1+B$1+$A2+'My Sheet'!C3+LEN(\"A1\")+SUM(B:B)+SUM(11:11)+TaxRate+_xlfn.XLOOKUP(B2,B:B,C:C)",
   D5: M1,
-  D6: "D5*2+'O''Brien'!$B$1+Data!A2",
-  D7: "D6*2+'O''Brien'!$B$1+Data!A3",
+  D6: 'D5*2+$B$1+LocalName',
+  D7: 'D6*2+$B$1+LocalName',
 };
 const synthetic = () => patched('formulas.xlsx', {
   [SHEET3]: (t) => t.replace(/<sheetData>.*<\/sheetData>/s, SYN_SHEET_DATA).replace('<dimension ref="A1:B1"/>', '<dimension ref="A1:D7"/>'),
