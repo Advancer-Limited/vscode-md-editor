@@ -1,14 +1,20 @@
 // Word document viewer provider (viewType `vscodeMdEditor.docx`), spec §4.1, §7.1.
 //
-// WP-08 skeleton: registration, assets, CSP and the minimal view path (`docxRender` with the
-// original bytes and no block list). WP-10 completes the viewer (notices, webview script/CSS);
-// editing (Phase 3) stays off while `OFFICE_FLAGS.docxEdit` is false.
+// View path: registration, assets, CSP, `docxRender` with the original bytes and no block list,
+// kind notices (core/docx/notices.ts); the webview side is media/docxEditor.js.
+// Editing (Phase 3) stays off while `OFFICE_FLAGS.docxEdit` is false.
 
 import * as vscode from 'vscode';
 import { getBrandButtonHtml } from '../utils.js';
 import { OfficeEditorProviderBase, officeCsp } from './officeEditorProviderBase.js';
 import type { OfficeDocument } from './officeDocument.js';
 import { parseDocxToHost } from './protocol.js';
+import type { OfficeNotice } from './protocol.js';
+import type { OfficePackage } from './core/package.js';
+import { detectDocxNotices } from './core/docx/notices.js';
+
+/** The notice scan reads the main part's text; do it once per loaded package. */
+const noticeCache = new WeakMap<OfficePackage, OfficeNotice[]>();
 
 export class DocxEditorProvider extends OfficeEditorProviderBase {
   public static readonly viewType = 'vscodeMdEditor.docx';
@@ -52,6 +58,16 @@ export class DocxEditorProvider extends OfficeEditorProviderBase {
 
   protected csp(webview: vscode.Webview, nonce: string): string {
     return officeCsp(webview.cspSource, nonce, true);
+  }
+
+  protected kindNotices(doc: OfficeDocument): OfficeNotice[] {
+    if (!doc.pkg) return [];
+    let notices = noticeCache.get(doc.pkg);
+    if (!notices) {
+      notices = detectDocxNotices(doc.pkg);
+      noticeCache.set(doc.pkg, notices);
+    }
+    return notices;
   }
 
   protected onReady(doc: OfficeDocument, panel: vscode.WebviewPanel): void {

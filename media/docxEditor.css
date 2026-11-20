@@ -1,0 +1,92 @@
+/* Word viewer (spec §11.1): themed chrome and backdrop; the pages are always light "paper". */
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.office-chrome { flex: 0 0 auto; }
+
+.office-app {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#office-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-contrastBorder, transparent));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
+
+.docx-section-count {
+  margin-left: 8px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.brand-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.85;
+}
+.brand-button:hover { background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
+.brand-button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.brand-button svg { display: block; }
+
+#office-banner:empty { display: none; }
+
+/* Themed backdrop that scrolls; the document pages sit on it as paper. */
+.docx-backdrop {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--vscode-editorGroup-background, var(--vscode-editor-background));
+}
+.docx-backdrop:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+
+.docx-styles { display: none; }
+
+/* docx-preview paints the wrapper grey and the pages white; keep pages as paper, theme the backdrop. */
+.docx-host .docx-wrapper { background: transparent; padding: 20px; }
+.docx-host .docx-wrapper > section.docx {
+  background: #ffffff;
+  color: #000000;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+/* Links read as links but are never navigated by the webview. */
+.docx-host a { cursor: pointer; }
+
+body.vscode-high-contrast .docx-host .docx-wrapper > section.docx,
+body.vscode-high-contrast-light .docx-host .docx-wrapper > section.docx {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
+  box-shadow: none;
+}
+
+@media (forced-colors: active) {
+  .docx-host .docx-wrapper > section.docx { outline: 1px solid CanvasText; box-shadow: none; }
+  .docx-section-count { color: CanvasText; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docx-backdrop { scroll-behavior: auto; }
+}
