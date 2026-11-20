@@ -360,3 +360,147 @@ test('real fixtures open with the expected kind and no document-level view-only 
     assert.strictEqual(p.viewOnlyReason, null, `${f}: ${p.viewOnlyReason}`);
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// Gate R0 regressions
+
+const u16le = (b, o) => b[o] | (b[o + 1] << 8);
+/** Start of an entry's compressed data in `bytes`. */
+const dataStart = (bytes, e) => e.extent[0] + 30 + u16le(bytes, e.extent[0] + 26) + u16le(bytes, e.extent[0] + 28);
+
+test('R0: a hostile [Content_Types].xml is refused quickly, not parsed for seconds', () => {
+  const XL = core.limits.LIMITS;
+  const ct = OfficePackage.open('basic.docx', fixture('basic.docx')).text('[Content_Types].xml');
+  for (const [n, refused] of [[XL.xmlMaxDepth - 2, false], [20_000, true]]) {
+    const bytes = patched('basic.docx', (p) => {
+      const bomb = '<z xmlns:x="urn:junk">'.repeat(n) + '</z>'.repeat(n);
+      p.setPart('[Content_Types].xml', enc.encode(ct.replace('</Types>', bomb + '</Types>')));
+    });
+    const t0 = performance.now();
+    const failure = loadFailure('hostile.docx', bytes);
+    const ms = performance.now() - t0;
+    assert.strictEqual(failure, refused ? 'damaged' : null, `depth ${n}`);
+    assert.ok(ms < 2000, `depth ${n}: open took ${ms.toFixed(0)} ms (was 12-17 s at depth 20,000)`);
+  }
+});
+
+test('R0: open reads only a bounded prefix of the main part', () => {
+  // A 25 MB document.xml whose compressed tail is damaged: open must classify it (too-large) from the
+  // central directory and the root start tag alone; a full inflate would hit the damage.
+  const doc = OfficePackage.open('basic.docx', fixture('basic.docx')).text('word/document.xml');
+  const filler = '<w:p/>'.repeat(Math.ceil((25 * 1024 * 1024) / 6));
+  const bytes = patched('basic.docx', (p) => p.setPart('word/document.xml', enc.encode(doc.replace('<w:body>', '<w:body>' + filler))));
+  const zip = core.zip.readZip(bytes, core.pkg.zipLimits());
+  const e = zip.entries.find((x) => x.name === 'word/document.xml');
+  const start = dataStart(bytes, e);
+  const damaged = bytes.slice();
+  for (let i = start + e.compressedSize - 300; i < start + e.compressedSize - 20; i++) damaged[i] ^= 0xa5;
+
+  for (const b of [bytes, damaged]) {
+    const t0 = performance.now();
+    const p = OfficePackage.open('big.docx', b);
+    const ms = performance.now() - t0;
+    assert.strictEqual(p.viewOnlyReason, 'too-large');
+    assert.ok(ms < 1000, `open took ${ms.toFixed(0)} ms`);
+  }
+  // The damage is real: reading the whole part fails (synchronously and asynchronously).
+  const p = OfficePackage.open('big.docx', damaged);
+  assert.throws(() => p.bytes('word/document.xml'), (err) => err instanceof core.zip.ZipError);
+  return assert.rejects(p.xmlAsync('word/document.xml'), (err) => err instanceof core.zip.ZipError);
+});
+
+test('R0: open finds the root start tag past a long prolog, and still refuses DOCTYPE and bad UTF-8', () => {
+  const doc = OfficePackage.open('basic.docx', fixture('basic.docx')).text('word/document.xml');
+  const decl = doc.slice(0, doc.indexOf('?>') + 2);
+  const rest = doc.slice(decl.length);
+  // A 200 KB comment before the root: past the first 64 KB scan, within the second.
+  const long = patched('basic.docx', (p) => p.setPart('word/document.xml', enc.encode(decl + '<!--' + 'x'.repeat(200_000) + '-->' + rest)));
+  assert.strictEqual(OfficePackage.open('long.docx', long).viewOnlyReason, null);
+  const strict = patched('basic.docx', (p) => p.setPart('word/document.xml',
+    enc.encode(decl + '<!--' + 'x'.repeat(200_000) + '-->' + rest.replace(/http:\/\/schemas\.openxmlformats\.org\/wordprocessingml\/2006\/main/g, 'http://purl.oclc.org/ooxml/wordprocessingml/main'))));
+  assert.strictEqual(OfficePackage.open('strict.docx', strict).viewOnlyReason, 'strict-ooxml');
+  // Past both scans: refused as damaged rather than read in full.
+  const tooLong = patched('basic.docx', (p) => p.setPart('word/document.xml', enc.encode(decl + '<!--' + 'x'.repeat(1_100_000) + '-->' + rest)));
+  assert.strictEqual(loadFailure('toolong.docx', tooLong), 'damaged');
+  const dt = patched('basic.docx', (p) => p.setPart('word/document.xml', enc.encode(decl + '<!DOCTYPE w:document>' + rest)));
+  assert.strictEqual(loadFailure('dt.docx', dt), 'damaged');
+  // A multi-byte character cut by the 64 KB scan boundary is not an encoding error.
+  for (let pad = 0; pad < 4; pad++) {
+    const cut = patched('basic.docx', (p) => p.setPart('word/document.xml', enc.encode(decl + '<!--' + 'x'.repeat(65536 - decl.length - 4 - pad) + '€\u{1F600}'.repeat(40_000) + '-->' + rest)));
+    assert.strictEqual(OfficePackage.open('cut.docx', cut).viewOnlyReason, null, `pad ${pad}`);
+  }
+  // Invalid UTF-8 inside the scanned prefix is still damaged.
+  const badUtf8 = patched('basic.docx', (p) => {
+    const b = enc.encode(decl + '<!--é-->' + rest);
+    b[decl.length + 4] = 0xff;
+    p.setPart('word/document.xml', b);
+  });
+  assert.strictEqual(loadFailure('bad.docx', badUtf8), 'damaged');
+});
+
+test('R0: xmlAsync on a large part inflates asynchronously and equals xml()', async () => {
+  const doc = OfficePackage.open('basic.docx', fixture('basic.docx')).text('word/document.xml');
+  const filler = '<w:p><w:r><w:t>text</w:t></w:r></w:p>'.repeat(150_000);   // ~5.5 MB
+  const bytes = patched('basic.docx', (p) => p.setPart('word/document.xml', enc.encode(doc.replace('<w:body>', '<w:body>' + filler))));
+  const a = OfficePackage.open('a.docx', bytes);
+  let ticks = 0;
+  const iv = setInterval(() => ticks++, 0);
+  let tree;
+  try { tree = await a.xmlAsync('word/document.xml'); } finally { clearInterval(iv); }
+  assert.ok(ticks > 0);
+  const b = OfficePackage.open('b.docx', bytes);
+  assert.strictEqual(x.serialize(tree), x.serialize(b.xml('word/document.xml')));
+  assert.strictEqual(a.xml('word/document.xml'), tree, 'cached');
+  // Edit -> revert through the async tree still serialises to the original bytes object (G5 groundwork).
+  a.touch('word/document.xml');
+  assert.strictEqual(a.serialize(), bytes);
+});
+
+test('R0: serialize({force:true}) writes original entries in file order, not central-directory order', () => {
+  const orig = fixture('basic.docx');
+  const zip = core.zip.readZip(orig, core.pkg.zipLimits());
+  // Reverse the central directory (offsets in each record stay valid).
+  const cdStart = Math.min(...zip.entries.map((e) => e.cdRecord[0]));
+  const cdEnd = Math.max(...zip.entries.map((e) => e.cdRecord[1]));
+  const reordered = orig.slice();
+  let w = cdStart;
+  for (const e of [...zip.entries].reverse()) {
+    reordered.set(orig.subarray(e.cdRecord[0], e.cdRecord[1]), w);
+    w += e.cdRecord[1] - e.cdRecord[0];
+  }
+  assert.strictEqual(w, cdEnd);
+  const fileOrder = [...zip.entries].sort((a, b) => a.extent[0] - b.extent[0]).map((e) => e.name);
+  const p = OfficePackage.open('basic.docx', reordered);
+  const out = p.serialize({ force: true });
+  const z2 = core.zip.readZip(out, core.pkg.zipLimits());
+  assert.deepStrictEqual(z2.entries.map((e) => e.name), fileOrder, 'output CD order = original file order');
+  assert.deepStrictEqual([...z2.entries].sort((a, b) => a.extent[0] - b.extent[0]).map((e) => e.name), fileOrder);
+  // Local entries are copied verbatim, so the bytes before the central directory are identical.
+  assertBytesEqual(out.subarray(0, cdStart), orig.subarray(0, cdStart), 'local entries');
+});
+
+test('R0: partNameFromTarget with only a fragment names the source part', () => {
+  assert.strictEqual(opc.partNameFromTarget('word/document.xml', '#_Toc1'), 'word/document.xml');
+  assert.strictEqual(opc.partNameFromTarget('/word/document.xml', ''), 'word/document.xml');
+  assert.strictEqual(opc.partNameFromTarget('word/document.xml', 'media/a.png#x'), 'word/media/a.png');
+  assert.throws(() => opc.partNameFromTarget('', '#frag'), /does not name a part/);
+});
+
+test('partSize returns declared central-directory sizes without inflating', () => {
+  const bytes = fixture('basic.xlsx');
+  const zip = core.zip.readZip(bytes, core.pkg.zipLimits());
+  const p = OfficePackage.open('basic.xlsx', bytes);
+  for (const e of zip.entries) {
+    if (e.name.endsWith('/')) { assert.strictEqual(p.partSize(e.name), undefined); continue; }
+    assert.deepStrictEqual(p.partSize(e.name), { compressed: e.compressedSize, uncompressed: e.uncompressedSize }, e.name);
+    assert.deepStrictEqual(p.partSize('/' + e.name.toUpperCase()), p.partSize(e.name), 'case-insensitive, leading slash ignored');
+  }
+  assert.strictEqual(p.partSize('xl/nope.xml'), undefined);
+  const sheet = zip.entries.find((e) => /worksheets\/sheet1\.xml$/i.test(e.name));
+  p.setPart(sheet.name, enc.encode('<x/>'));
+  assert.deepStrictEqual(p.partSize(sheet.name), { compressed: sheet.compressedSize, uncompressed: sheet.uncompressedSize }, 'replaced: original entry sizes');
+  p.setPart('xl/new.xml', enc.encode('<x/>'));
+  assert.strictEqual(p.partSize('xl/new.xml'), undefined, 'created: no entry');
+  p.setPart(sheet.name, null);
+  assert.strictEqual(p.partSize(sheet.name), undefined, 'deleted');
+});

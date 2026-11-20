@@ -598,3 +598,160 @@ test('pathOf / nodeAt count every child node kind', () => {
   x.replaceNode(doc.root.children[0], '');
   assert.strictEqual(x.serialize(doc), '<a><!--c--><?p?><b><c/></b><![CDATA[d]]></a>');
 });
+
+// ---------------------------------------------------------------------------------------------
+// Gate R0 regressions (hostile input, API hardening)
+
+/** Wall-clock ms of `fn()` (which may throw; the error is returned). */
+function timed(fn) {
+  const t0 = performance.now();
+  let error = null;
+  try { fn(); } catch (e) { error = e; }
+  return { ms: performance.now() - t0, error };
+}
+const isMalformed = (e) => e instanceof x.XmlError && e.code === 'malformed';
+
+test('R0: hostile attribute counts and namespace-declaring nesting parse in linear time', () => {
+  const XL = core.limits.LIMITS;
+  // Each of these took 6-60 s with the quadratic scope walk / duplicate scans.
+  const attrs = (n, prefix) => {
+    const head = prefix ? ['<r xmlns:p="u" p:x=""'] : ['<r'];
+    for (let i = head.length === 1 && prefix ? 2 : 0; i < n; i++) head.push(` a${i}=""`);
+    return head.join('') + '/>';
+  };
+  const cases = [
+    ['attributes at the cap', attrs(XL.xmlMaxAttributes, false), false],
+    ['attributes at the cap, one qualified', attrs(XL.xmlMaxAttributes, true), false],
+    ['40,000 attributes (over the cap)', attrs(40_000, false), true],
+    ['nesting at the cap, each level declaring a prefix', '<a xmlns:p="u">'.repeat(XL.xmlMaxDepth) + '</a>'.repeat(XL.xmlMaxDepth), false],
+    ['nesting 40,000 deep (over the cap)', '<a xmlns:p="u">'.repeat(40_000) + '</a>'.repeat(40_000), true],
+  ];
+  let distinct = '';
+  for (let i = 0; i < XL.xmlMaxDepth; i++) distinct += `<a xmlns:p${i}="u${i}">`;
+  cases.push(['nesting at the cap, a new prefix per level', distinct + '</a>'.repeat(XL.xmlMaxDepth), false]);
+  for (const [label, s, refused] of cases) {
+    const { ms, error } = timed(() => x.parseXml(s));
+    if (refused) assert.ok(isMalformed(error), `${label}: expected XmlError malformed, got ${error}`);
+    else assert.strictEqual(error, null, `${label}: ${error}`);
+    assert.ok(ms < 2000, `${label}: ${ms.toFixed(0)} ms`);
+  }
+});
+
+test('R0: element depth and attribute caps raise XmlError malformed (parse and insert)', () => {
+  const XL = core.limits.LIMITS;
+  assert.strictEqual(XL.xmlMaxDepth, 10_000);
+  assert.strictEqual(XL.xmlMaxAttributes, 4_096);
+  const deep = (n) => '<a>'.repeat(n) + '</a>'.repeat(n);
+  assert.doesNotThrow(() => x.parseXml(deep(XL.xmlMaxDepth)));
+  assert.throws(() => x.parseXml(deep(XL.xmlMaxDepth + 1)), (e) => isMalformed(e) && /nested more than 10000/.test(e.message));
+  let s = '<r';
+  for (let i = 0; i <= XL.xmlMaxAttributes; i++) s += ` a${i}="1"`;
+  assert.throws(() => x.parseXml(s + '/>'), (e) => isMalformed(e) && /more than 4096 attributes/.test(e.message));
+  // Fragments count from the insertion site's depth.
+  const doc = x.parseXml(deep(XL.xmlMaxDepth - 1));
+  let leaf = doc.root;
+  while (leaf.children.length) leaf = leaf.children[0];
+  assert.doesNotThrow(() => x.insertAt(leaf, 0, '<b/>'));
+  assert.throws(() => x.insertAt(leaf, 0, '<b><c/></b>'), isMalformed);
+  assert.throws(() => x.parseFragment(doc, deep(XL.xmlMaxDepth)), isMalformed);
+});
+
+test('R0: duplicate attributes are found by raw name and by expanded name past the small-count path', () => {
+  const many = Array.from({ length: 20 }, (_, i) => ` a${i}="1"`).join('');
+  assert.throws(() => x.parseXml(`<r${many} a7="2"/>`), (e) => isMalformed(e) && /duplicate attribute "a7"/.test(e.message));
+  assert.throws(() => x.parseXml(`<r${many} a19="2"/>`), isMalformed);
+  assert.throws(() => x.parseXml(`<r xmlns:p="u" xmlns:q="u"${many} p:x="1" q:x="2"/>`), (e) => isMalformed(e) && /duplicate attribute \{u\}x/.test(e.message));
+  assert.throws(() => x.parseXml('<r xmlns:p="u" xmlns:q="u" p:x="1" q:x="2"/>'), isMalformed, 'small path too');
+  const ok = x.parseXml(`<r xmlns:p="u" xmlns:q="v"${many} p:x="1" q:x="2"/>`);
+  assert.strictEqual(x.attr(ok.root, 'u', 'x'), '1');
+  assert.strictEqual(x.attr(ok.root, 'v', 'x'), '2');
+  assert.strictEqual(x.attr(ok.root, '', 'a19'), '1');
+  // Inner redeclaration is resolved per scope, and scopes end with their element.
+  const d = x.parseXml('<r xmlns="urn:a" xmlns:p="urn:p"><c xmlns:p="urn:q"><p:d/></c><p:e/><f xmlns=""><g/></f><h/></r>');
+  const [c, e, f, h] = d.root.children;
+  assert.strictEqual(c.children[0].ns, 'urn:q');
+  assert.strictEqual(e.ns, 'urn:p');
+  assert.strictEqual(f.ns, '');
+  assert.strictEqual(f.children[0].ns, '');
+  assert.strictEqual(h.ns, 'urn:a');
+});
+
+test('R0: serialising a deep dirty tree does not recurse', async () => {
+  // A recursive serialiser overflows a 128 KB stack long before depth 9,999; the iterative one does not.
+  const { execFileSync } = await import('node:child_process');
+  const bundle = path.join(here, '..', '.build', 'office-core.cjs');
+  const script = `
+    const x = require(${JSON.stringify(bundle)}).xml;
+    const n = 9999;
+    const d = x.parseXml('<a>'.repeat(n) + '</a>'.repeat(n));
+    let el = d.root;
+    while (el.children.length) el = el.children[0];
+    x.insertAt(el, 0, '<b/>');
+    const out = x.serialize(d);
+    process.stdout.write(String(out === '<a>'.repeat(n) + '<b/>' + '</a>'.repeat(n)));`;
+  const out = execFileSync(process.execPath, ['--stack-size=128', '-e', script], { encoding: 'utf8' });
+  assert.strictEqual(out, 'true');
+});
+
+test('R0: numeric character references with leading zeros are legal', () => {
+  assert.strictEqual(x.textContent(x.parseXml('<a>&#x0010FFFF;</a>').root), '\u{10FFFF}');
+  assert.strictEqual(x.textContent(x.parseXml('<a>&#0000000065;&#x0000041;&#00;x</a>'.replace('&#00;', '')).root), 'AAx');
+  assert.strictEqual(x.attr(x.parseXml('<a v="&#x000000000000000000000041;"/>').root, '', 'v'), 'A');
+  for (const bad of ['&#x110000;', '&#x0000110000;', '&#1114112;', '&#0;', '&#x000;', '&#x;', '&#;']) {
+    assert.throws(() => x.parseXml(`<a>${bad}</a>`), isMalformed, bad);
+  }
+});
+
+test('R0: setAttr rejects non-NCName local names and namespace declarations', () => {
+  const d = x.parseXml('<r xmlns="urn:a" xmlns:p="urn:p"><c/></r>');
+  const c = d.root.children[0];
+  const src = x.serialize(d);
+  for (const [ns, local] of [['', 'bad name"/><evil'], ['', 'xmlns'], ['', 'xmlns:p'], ['', 'p:x'], ['urn:p', 'p:x'], ['', ''], ['', '1a'], ['', 'a>']]) {
+    assert.throws(() => x.setAttr(c, ns, local, 'v'), /setAttr/, `${ns} ${local}`);
+    assert.throws(() => x.setAttr(c, ns, local, null), /setAttr/, `${ns} ${local} (remove)`);
+  }
+  assert.strictEqual(x.serialize(d), src, 'nothing changed');
+  x.setAttr(c, '', 'ok-name.1', 'v');
+  x.setAttr(c, 'urn:p', 'xmlns', 'v');            // p:xmlns is an ordinary attribute name
+  x.setAttr(c, '', 'né', 'v');
+  const out = x.serialize(d);
+  assert.strictEqual(out, '<r xmlns="urn:a" xmlns:p="urn:p"><c ok-name.1="v" p:xmlns="v" né="v"/></r>');
+  assert.doesNotThrow(() => x.parseXml(out));
+});
+
+test('R0: qnameAt resolves at the insertion site; rootScoped inserts refuse a changed binding', () => {
+  // A prefix redeclared below the root.
+  const d = x.parseXml('<w:document xmlns:w="urn:W"><w:body><x:alt xmlns:x="urn:X" xmlns:w="urn:OTHER"><w:p/></x:alt></w:body></w:document>');
+  const body = d.root.children[0];
+  const alt = body.children[0];
+  assert.strictEqual(x.qname(d, 'urn:W', 'p'), 'w:p');
+  assert.strictEqual(x.qnameAt(body, 'urn:W', 'p'), 'w:p');
+  assert.strictEqual(x.qnameAt(alt, 'urn:W', 'p'), undefined, 'w is shadowed and no other prefix binds urn:W');
+  assert.strictEqual(x.qnameAt(alt, 'urn:OTHER', 'p'), 'w:p');
+  assert.strictEqual(x.qnameAt(alt, 'urn:X', 'q'), 'x:q');
+  const before = x.serialize(d);
+  assert.throws(() => x.insertAt(alt, 0, '<w:p/>', { rootScoped: true }),
+    (e) => e instanceof x.XmlScopeError && e.expectedNs === 'urn:W' && e.actualNs === 'urn:OTHER' && e.rawName === 'w:p');
+  assert.throws(() => x.replaceNode(alt.children[0], '<w:p/>', { rootScoped: true }), x.XmlScopeError);
+  assert.strictEqual(x.serialize(d), before, 'a refused insert changes nothing');
+  // Without the option the fragment is parsed in the site's scope (undo re-inserts site source text).
+  const [n] = x.insertAt(alt, 0, '<w:p/>');
+  assert.strictEqual(n.ns, 'urn:OTHER');
+  // Fine where the bindings agree, including below a redeclaration that does not matter.
+  const [ok] = x.insertAt(body, 0, '<w:p w:val="1"/>', { rootScoped: true });
+  assert.strictEqual(ok.ns, 'urn:W');
+  // Attributes are checked too.
+  assert.throws(() => x.insertAt(alt, 0, '<y:q xmlns:y="urn:X" w:val="1"/>', { rootScoped: true }), (e) => e instanceof x.XmlScopeError && e.rawName === 'w:val');
+  // A prefix bound only at the site is not expressible from the root.
+  assert.throws(() => x.insertAt(alt, 0, '<x:q/>', { rootScoped: true }), x.XmlScopeError);
+  assert.doesNotThrow(() => x.insertAt(alt, 0, '<y:q xmlns:y="urn:X"/>', { rootScoped: true }), 'self-declared prefixes are the same everywhere');
+
+  // The default namespace undeclared below the root.
+  const d2 = x.parseXml('<r xmlns="urn:a"><c xmlns=""><d/></c></r>');
+  const c = d2.root.children[0];
+  assert.strictEqual(x.qname(d2, 'urn:a', 'n'), 'n');
+  assert.strictEqual(x.qnameAt(c, 'urn:a', 'n'), undefined);
+  assert.strictEqual(x.qnameAt(c, '', 'n'), 'n');
+  assert.strictEqual(x.qnameAt(d2.root, '', 'n'), undefined);
+  assert.throws(() => x.insertAt(c, 0, '<n/>', { rootScoped: true }), (e) => e instanceof x.XmlScopeError && e.expectedNs === 'urn:a' && e.actualNs === '');
+});

@@ -13,9 +13,9 @@
 
 import type { ReadOnlyReason } from './types.js';
 import { LIMITS } from './limits.js';
-import { ZipError, readZip, inflateEntry, writeZip, crc32 } from './zip.js';
+import { ZipError, readZip, inflateEntry, inflateEntryAsync, inflateEntryPrefix, writeZip, crc32 } from './zip.js';
 import type { ZipArchive, ZipEntry, ZipLimits, ZipRefusal, ZipWriteItem } from './zip.js';
-import { XmlError, decodePart, encodePart, parseXml, parseXmlAsync, serialize as serializeXml } from './xml.js';
+import { XmlError, decodePart, decodePartPrefix, encodePart, parseXml, parseXmlAsync, serialize as serializeXml } from './xml.js';
 import type { XmlDoc } from './xml.js';
 import { OfficeLoadError, sniff, sniffDetail } from './sniff.js';
 import { CONTENT_TYPES_PART, REL_OFFICE_DOCUMENT_STRICT, contentTypeOf, mainPart, normalizePartName, readRelationships } from './opc.js';
@@ -72,26 +72,41 @@ function extensionKind(fileName: string): OfficeKind | undefined {
 }
 
 /**
- * Parse only the prolog and root start tag of a part (a cheap stand-in for parsing a possibly 20 MB
- * main part during `open`): returns the root element's namespace. Throws XmlError if the prolog or
- * start tag is malformed (including any DOCTYPE).
+ * Bytes of the main part read by `open` to find its root start tag: first a small prefix, then (only
+ * for a root start tag or prolog longer than that) a larger one. Never the whole part (§10.2).
  */
-function rootNamespace(text: string): string {
+const ROOT_SCAN_BYTES = [64 * 1024, 1024 * 1024] as const;
+
+/**
+ * Parse only the prolog and root start tag of a part (a cheap stand-in for parsing a possibly 20 MB
+ * main part during `open`): returns the root element's namespace, or undefined when `text` is only
+ * the start of the part (`complete` false) and ends before the root start tag does. Throws XmlError
+ * if the prolog or start tag is malformed (including any DOCTYPE).
+ */
+function rootNamespace(text: string, complete: boolean): string | undefined {
   let i = 0;
   for (;;) {
-    while (i < text.length && ' \t\r\n'.includes(text[i])) i++;
+    while (i < text.length && ' \t\r\n\uFEFF'.includes(text[i])) i++;
     if (text.startsWith('<?', i)) { const e = text.indexOf('?>', i + 2); if (e < 0) break; i = e + 2; continue; }
     if (text.startsWith('<!--', i)) { const e = text.indexOf('-->', i + 4); if (e < 0) break; i = e + 3; continue; }
     break;
   }
-  if (text[i] !== '<' || text.startsWith('<!', i)) return parseXml(text.slice(0, i + 200)).root.ns; // lets the parser report it
+  // Too little text to tell a comment, PI or DOCTYPE from the root start tag: ask for more.
+  if (!complete && text.length - i < 9) return undefined;
+  if (text[i] !== '<' || text.startsWith('<!', i) || text.startsWith('<?', i)) {
+    if (!complete && (text.startsWith('<?', i) || text.startsWith('<!--', i))) return undefined;   // unterminated so far
+    return parseXml(text.slice(0, i + 200)).root.ns; // lets the parser report it
+  }
   let q = '';
   let j = i + 1;
   for (; j < text.length; j++) {
     const c = text[j];
     if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c; else if (c === '>') break;
   }
-  if (j >= text.length) throw new XmlError('malformed', 'root start tag is not closed', i);
+  if (j >= text.length) {
+    if (!complete) return undefined;
+    throw new XmlError('malformed', 'root start tag is not closed', i);
+  }
   const head = text.slice(0, j + 1);
   if (head.endsWith('/>')) return parseXml(head).root.ns;
   const m = /^<([^\s/>]+)/.exec(text.slice(i));
@@ -185,30 +200,51 @@ export class OfficePackage {
     }
     (this as { kind: OfficeKind }).kind = kind;
 
-    // Strict OOXML: Strict relationship type or a purl.oclc.org root namespace. Strict wins over the
-    // content-type reason (it is the more specific explanation).
     const st = this.state(main.name)!;
-    const text = this.decode(st);
+
+    // Declared sizes first (central directory only, nothing inflated).
+    let tooLarge = false;
+    if (kind === 'docx') {
+      tooLarge = this.declaredSize(st) > LIMITS.docxMaxDocumentXmlBytes;
+    } else {
+      for (const s of this.parts.values()) {
+        if (this.declaredSize(s) > LIMITS.xlsxMaxSheetXmlBytes && contentTypeOf(this, s.name)?.toLowerCase() === XLSX_WORKSHEET) {
+          tooLarge = true;
+          break;
+        }
+      }
+    }
+
+    // Strict OOXML: Strict relationship type or a purl.oclc.org root namespace. Strict wins over the
+    // content-type reason (it is the more specific explanation). The root start tag is read from a
+    // bounded prefix of the main part, whatever its size.
     const strictRel = readRelationships(this, '').some((r) => r.type === REL_OFFICE_DOCUMENT_STRICT);
-    if (strictRel || rootNamespace(text).startsWith(STRICT_NS_PREFIX)) reason = 'strict-ooxml';
-    st.origText = undefined;   // the main part is only sniffed here; don't hold a second copy of its text
+    if (strictRel || this.mainRootNamespace(st).startsWith(STRICT_NS_PREFIX)) reason = 'strict-ooxml';
 
     // UTF-16 in any part read so far (content types, root rels, main part).
     if (!reason && [...this.parts.values()].some((s) => s.utf16)) reason = 'utf16-part';
 
-    if (!reason) {
-      if (kind === 'docx') {
-        if (this.declaredSize(st) > LIMITS.docxMaxDocumentXmlBytes) reason = 'too-large';
-      } else {
-        for (const s of this.parts.values()) {
-          if (this.declaredSize(s) > LIMITS.xlsxMaxSheetXmlBytes && contentTypeOf(this, s.name)?.toLowerCase() === XLSX_WORKSHEET) {
-            reason = 'too-large';
-            break;
-          }
-        }
-      }
-    }
+    if (!reason && tooLarge) reason = 'too-large';
     this.reason = reason;
+  }
+
+  /**
+   * Root namespace of an original part from a bounded prefix of its bytes (ROOT_SCAN_BYTES). Records
+   * the part's encoding (UTF-16 flag, BOM) as `decode` would. Throws XmlError / ZipError.
+   */
+  private mainRootNamespace(st: PartState): string {
+    const size = this.declaredSize(st);
+    for (const max of ROOT_SCAN_BYTES) {
+      const bytes = st.data ? st.data.subarray(0, max) : inflateEntryPrefix(this.zip, st.entry!, max);
+      const complete = bytes.length >= size || bytes.length < max;
+      const d = complete ? decodePart(bytes) : decodePartPrefix(bytes);
+      st.bom = d.bom;
+      st.utf16 = d.encoding === 'utf-16';
+      const ns = rootNamespace(d.text, complete);
+      if (ns !== undefined) return ns;
+      if (complete) break;
+    }
+    throw new XmlError('malformed', `root start tag not found in the first ${ROOT_SCAN_BYTES[ROOT_SCAN_BYTES.length - 1]} bytes`, 0);
   }
 
   private declaredSize(s: PartState): number {
@@ -243,6 +279,18 @@ export class OfficePackage {
     return !!s && !s.name.endsWith('/');
   }
 
+  /**
+   * Declared central-directory sizes of a part's original ZIP entry (case-insensitive; a leading '/'
+   * is ignored). Nothing is inflated. Undefined for a missing or deleted part, a directory entry, and
+   * a part created by setPart (it has no entry yet). A part replaced by setPart still reports its
+   * original entry's sizes.
+   */
+  partSize(part: string): { compressed: number; uncompressed: number } | undefined {
+    const s = this.state(part);
+    if (!s || !s.entry || s.name.endsWith('/')) return undefined;
+    return { compressed: s.entry.compressedSize, uncompressed: s.entry.uncompressedSize };
+  }
+
   // -------------------------------------------------------------------------------------------
   // Content
 
@@ -257,9 +305,9 @@ export class OfficePackage {
     return inflateEntry(this.zip, s.entry!);
   }
 
-  private decode(s: PartState): string {
+  private decode(s: PartState, bytes?: Uint8Array): string {
     const fromOriginal = s.data === undefined && !s.touched;
-    const d = decodePart(this.currentBytes(s));
+    const d = decodePart(bytes ?? this.currentBytes(s));
     s.bom = d.bom;
     s.utf16 = d.encoding === 'utf-16';
     if (s.utf16 && !this.reason) this.reason = 'utf16-part';
@@ -293,14 +341,20 @@ export class OfficePackage {
     if (this.declaredSize(s) <= LIMITS.asyncParseThresholdBytes) {
       try { return Promise.resolve(this.xml(part)); } catch (e) { return Promise.reject(e); }
     }
-    let text: string;
-    try { text = this.decode(s); } catch (e) { return Promise.reject(e); }
     const gen = s.gen;
-    const pending = parseXmlAsync(text, LIMITS.parseYieldMs).then((doc) => {
+    // Inflation of a large original entry yields too (§10.2); set/created data is already in memory.
+    const bytes = s.data === undefined && s.entry
+      ? inflateEntryAsync(this.zip, s.entry, LIMITS.parseYieldMs)
+      : Promise.resolve(this.currentBytes(s));
+    const pending = bytes.then((b) => {
+      // A setPart meanwhile: these bytes are stale (the handler below re-reads the current ones).
+      if (s.gen !== gen) return undefined;
+      return parseXmlAsync(this.decode(s, b), LIMITS.parseYieldMs);
+    }).then((doc) => {
       if (s.pending === pending) s.pending = undefined;
       // A setPart meanwhile makes this tree stale; a synchronous xml() meanwhile already installed
       // one. Either way never hand out a second, different tree.
-      if (s.gen !== gen) return this.xml(part);
+      if (s.gen !== gen || doc === undefined) return this.xml(part);
       if (s.doc) return s.doc;
       s.doc = doc;
       return doc;
@@ -374,7 +428,12 @@ export class OfficePackage {
     if (!force && this.touchedParts().length === 0) return this.originalBytes;
     const items: ZipWriteItem[] = [];
     let changed = false;
-    for (const s of this.parts.values()) {
+    // Original entries in file order (by local-header offset, §3.2), which can differ from the
+    // central-directory order `parts` keeps; then created parts in creation order.
+    const all = [...this.parts.values()];
+    const ordered = all.filter((s) => s.entry).sort((a, b) => a.entry!.extent[0] - b.entry!.extent[0]);
+    for (const s of all) if (!s.entry) ordered.push(s);
+    for (const s of ordered) {
       if (!s.entry) {
         items.push({ add: s.name, data: this.currentBytes(s) });
         changed = true;

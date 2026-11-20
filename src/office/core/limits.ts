@@ -29,4 +29,17 @@ export const LIMITS = {
   asyncParseThresholdBytes: 2 * MB,
   /** Maximum time between event-loop yields while parsing, in milliseconds. */
   parseYieldMs: 30,
+
+  /**
+   * XML: element nesting deeper than this is malformed. Real OOXML nests a few dozen levels (deeply
+   * nested tables with content controls and AlternateContent stay well under 200); the cap bounds
+   * the parser's stack and the tree depth that later recursion-free walks have to handle.
+   */
+  xmlMaxDepth: 10_000,
+  /**
+   * XML: more attributes (namespace declarations included) than this on one start tag is malformed.
+   * The busiest real start tags (a Word document.xml root, ~40 xmlns declarations; a cell or run
+   * properties element, < 20 attributes) are two orders of magnitude below it.
+   */
+  xmlMaxAttributes: 4_096,
 } as const;
