@@ -2,6 +2,7 @@ const esbuild = require('esbuild');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+const testBundle = process.argv.includes('--test-bundle');
 
 /** @type {import('esbuild').Plugin} */
 const esbuildProblemMatcherPlugin = {
@@ -19,7 +20,32 @@ const esbuildProblemMatcherPlugin = {
   },
 };
 
+/**
+ * Test-only bundle of the Office core (src/office/core must not import `vscode`).
+ * Built by `npm test` via `--test-bundle`; never by compile / package / watch.
+ */
+async function buildOfficeCoreTestBundle() {
+  const ctx = await esbuild.context({
+    entryPoints: ['src/office/core/index.ts'],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    sourcemap: true,
+    minify: false,
+    outfile: 'tests/.build/office-core.cjs',
+    logLevel: 'silent',
+    plugins: [esbuildProblemMatcherPlugin],
+  });
+  await ctx.rebuild();
+  await ctx.dispose();
+}
+
 async function main() {
+  if (testBundle) {
+    await buildOfficeCoreTestBundle();
+    return;
+  }
+
   const ctx = await esbuild.context({
     entryPoints: ['src/extension.ts'],
     bundle: true,

@@ -6,6 +6,8 @@ src/**
 tests/**
 node_modules/**
 scripts/**
+docs/**
+spike/**
 tsconfig.json
 esbuild.js
 .eslintrc.json

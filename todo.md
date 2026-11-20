@@ -311,10 +311,57 @@
 - [x] Gather requirements (user): .docx/.xlsx only; viewer first, basic edit; default editor; View mode by default with an Edit toggle
 - [x] Spec — `docs/office-viewers-spec.md` (Fable subagent)
 - [x] Resolve spec open questions (user): real dates in v1, Word table-cell text editable in v1, warn-and-allow for charts/pivots on row/col changes
-- [ ] Implementation plan — `docs/office-viewers-plan.md` (Fable subagent)
+- [x] Implementation plan — `docs/office-viewers-plan.md` (Fable subagent)
 - [ ] Phase 0 — spikes + core (ZIP container, lossless XML)
+  - [ ] WP-01 Spikes
+  - [x] WP-02 Scaffolding, dependencies, test bundle, housekeeping
+  - [ ] WP-03 Fixtures and generators
+  - [ ] WP-04 ZIP container
+  - [ ] WP-05 Lossless XML
+  - [ ] WP-06 OPC, OfficePackage, load classification (Gate R0)
 - [ ] Phase 1 — read-only viewers
+  - [ ] WP-07 Protocol contract freeze
+  - [ ] WP-08 Host shell
+  - [ ] WP-09 Common webview chrome
+  - [ ] WP-10 Word viewer
+  - [ ] WP-11 Xlsx read model
+  - [ ] WP-12 Xlsx styles and display formatting
+  - [ ] WP-13 Grid maths
+  - [ ] WP-14 Xlsx provider view path
+  - [ ] WP-15 Grid component
+  - [ ] WP-16 Excel viewer shell
+  - [ ] WP-17 Phase 1 docs and gate run
+  - [ ] Gate R1
 - [ ] Phase 2 — save pipeline + Excel cell editing
+  - [ ] WP-18 Edits, undo/redo, serialise, verify, save core
+  - [ ] WP-19 Full CustomEditorProvider
+  - [ ] WP-20 Xlsx cell write, input classification, calc handling
+  - [ ] WP-21 Formula entry, _xlfn, shared formulas
+  - [ ] WP-22 Date style patch + xlsx validators
+  - [ ] WP-23 Xlsx editing wiring
+  - [ ] WP-24 verify-office-open.ps1, OpenXmlValidator script
+  - [ ] Gate R2 (Fable)
 - [ ] Phase 3 — Word editing
+  - [ ] WP-25 Docx block/segment model
+  - [ ] WP-26 Docx styles + numbering, read side
+  - [ ] WP-27 Render copy + DOM mapping
+  - [ ] WP-28 Paragraph writer
+  - [ ] WP-29 Paragraph structure ops
+  - [ ] WP-30 Styles and lists, write side
+  - [ ] WP-31 Docx validators + protection detection
+  - [ ] WP-32 Island DOM <-> segments
+  - [ ] WP-33 Docx provider edit path
+  - [ ] WP-34 Island controller and re-render scheduling
+  - [ ] WP-35 Word edit toolbar, shortcuts, CSS
+  - [ ] Gate R3
 - [ ] Phase 4 — Excel structure (rows/columns/sheets)
+  - [ ] WP-36 Reference shifting
+  - [ ] WP-37 Excel-produced goldens
+  - [ ] WP-38 Insert/delete rows and columns, Tier A
+  - [ ] WP-39 Tier B/C guards
+  - [ ] WP-40 Add / rename / delete sheet
+  - [ ] WP-41 Structure UI + host wiring
+  - [ ] WP-42 v1 release preparation
+  - [ ] Gate R4
+  - [ ] Gate R-final (Fable)
 - [ ] Post-v1: Excel range → Markdown table; Word → Markdown; Markdown → Word; Office files in wikilinks/graph

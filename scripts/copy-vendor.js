@@ -26,6 +26,14 @@ const vendorFiles = [
     src: path.join(__dirname, '..', 'node_modules', 'mermaid', 'dist', 'mermaid.min.js'),
     dest: path.join(destDir, 'mermaid.min.js'),
   },
+  {
+    src: path.join(__dirname, '..', 'node_modules', 'docx-preview', 'dist', 'docx-preview.min.js'),
+    dest: path.join(destDir, 'docx-preview.min.js'),
+  },
+  {
+    src: path.join(__dirname, '..', 'node_modules', 'jszip', 'dist', 'jszip.min.js'),
+    dest: path.join(destDir, 'jszip.min.js'),
+  },
 ];
 
 let missing = false;
