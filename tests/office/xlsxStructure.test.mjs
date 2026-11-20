@@ -148,7 +148,9 @@ async function check(fx, sheetId, op, touched, caseName, opts = {}) {
   refreshAfterEdit(wb, edit);
   assertBytesEqual(pkg.serialize(), bytes, `${caseName}: edit -> undo -> redo must equal edit`);
   await assertModelMatchesFile(wb, pkg, styles, `${caseName} view after redo`, opts.range);
-  writeOut(OUT, `${caseName}.xlsx`, bytes);
+  // opts.notForExcel: an input Excel itself refuses (see the case), so the output is not handed to
+  // scripts/verify-office-open.ps1.
+  if (!opts.notForExcel) writeOut(OUT, `${caseName}.xlsx`, bytes);
   return { edit, bytes };
 }
 
@@ -396,7 +398,11 @@ test('shared group on another sheet whose master refers to the edited sheet: kep
     [S1]: (s) => s.replace('<f t="array" ref="E2:E4">A2:A4*10</f>', '<f>A2*10</f>'),
   });
   const fx = load('formulas.xlsx', bytes);
-  const { bytes: out } = await check(fx, 1, insR(1), null, 'other-sheet-shared-kept');
+  // Excel never writes, and refuses to load ("Removed Records: Shared formula"), a shared formula
+  // whose master has a sheet-qualified reference such as Data!A2, so this input only comes from other
+  // producers and is already damaged for Excel: the kept group is checked here, not in real Excel.
+  // The materialised case below writes plain formulas and is verified in Excel.
+  const { bytes: out } = await check(fx, 1, insR(1), null, 'other-sheet-shared-kept', { notForExcel: true });
   const t = partText(out, 'xl/worksheets/sheet4.xml');
   assert.deepStrictEqual(formulaOf(t, 'A2'), { attrs: ' t="shared" ref="A2:A3" si="0"', text: 'Data!A3*3' });
   assert.deepStrictEqual(formulaOf(t, 'A3'), { attrs: ' t="shared" si="0"', text: '' });
