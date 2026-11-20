@@ -174,6 +174,7 @@
         }
         shell.refetch();
         if (item.ctx.announce) { OC.announce(item.ctx.announce); }
+        if (item.ctx.onResult) { item.ctx.onResult(msg); }
       } else {
         const err = msg.error || {};
         const dropped = err.code === 'stale' ? queue.splice(0) : [];
@@ -188,6 +189,7 @@
           reopenAfterFormulaError(item.ctx, err.message);
         }
       }
+      if (!msg.ok && item.ctx.onResult) { item.ctx.onResult(msg); }
       item.resolve();
       pump();
     }
@@ -504,6 +506,8 @@
 
     return {
       onGesture, commit, cancel, flush, commitAndFlush, whenIdle,
+      /** WP-41: queue an edit behind the open ones (ctx: { announce?, onResult?(msg) }); resolves after the reply. */
+      send,
       isEditing() { return ed !== null; },
       current() { return ed ? { r: ed.r, c: ed.c, where: ed.where, value: ed.el.value, awaiting: ed.awaiting } : null; },
       cellInput, barInput,

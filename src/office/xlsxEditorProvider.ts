@@ -103,7 +103,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private readonly editedAt = new WeakMap<OfficeDocument, number>();
 
   protected scripts(): string[] {
-    return ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js', 'xlsxCellEditor.js'];
+    return ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js', 'xlsxCellEditor.js', 'xlsxStructureUi.js'];
   }
 
   protected styles(): string[] {
@@ -119,7 +119,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   protected bodyHtml(): string {
     // Static markup only (the appearance value is one of two literals). The brand button is
     // host-generated and is moved into the toolbar by the webview script.
-    return /* html */ `  <div id="office-app" class="office-app" data-sheet-appearance="${this.sheetAppearance()}">
+    return /* html */ `  <div id="office-app" class="office-app" data-sheet-appearance="${this.sheetAppearance()}" data-structure="${OFFICE_FLAGS.xlsxStructure ? 'on' : 'off'}">
     <div id="office-toolbar" class="office-toolbar"></div>
     <div id="office-banner" class="office-banner"></div>
     <div id="office-content" class="office-content xlsx-content"></div>
@@ -182,10 +182,12 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     return { sheets, activeSheetId: active ? active.id : 0 };
   }
 
-  private sendWorkbook(doc: OfficeDocument, panel: vscode.WebviewPanel, force: boolean): void {
+  private sendWorkbook(doc: OfficeDocument, panel: vscode.WebviewPanel, force: boolean, activeOverride?: number): void {
     const m = this.model(doc);
     if (!m) { this.sendState(doc, panel); return; }
-    const { sheets, activeSheetId } = this.workbookMessage(doc, m);
+    const wm = this.workbookMessage(doc, m);
+    const { sheets } = wm;
+    const activeSheetId = activeOverride !== undefined && sheets.some((s) => s.id === activeOverride) ? activeOverride : wm.activeSheetId;
     const key = JSON.stringify(sheets);
     if (!force && this.sentInfo.get(panel) === key) return;
     this.sentInfo.set(panel, key);
@@ -375,6 +377,9 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const pkg = doc.pkg;
     if (!m || !pkg) { fail({ code: 'internal', message: "This workbook can't be edited." }); return; }
 
+    // The core gives no new-sheet id back: the sheet list before the edit tells which one was added or
+    // which neighbour to select after a delete (spec 9.7).
+    const sheetsBefore = m.wb.sheets.map((s) => ({ id: s.id, state: s.state }));
     let confirmed = false;
     for (;;) {
       const res = await applyXlsxEdit(m.wb, pkg, msg.edit, { confirmed, styles: m.styles });
@@ -395,7 +400,8 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       }
       if (res.edit) {
         this.editedAt.set(doc, doc.generation);
-        if (res.invalidate === 'workbook') this.models.delete(pkg);   // the sheet list changed
+        // The sheet list changed: the core has already re-synced `wb.sheets` and kept the session ids, so
+        // the model stays (a fresh load would renumber the sheets and the webview still holds the old ids).
       }
       const range = res.range ? [res.range[0], res.range[1], res.range[2], res.range[3]] as [number, number, number, number] : undefined;
       this.post(panel, {
@@ -405,10 +411,25 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       });
       if (res.edit) {
         this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
-        if (res.invalidate === 'workbook') this.sendWorkbook(doc, panel, true);
+        if (res.invalidate === 'workbook') this.sendWorkbook(doc, panel, true, this.sheetToSelect(m.wb, msg.edit, sheetsBefore));
       }
       return;
     }
+  }
+
+  /** After add: the new sheet; after delete: the nearest remaining visible sheet (the one before, else after). */
+  private sheetToSelect(wb: Workbook, op: XlsxEditOp, before: ReadonlyArray<{ id: number; state: string }>): number | undefined {
+    if (op.op === 'addSheet') {
+      const known = new Set(before.map((s) => s.id));
+      return wb.sheets.find((s) => !known.has(s.id) && s.state === 'visible')?.id;
+    }
+    if (op.op === 'deleteSheet') {
+      const idx = before.findIndex((s) => s.id === op.sheetId);
+      const alive = new Set(wb.sheets.filter((s) => s.state === 'visible').map((s) => s.id));
+      for (let i = idx - 1; i >= 0; i--) if (alive.has(before[i].id)) return before[i].id;
+      for (let i = idx + 1; i < before.length; i++) if (alive.has(before[i].id)) return before[i].id;
+    }
+    return undefined;
   }
 
   /** The modal for a Tier C list (default button Cancel); skipped when `confirmStructuralEdits` is off (spec §4.1). */

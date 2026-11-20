@@ -75,6 +75,7 @@
       meta: null,
       placeholder: null,      // null | 'chart' | 'other' | 'unavailable' | 'empty'
       editMode: false,
+      preferSheetId: null,    // WP-41: the next xlsxWorkbook selects this sheet
     };
     const find = {
       open: false, query: '', matchCase: false, allSheets: false,
@@ -426,7 +427,11 @@
         showPlaceholder('empty', 'This workbook has no sheets.');
         return;
       }
-      let target = state.activeSheetId !== null && sheetInfo(state.activeSheetId) ? state.activeSheetId : msg.activeSheetId;
+      // WP-41: after adding a sheet the structure UI asks to land on the host's pick (the new sheet).
+      const prefer = state.preferSheetId;
+      state.preferSheetId = null;
+      let target = prefer !== null && prefer !== undefined && sheetInfo(prefer) ? prefer
+        : state.activeSheetId !== null && sheetInfo(state.activeSheetId) ? state.activeSheetId : msg.activeSheetId;
       if (!sheetInfo(target)) {
         const v = state.sheets.find((s) => s.state === 'visible') || state.sheets[0];
         target = v.id;
@@ -858,6 +863,12 @@
       formulaBar: { bar: formulaBar, display: formulaText, nameBox, staleMark },
       gridHost,
       registerMenuItems(fn) { if (typeof fn === 'function') { menuProviders.push(fn); } },
+      /** WP-41: the structure UI's hooks (tab strip, shared menu). */
+      tabsBar, tabList, hiddenBtn,
+      openMenu: (items, x, y, o) => openMenu(items, x, y, o),
+      closeMenu: () => closeMenu(),
+      selectSheet: (id, t) => selectSheet(id, t),
+      renderTabs: () => renderTabs(),
     };
 
     function start() {

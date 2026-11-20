@@ -296,7 +296,7 @@ test('HTML: scripts in order with nonce, ?v=, CSP without blob/data, sheetAppear
   assert.ok(!csp.includes('blob:') && !csp.includes('data:'));
   const nonce = /'nonce-([A-Za-z0-9]+)'/.exec(csp)[1];
   const scripts = [...html.matchAll(/<script nonce="([^"]+)" src="https:\/\/webview\/ext\/media\/([^?"]+)\?v=\d+"/g)];
-  assert.deepStrictEqual(scripts.map((m) => m[2]), ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js', 'xlsxCellEditor.js']);
+  assert.deepStrictEqual(scripts.map((m) => m[2]), ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js', 'xlsxCellEditor.js', 'xlsxStructureUi.js']);
   assert.ok(scripts.every((m) => m[1] === nonce));
   assert.ok(html.includes('xlsxEditor.css?v=') && html.includes('officeCommon.css?v='));
   assert.ok(html.includes('data-office-kind="xlsx"'));

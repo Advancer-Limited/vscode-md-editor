@@ -250,3 +250,34 @@ body {
 }
 .xlsx-content .xlsx-cell-editor[hidden],
 .xlsx-content .xlsx-formula-input[hidden] { display: none !important; }
+
+/* ---- structure UI (WP-41): "+" button, inline tab rename ---- */
+.xlsx-add-tab { flex: 0 0 auto; margin: 2px 4px; min-width: 1.8em; }
+.xlsx-add-tab[hidden] { display: none; }
+.xlsx-tab-rename { position: relative; flex: 0 0 auto; display: flex; align-items: stretch; }
+.xlsx-tab-rename-input {
+  font: inherit;
+  box-sizing: border-box;
+  min-width: 8em;
+  padding: 3px 8px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-focusBorder, currentColor);
+  outline: none;
+}
+.xlsx-tab-rename-input[aria-invalid="true"] { border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); }
+.xlsx-tab-rename-msg {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  z-index: 21;
+  max-width: 28em;
+  padding: 3px 8px;
+  color: var(--vscode-inputValidation-errorForeground, var(--vscode-foreground));
+  background: var(--vscode-inputValidation-errorBackground, var(--vscode-editorWidget-background));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+}
+.xlsx-tab-rename-msg[hidden] { display: none; }
+@media (forced-colors: active) {
+  .xlsx-tab-rename-input, .xlsx-tab-rename-msg { border: 1px solid CanvasText; }
+}

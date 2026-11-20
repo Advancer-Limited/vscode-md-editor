@@ -168,6 +168,11 @@
           "default": false,
           "description": "Open editable Word and Excel files with Edit already on. When off, files open in View mode and Edit (Ctrl+E) turns editing on."
         },
+        "vscodeMdEditor.office.confirmStructuralEdits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation before inserting or deleting Excel rows, columns or sheets when the change cannot fully update everything that refers to them (charts, pivot tables and drawings keep their position or range). When off, those changes go ahead without the prompt. Deleting a sheet always asks."
+        },
         "vscodeMdEditor.languageTool.enabled": {
           "type": "boolean",
           "default": true,

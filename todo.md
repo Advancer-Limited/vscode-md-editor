@@ -365,7 +365,7 @@
   - [x] WP-39 Tier B/C guards
   - [x] WP-40 Add / rename / delete sheet
   - [x] PR-13 integration pass (feature/office-xlsx-structure): stub-era tests rewritten, grid aux invalidation (Sheet.structureGeneration), sheet list after outside undo/redo and aborted sheet ops, add-sheet keeps the calc chain, structural random run (1156 pass / 1 skipped)
-  - [ ] WP-41 Structure UI + host wiring
+  - [x] WP-41 Structure UI + host wiring
   - [ ] WP-42 v1 release preparation
   - [ ] Gate R4
   - [ ] Gate R-final (Fable)
