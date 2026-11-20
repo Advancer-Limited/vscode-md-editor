@@ -188,3 +188,21 @@ test('parsers never throw on hostile input', () => {
     assert.strictEqual(parseXlsxToHost(h), null);
   }
 });
+
+test('PROTOCOL_LIMITS match the caps documented in spec §5.2', () => {
+  const L = P.PROTOCOL_LIMITS;
+  assert.strictEqual(L.MAX_CELLS, 10000);
+  assert.strictEqual(L.MAX_CELL_CHARS, 32767);
+  assert.strictEqual(L.MAX_ROWS, 1048576);
+  assert.strictEqual(L.MAX_COLS, 16384);
+  assert.strictEqual(L.MAX_BLOCK_IDS, 20000);
+  assert.strictEqual(L.MAX_COMMIT_ITEMS, 200000);
+  assert.strictEqual(L.MAX_ITEM_TEXT, 10000000);
+  assert.strictEqual(L.MAX_HREF, 32767);
+  assert.strictEqual(L.MAX_CLIPBOARD, 50000000);
+  assert.strictEqual(L.MAX_QUERY, 32767);
+  // 20,000-cell window boundary: exactly 20,000 accepted, 20,001 rejected.
+  const w = (r1, c1) => ({ type: 'xlsxRequestCells', requestId: 1, sheetId: 1, range: [0, 0, r1, c1] });
+  assert.ok(parseXlsxToHost(w(199, 99)));
+  assert.strictEqual(parseXlsxToHost(w(200, 99)), null);
+});

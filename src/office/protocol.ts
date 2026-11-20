@@ -16,7 +16,8 @@ export type OfficeCommonToWebview =
   | { type: 'loadError'; title: string; detail: string; actions: Array<'openExternally' | 'retry'> }
   | { type: 'editModeChanged'; editMode: boolean }
   | { type: 'flushPendingEdits'; flushId: number }   // host is about to save/backup
-  | { type: 'notices'; notices: OfficeNotice[] };
+  | { type: 'notices'; notices: OfficeNotice[] }
+  | { type: 'requestFailed'; requestId: number; error: OfficeError };   // generic failure reply for any requestId-carrying request without a dedicated failure variant
 
 export type OfficeCommonToHost =
   | { type: 'ready' }

@@ -204,6 +204,7 @@ Defined in `src/office/protocol.ts`. Rules common to both editors:
 - The host owns a monotonically increasing `version` (integer, starts at 0, +1 per applied edit, undo, redo, revert or external reload).
 - Every edit request carries `requestId` (webview-generated integer) and `baseVersion`. The host processes edits strictly in arrival order. If `baseVersion !== version` the host replies `{ ok: false, error: { code: 'stale' } }` and the webview refetches.
 - The host never trusts the webview: every id, index, range and string is validated; out-of-range requests are answered with an error result, never thrown.
+- Every request carrying a `requestId` is answered by exactly one reply: its success message or, for requests without a dedicated failure variant, `requestFailed`. (Edit requests are answered by their `*EditResult` with `ok: false`.) The webview never relies on a timeout. Requests without a `requestId` (`docxRequestRender`, `xlsxRequestSheetMeta`, `xlsxCopy`) are fire-and-forget: they are answered by their success message, or by a `notices` message on failure; `xlsxCopy` is answered only by the host writing to the clipboard.
 - Binary payloads are sent as `Uint8Array` in the message body. **[Assumption]** VS Code ≥ 1.57 transfers typed arrays to webviews without JSON-encoding them; verify in Phase 0, fall back to base64 if not.
 
 ```ts
@@ -230,7 +231,8 @@ export type OfficeCommonToWebview =
   | { type: 'loadError'; title: string; detail: string; actions: Array<'openExternally' | 'retry'> }
   | { type: 'editModeChanged'; editMode: boolean }
   | { type: 'flushPendingEdits'; flushId: number }   // host is about to save/backup
-  | { type: 'notices'; notices: OfficeNotice[] };
+  | { type: 'notices'; notices: OfficeNotice[] }
+  | { type: 'requestFailed'; requestId: number; error: OfficeError };   // generic failure reply for any requestId-carrying request that has no dedicated failure variant
 
 export type OfficeCommonToHost =
   | { type: 'ready' }
@@ -369,6 +371,10 @@ export type XlsxToHost = OfficeCommonToHost
   | { type: 'xlsxFind'; requestId: number; query: string; matchCase: boolean; sheetId: number | null }
   | { type: 'xlsxCopy'; sheetId: number; range: [number, number, number, number]; format: 'tsv' | 'markdown' };
 ```
+
+Sheet names (`addSheet`, `renameSheet`) are validated by the host: 1-31 characters, none of `[]:*?/`, no leading or trailing `'`, unique case-insensitively within the workbook, and not the reserved name `History`; violations return `{ code: 'invalid' }`.
+
+**Limits.** `PROTOCOL_LIMITS` in `src/office/protocol.ts` is the single source of truth for the inbound validator caps: at most 20,000 cells per `xlsxRequestCells`; at most 10,000 cells per `setCells`; cell input at most 32,767 characters; row index < 1,048,576 and column index < 16,384; at most 20,000 `blockIds` per docx edit; at most 200,000 commit items per paragraph edit, each text item at most 10,000,000 characters; `openLink` href at most 32,767 characters; `writeClipboard` text at most 50,000,000 characters; `xlsxFind` query at most 32,767 characters.
 
 Cell windows: the grid requests the visible range plus an overscan of 40 rows / 10 columns, in requests of at most 20,000 cells. Responses for a superseded `version` are discarded by the webview.
 
@@ -760,7 +766,7 @@ Documents are untrusted input.
 - **No network**: with no `connect-src` and `img-src` limited to local/blob/data, linked (external) images, remote templates and tracking beacons in a document cannot load. Externally linked pictures show as broken images; a notice explains why.
 - **altChunk** (embedded HTML/MHT) rendering is disabled (`renderAltChunks: false`).
 - **HTML construction**: our webview code builds DOM with `createElement`/`textContent` only. `innerHTML` MUST NOT be used with document-derived strings anywhere in `media/docx*.js`, `media/xlsx*.js`, `media/officeCommon.js`. docx-preview's own output is the one exception and is contained by the CSP.
-- **Links**: never navigated by the webview. The host accepts only `http:`, `https:`, `mailto:` and opens them with `vscode.env.openExternal` (which applies VS Code's trusted-domain prompt). Everything else is dropped.
+- **Links**: never navigated by the webview. The host accepts only `http:`, `https:`, `mailto:` and opens them with `vscode.env.openExternal` (which applies VS Code's trusted-domain prompt). Everything else is dropped. The host's `openLink` handler enforces this allow-list: any other scheme is ignored and a `notices` message tells the user the link was not opened. In-document `#bookmark` targets are handled by the webview itself and are never sent.
 - **XML**: DTDs rejected (§3.3); no external entity or schema is ever fetched. Relationship targets with `TargetMode="External"` are never dereferenced by the host.
 - **ZIP**: size and ratio limits are checked from the central directory before inflating (§10.2); entry names are treated as opaque keys and never used as file-system paths; nothing is extracted to disk.
 - **Webview → host**: all messages validated (§5). Clipboard writes are limited to text the host itself produced from the document.
