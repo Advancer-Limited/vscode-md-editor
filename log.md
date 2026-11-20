@@ -955,3 +955,31 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - A created part that is deleted and then restored is appended at the end again, so ZIP order differs in intermediate states only. WP-19 is to fix this with a tombstone.
   - After a whole-part undo, older node undos on the same part are refused. This is safe.
 - Merged Phase 1 (`feature/office-viewers-docs`) into this branch.
+
+### 2026-11-21 — WP-19 full CustomEditorProvider (feature/office-save, 63caa18) — completes PR-6
+- **WP-19 (Opus):** `officeDocument.ts`, `officeEditorProviderBase.ts` (now a `CustomEditorProvider` with save, saveAs, revert and backup), a new `saveErrors.ts`, and `package.json` gains `vscodeMdEditor.office.startInEditMode` (default false).
+  - **Edits:** `edit()`/`applyEdit()` feed VS Code's undo stack through generation-guarded `undoRedoFor`. A refused undo shows the §6.3 message. `isDirty` follows VS Code's save point.
+  - **Save:** flush (1,500 ms), a conflict modal, then verified bytes only. The bytes go to a temp file, which is renamed over the original. Errors are mapped per §10.3. A verification failure writes nothing and offers "Save a copy of diagnostics" (no document content).
+  - **Save As with no edits** writes the original bytes. Revert bumps the generation. Backups contain verified bytes only. `VSMD_OFFICE_CORRUPT_SAVE=1` is the manual hook for the R2 check.
+  - **Flags off:** `onDidChangeCustomDocument` is undefined, so VS Code registers the providers read-only, exactly as in Phase 1.
+- **package.ts:** a tombstone keeps the ZIP slot of a part that was created and then deleted. The WP-18 property test now requires exact entry order at every step.
+- **Tests:** `saveProvider.test.mjs` (24) and `saveErrors.test.mjs`, plus a much-extended vscode stub. 481/481 green on two runs. Fixed WP-19's own flaky 35 ms bound.
+- **Orchestrator decision: keep temp + rename for saving.** A failure mid-write never truncates the original. A file locked by Office fails at the delete, so the original survives. Costs:
+  - On POSIX, permission bits, ACLs and hard links are not preserved.
+  - If the rename fails after VS Code's provider has deleted the target, only the temp copy is left, and it is named in the error.
+
+  Both go on the Gate R2 checklist and into the README limitations.
+- **Follow-ups:**
+  - WP-23 must override `onEdited` to invalidate the xlsx model cache, which is keyed by package and changed in place.
+  - WP-33 must render the current bytes, not `originalBytes`.
+  - After a refused (stale) undo, VS Code shows the document as dirty with unchanged content.
+- **Gate R2 dev-host checks:**
+  - Save, Save As and Revert.
+  - Undo back to the save point clears the dirty dot.
+  - Hot exit.
+  - The conflict modal.
+  - Saving a file locked by Office.
+  - `VSMD_OFFICE_CORRUPT_SAVE=1`.
+  - The revert command targets the right editor.
+  - With flags off there is no Save As.
+  - No duplicate error toast on CancellationError.
