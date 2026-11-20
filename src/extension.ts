@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { MarkdownEditorProvider } from './markdownEditorProvider.js';
 import { MermaidEditorProvider } from './mermaidEditorProvider.js';
 import { GltfEditorProvider } from './gltfEditorProvider.js';
+import { DocxEditorProvider } from './office/docxEditorProvider.js';
 import { isMarkdownFile } from './utils.js';
 import { LanguageToolService } from './languageToolService.js';
 import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
@@ -70,6 +71,10 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     )
   );
+
+  // 2d. Register the Word document viewer (read-only; docs/office-viewers-spec.md §4.1). Independent of
+  // the editors above, and cheap here: nothing is read until a .docx is opened.
+  context.subscriptions.push(DocxEditorProvider.register(context));
 
   // 3. Create the LanguageTool service
   const languageToolService = new LanguageToolService();
