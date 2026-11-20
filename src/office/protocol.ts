@@ -111,6 +111,7 @@ export interface XlsxCell {
   d: string;                   // display string (already number-formatted)
   s: number;                   // index into the style table sent with the batch
   k: 'n' | 's' | 'b' | 'e' | 'd' | 'z';   // number, string, boolean, error, date-formatted number, empty-but-styled
+  v?: number;                  // raw numeric value when k is 'n' or 'd' (selection Sum/Average use it, as Excel does)
   f?: true;                    // has a formula
   stale?: true;                // formula whose cached value is missing or may be out of date (§9.5)
   link?: string;               // hyperlink target

@@ -326,6 +326,7 @@ export interface XlsxCell {
   d: string;                   // display string (already number-formatted)
   s: number;                   // index into the style table sent with the batch
   k: 'n' | 's' | 'b' | 'e' | 'd' | 'z';   // number, string, boolean, error, date-formatted number, empty-but-styled
+  v?: number;                  // raw numeric value when k is 'n' or 'd' (selection Sum/Average use it, as Excel does)
   f?: true;                    // has a formula
   stale?: true;                // formula whose cached value is missing or may be out of date (§9.5)
   link?: string;               // hyperlink target
@@ -769,7 +770,7 @@ Documents are untrusted input.
 - **Links**: never navigated by the webview. The host accepts only `http:`, `https:`, `mailto:` and opens them with `vscode.env.openExternal` (which applies VS Code's trusted-domain prompt). Everything else is dropped. The host's `openLink` handler enforces this allow-list: any other scheme is ignored and a `notices` message tells the user the link was not opened. In-document `#bookmark` targets are handled by the webview itself and are never sent.
 - **XML**: DTDs rejected (§3.3); no external entity or schema is ever fetched. Relationship targets with `TargetMode="External"` are never dereferenced by the host.
 - **ZIP**: size and ratio limits are checked from the central directory before inflating (§10.2); entry names are treated as opaque keys and never used as file-system paths; nothing is extracted to disk.
-- **Webview → host**: all messages validated (§5). Clipboard writes are limited to text the host itself produced from the document.
+- **Webview → host**: all messages validated (§5). Clipboard writes are plain text only (never HTML or other formats), via `writeClipboard` (for selections the webview copies) or written by the host from document content (`xlsxCopy`), capped by `PROTOCOL_LIMITS.MAX_CLIPBOARD`. Each `notices` message carries the full current notice list, not a delta.
 - **Privacy**: no document content leaves the machine. Diagnostics (§6.5) contain part names and validator messages only.
 - Workspace Trust: the viewers work in untrusted workspaces (they execute nothing from the workspace); declare this in the README rather than restricting.
 
