@@ -12,7 +12,7 @@ Conventions used here: **MUST / MUST NOT** are requirements. "**[Verified]**" me
 | # | Decision | Choice |
 |---|---|---|
 | D1 | Preservation strategy (both formats) | **Patch the original OOXML package.** Unchanged ZIP entries are copied as raw bytes (not recompressed). Inside a touched XML part, only the targeted element is rewritten; the rest of the part's text is byte-identical. No parse/serialise library ever owns the file. |
-| D2 | ZIP | Own small OPC container reader/writer (`src/office/core/zip.ts`) using **fflate 0.8.x** (MIT) only for inflate/deflate/CRC. |
+| D2 | ZIP | Own small OPC container reader/writer (`src/office/core/zip.ts`) using **fflate 0.8.x** (MIT) only for raw inflate/deflate (fflate 0.8.3 exports no CRC-32; `zip.ts` carries its own table-driven `crc32`). |
 | D3 | XML | Own **lossless XML tree** (`src/office/core/xml.ts`): every node remembers its exact source slice; `serialize(parse(x)) === x`. Rejects `<!DOCTYPE` outright. No XML dependency at runtime. |
 | D4 | Word rendering | **docx-preview 0.4.x** (Apache-2.0) + **JSZip 3.10.x** (MIT option of its dual licence), in the webview. |
 | D5 | Word editing | Host-owned block/segment model over `word/document.xml`; the webview edits **one paragraph at a time** ("edit island") inside the docx-preview output. Mapping from rendered DOM to source paragraphs is by marker bookmarks injected into a **render-only copy**. |
@@ -46,11 +46,11 @@ Sizes are of the published files on 2026-11-20 **[Verified]** unless marked.
 
 | Library | Version | Licence | Runs in | Size | Used for |
 |---|---|---|---|---|---|
-| fflate | 0.8.3 | MIT | host | ~33 KB bundled (tree-shaken to inflate/deflate/crc32) | raw DEFLATE, CRC-32 |
+| fflate | 0.8.3 | MIT | host | ~9 KB minified (inflateSync/deflateSync) | raw DEFLATE |
 | docx-preview | 0.4.1 | Apache-2.0 | webview | 75 KB (`dist/docx-preview.min.js`, UMD, global `docx`) | Word rendering |
 | jszip | 3.10.2 | MIT OR GPL-3.0-or-later (we take **MIT**) | webview | 98 KB (`dist/jszip.min.js`, global `JSZip`) | required by docx-preview |
-| numfmt | 4.1.4 | MIT | host | ~170 KB unminified CJS | Excel number-format codes, date serials |
-| @borgar/fx | 5.1.3 | MIT | host | ~93 KB unminified | formula tokenise/parse, A1 ref parse/stringify (`@borgar/fx/xlsx` entry for file-style refs) |
+| numfmt | 4.1.4 | MIT | host | ~170 KB unminified CJS; 96 KB minified (measured Phase 0 S5) | Excel number-format codes, date serials |
+| @borgar/fx | 5.1.3 | MIT | host | ~93 KB unminified; 32 KB minified (measured Phase 0 S5) | formula tokenise/parse, A1 ref parse/stringify (`@borgar/fx/xlsx` entry for file-style refs) |
 | mammoth | 1.13.x | BSD-2-Clause | host | est. 0.5–0.8 MB bundled **[Assumption]** | Phase 6 only (Word → Markdown) |
 | docx | 9.x | MIT | host | est. 0.5–1 MB bundled **[Assumption]** | Phase 7 only (Markdown → Word) |
 
@@ -438,7 +438,7 @@ Xlsx-only, as part of the first serialisation after any cell/structure edit: set
 
 In scope:
 - Paged rendering via docx-preview with: `breakPages: true`, `inWrapper: true`, `ignoreLastRenderedPageBreak: true`, headers, footers, footnotes, endnotes on; `renderChanges: false` (shows the document as if all insertions were accepted and deletions applied — stated in a notice when tracked changes exist); `renderComments: false`; **`renderAltChunks: false`**; `experimental: false`; `useBase64URL: false`.
-- Toolbar: Edit toggle, zoom (50–200 %, Fit width, Ctrl+wheel, Ctrl+= / Ctrl+-), page count, "Open in Word" (`vscode.env.openExternal`), brand button (`getBrandButtonHtml()`).
+- Toolbar: Edit toggle, zoom (50–200 %, Fit width, Ctrl+wheel, Ctrl+= / Ctrl+-), section count (explicit page/section breaks; docx-preview has no flow pagination, so a 286-page Word doc renders as 1 section), "Open in Word" (`vscode.env.openExternal`), brand button (`getBrandButtonHtml()`).
 - Find: VS Code's built-in webview find widget.
 - Links: clicks are intercepted; external `http`/`https`/`mailto` targets go to the host as `openLink` and open through `vscode.env.openExternal`; internal `#anchor` links scroll; every other scheme is ignored.
 - Notices bar listing what is present but shown approximately or not at all: tracked changes, comments (count), embedded objects, charts/SmartArt, equations, altChunks, macros. Detection is by scanning relationship types and a small set of element names; it never affects preservation.
@@ -478,7 +478,7 @@ Blocks live in **containers**. A container is either `w:body` or a table cell (`
 
 Table-cell rules (decision Q3, §16):
 
-- Paragraphs in a **vertically merged continuation cell** (`w:tcPr/w:vMerge` present with `w:val` absent or `continue`) or a legacy horizontal continuation (`w:tcPr/w:hMerge` likewise) are locked with `merged-cell`: Word and docx-preview do not display such cells, so there is nothing to click and no marker to find. The restart cell (`w:vMerge w:val="restart"`) and `w:gridSpan` cells are ordinary containers.
+- Paragraphs in a **vertically merged continuation cell** (`w:tcPr/w:vMerge` present with `w:val` absent or `continue`) or a legacy horizontal continuation (`w:tcPr/w:hMerge` likewise) are locked with `merged-cell`: docx-preview renders a vMerge continuation as `<td style="display:none">` (paragraphs in the DOM but hidden), and a legacy `w:hMerge` continuation or a `w:vMerge` continuation with no restart above it as ordinary visible cells. All stay locked as `merged-cell`; the host never injects markers into them. The restart cell (`w:vMerge w:val="restart"`) and `w:gridSpan` cells are ordinary containers.
 - A table carrying table-level revision marks locks its affected paragraphs with `tracked-changes`: `w:trPr/w:ins|w:del` (whole row), `w:tcPr/w:cellIns|w:cellDel|w:cellMerge` (that cell), any `w:tblPrChange`, `w:tblGridChange`, `w:trPrChange`, `w:tcPrChange`, `w:tblPrExChange` (whole table).
 - The schema requires every `w:tc` to end with a `w:p`. Structural operations (§8.5) preserve this.
 - `DocxBlockInfo.cell.col` is the ordinal of the `w:tc` within its row, not a grid column; the webview never needs grid arithmetic.
@@ -487,7 +487,7 @@ Consequence, stated plainly: **text in table cells is editable; table structure 
 
 ### 8.2 Mapping rendered DOM to blocks (render-only copy)
 
-For each render, the host builds a throwaway copy of the package in which `document.xml` has, for every editable-candidate paragraph block (in the body and in every cell container, at any nesting depth; never for `merged-cell` paragraphs), two injected empty bookmarks: `__vsmd_s_{blockId}` as the first child after `w:pPr`, and `__vsmd_e_{blockId}` as the last child. Bookmark `w:id` values start at 2,000,000,000 and count up. The copy is sent as `docxRender.bytes` and is never saved; the real package is not touched.
+For each render, the host builds a throwaway copy of the package in which `document.xml` has, for every editable-candidate paragraph block (in the body and in every cell container, at any nesting depth; never for `merged-cell` paragraphs), two injected empty bookmarks: `__vsmd_s_{blockId}` as the first child after `w:pPr`, and `__vsmd_e_{blockId}` as the last child, except when the paragraph's last child is a `w:r` whose last content element (ignoring `w:rPr` and `w:lastRenderedPageBreak`) is `w:br w:type="page"`; then the end marker goes immediately before that run. (docx-preview's page splitter treats any sibling after a page-break run as content for the next page; without this rule an empty `<p>`, or the run's own text, moves to the next page — Phase 0 S1.) Bookmark `w:id` values start at 2,000,000,000 and count up. The copy is sent as `docxRender.bytes` and is never saved; the real package is not touched. `docxEditor.css` MUST contain `span[id^="__vsmd_"]{display:none}`: visible empty marker spans shift layout by sub-pixel amounts (0.55 px measured); hidden ones are still found by `getElementById`/`closest('p')`. A page-break-split paragraph yields one `<p>` per page part; docx-preview splits only at the first page break per paragraph and does not split at breaks inside `w:hyperlink`; the rule above handles both.
 
 After `renderAsync` resolves, the webview finds `span#__vsmd_s_{id}` / `span#__vsmd_e_{id}`; let `S` and `E` be the `<p>` elements containing the start and end marker and `C` the nearest `<td>`/`<th>` ancestor of `S` (or none, for a body paragraph). `E` MUST have the same nearest cell ancestor `C`, otherwise the pair is treated as not found. Every `<p>` from `S` to `E` in document order **whose nearest cell ancestor is also `C`** belongs to block `id` and gets `data-block="{id}"`. This handles the page-break split of body paragraphs, keeps a body paragraph from ever claiming the `<p>` elements of a table, and a cell paragraph from claiming those of a nested table. Blocks from `docxRender.blocks` with a heading style additionally get `role="heading"` and `aria-level`.
 
@@ -906,15 +906,15 @@ Recommended order: 5, 6, 7, 8. This differs from the brief in one respect — **
 
 Assumptions not verified (owner: Phase 0 unless noted):
 
-1. Typed arrays are transferred to webviews efficiently by VS Code ≥ 1.85 (else base64; affects large-document render latency only).
-2. Ctrl+Z/Ctrl+Y can be kept local to a focused island/cell editor in a custom-editor webview (else: in-progress text undo is unavailable and Ctrl+Z undoes the last committed edit, cancelling the in-progress one — acceptable but worse).
-3. docx-preview's bookmark-to-`<span id>` behaviour holds for all fixture producers. Verified by reading the 0.4.1 source, not yet by running it.
-4. The §10.2 thresholds; they are estimates.
+1. Typed arrays are transferred to webviews efficiently by VS Code ≥ 1.85 (else base64; affects large-document render latency only). **[Verified Phase 0 S2]** 20 MB round trip ≈ 0.33 s; arrives as `Uint8Array` both directions.
+2. Ctrl+Z/Ctrl+Y can be kept local to a focused island/cell editor in a custom-editor webview (else: in-progress text undo is unavailable and Ctrl+Z undoes the last committed edit, cancelling the in-progress one — acceptable but worse). Phase 0 S3: automated synthetic-key check inconclusive; awaiting a manual run by the user. If any guarded case fails, the documented fallback applies.
+3. docx-preview's bookmark-to-`<span id>` behaviour holds for all fixture producers. **[Verified Phase 0 S1]** on Word-produced and synthetic inputs (body, cells to depth 3, page-break splits) with the §8.2 trailing-break rule and hidden-marker CSS. LibreOffice/Google files pending.
+4. The §10.2 thresholds; they are estimates. **[Verified Phase 0 S4]** 286-page docx renders < 1 s; 200k-cell sheet parses ≈ 0.5 s, heap +100 MB. Thresholds unchanged.
 5. Bundle-size estimates for mammoth and `docx` (Phases 6–7).
 6. Desktop Word/Excel is available on the release machine for `verify-office-open.ps1`.
 7. Orphaned shared strings and a stale `docProps/app.xml` are harmless to Excel, and a missing `calcChain.xml` is rebuilt silently. High confidence from the file format's behaviour in practice; confirmed for real only by the Phase 2 COM check.
 8. Word accepts a paragraph whose `w14:paraId` is absent and runs without `w:rsid*`. High confidence (both are optional).
-9. `numfmt` 4.x and `@borgar/fx` 5.x are published as `"type": "module"` packages **[Verified on the registry 2026-11-20]**; `@borgar/fx` declares no `main`. This repo's `tsconfig.json` uses `module`/`moduleResolution: Node16` with CommonJS sources, under which importing an ESM-only package is a type-check error (TS1479) even though esbuild bundles it without trouble. Whether `npm run check-types` accepts these imports is unverified; the Phase 0 spike decides (plan WP-01, item S6).
+9. `numfmt` 4.x and `@borgar/fx` 5.x are published as `"type": "module"` packages **[Verified on the registry 2026-11-20]**; `@borgar/fx` declares no `main`, but both packages' `exports` carry `require` conditions with `.d.cts` types, so under Node16 resolution TypeScript resolves them as CommonJS. **[Verified Phase 0 S6]** `tsc --noEmit` passes with the repo's unchanged `tsconfig.json`.
 10. Fixtures "authored in real Word/Excel" are produced by driving desktop Word/Excel through COM from a script (both are installed on the development machine **[Verified 2026-11-20]**), not by hand. LibreOffice is not installed there, and Google exports cannot be scripted: `libreoffice.docx`, `libreoffice.xlsx`, `googledocs.docx`, `googlesheets.xlsx` and a real German-Word `localised-de.docx` have to be supplied by the user (plan WP-03).
 
 Resolved decisions (user, 2026-11-20) — these were open questions Q1–Q7 in the draft:
@@ -936,6 +936,6 @@ Risks:
 - **Editing appearance** inside a Word island is approximate until the next re-render.
 - **Stale formula values** after edits are inherent to having no calc engine; mitigated by the banner, the stale marker and `fullCalcOnLoad`. Tools that read cached values without recalculating (pandas, previewers) will see old results until Excel re-saves.
 - **Structural edits** (§9.6) are the highest-risk feature for silent semantic damage; hence Tier B/C and their own phase with Excel-produced golden files.
-- **Extension size**: v1 adds roughly 175 KB of webview vendor files and about 300 KB (minified) to the host bundle; mermaid alone is 5.5 MB today, so this is immaterial. Phases 6–7 add about 1–2 MB.
+- **Extension size**: v1 adds roughly 175 KB of webview vendor files and about 140 KB (minified, measured Phase 0 S5) to the host bundle; mermaid alone is 5.5 MB today, so this is immaterial. Phases 6–7 add about 0.65 MB.
 - **Becoming the default editor for `.docx`/`.xlsx`** changes what happens when users click those files (today VS Code offers to open them externally) and will collide with other Office viewer extensions; call it out in the CHANGELOG and README, and consider a `vscodeMdEditor.office.enabled`-style opt-out only if feedback demands it (editor associations already let users switch).
 - **Host responsiveness** on very large files depends on the chunked parsing rule (§10.2); a worker thread is the escape hatch.

@@ -775,3 +775,19 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 **Verification.** `npm run check-types`, `npm run compile`, `npm test` all pass (137 tests; was 136 + smoke). `dist/extension.js` is 131554 bytes before and after (nothing imports the new code). `npx @vscode/vsce ls`: no `docs/`, `tests/`, `spike/` or `scripts/` path listed; `media/docx-preview.min.js`, `media/jszip.min.js` and `THIRD-PARTY-NOTICES.md` are listed; no warnings.
 
 **Notes.** `npm audit` (production deps) reports 3 (2 low katex via mermaid, 1 high markdown-it <=14.3.2); all are on pre-existing dependencies, none from the new packages. The 2 extra moderate findings are dev-only (exceljs transitive). Not acted on. The pre-existing `dist/extension.js` on disk was stale (147585 bytes, Oct 15); the baseline used is a fresh compile before any change.
+
+## 2026-11-20 — Phase 0 spike report (WP-01, branch spike/office-viewers, throwaway)
+
+Environment: VS Code 1.147.0 (Electron 43.8.9, Node 24.22.1), Windows 11, isolated dev host. Inputs from Word/Excel COM plus one synthetic `pagebreaks.docx`. Evidence under `spike/office/` on `spike/office-viewers`.
+
+| # | Result | Numbers |
+|---|---|---|
+| S1 marker hook | **Pass with two rule changes** (end marker before a trailing page-break run; `span[id^="__vsmd_"]{display:none}`) — as written, 100 % found but layout changed on 2 of 7 inputs | Pairs found/injected: basic 12/12, rich 17/17, fields 13/13, anchors 27/27, tables 47/47 (cells to depth 3), pagebreaks 30/30, large 2801/2801. 0 same-cell violations, duplicates, overlaps or misses; layout identical to un-injected render on all 7. |
+| S2 byte transfer | **Pass** — `Uint8Array` both directions | 20 MB round trip 317–368 ms (base64: 893 ms); 60 MB 705–817 ms; host RSS +14–20 MB |
+| S3 Ctrl+Z locality | **Pending (user)** — synthetic keys can't test it | — |
+| S4 size | **Pass** | 286-page docx renders < 1 s, heap +24 MB; 200k-cell xlsx parse 387–545 ms, heap +100 MB. Thresholds unchanged, no worker thread. |
+| S5 bundle | **Pass** | v1 host +137 KB min (47 KB gz); mammoth+docx 633 KB; webview docx-preview 74 KB, jszip 96 KB |
+| S6 tsconfig | **Pass** — no change needed (`.d.cts` under Node16) | — |
+| S7 library API | **Present with adjustments** — `fx.parse` takes tokens; numfmt has no 1904 option; fflate has no CRC-32 | Notes added to WP-12/21/36 |
+
+Decisions: keep the bookmark hook (no patched docx-preview); keep `bytes: Uint8Array`; keep limits; no tsconfig change. The S1 re-run on LibreOffice/Google files is still required before group D. The "save changes to s3auto.docx?" dialog the user cancelled came from the spike's dev host (not Word/Excel); fixed in the spike.
