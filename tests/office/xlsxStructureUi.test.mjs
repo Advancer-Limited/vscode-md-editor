@@ -392,12 +392,13 @@ test('save after structural edits passes verification, clears dirty and the file
   const saved3 = S.read(h3.uri);
   const h4 = await open('reopened3.xlsx', saved3);
   assert.deepStrictEqual(names(lastWorkbook(h4)), ['Values']);
-  writeOut(OUT, 'delete-rows-cols-sheet.xlsx', saved3, [{ sheet: 'Values', ref: 'A1', value: 3.14159 }]);
+  // Row 1 and column A of Values are gone: old B2 (42) is now A1, old B3 (3.14159) is A2.
+  writeOut(OUT, 'delete-rows-cols-sheet.xlsx', saved3, [{ sheet: 'Values', ref: 'A1', value: 42 }, { sheet: 'Values', ref: 'A2', value: 3.14159 }]);
 
   // undo after a save, then save again: still verifies
   await h3.events[2].undo();
   await h3.doc.save(token);
   const h5 = await open('reopened5.xlsx', S.read(h3.uri));
   assert.deepStrictEqual(names(lastWorkbook(h5)), ['Values', 'Second Sheet']);
-  writeOut(OUT, 'delete-sheet-undone.xlsx', S.read(h3.uri), [{ sheet: 'Values', ref: 'A1', value: 3.14159 }]);
+  writeOut(OUT, 'delete-sheet-undone.xlsx', S.read(h3.uri), [{ sheet: 'Values', ref: 'A1', value: 42 }, { sheet: 'Values', ref: 'A2', value: 3.14159 }]);
 });
