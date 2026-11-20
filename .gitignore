@@ -24,3 +24,5 @@ Thumbs.db
 tests/.build/
 tests/.out/
 spike/
+scripts/validate-openxml/bin/
+scripts/validate-openxml/obj/

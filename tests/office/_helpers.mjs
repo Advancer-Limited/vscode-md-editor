@@ -27,11 +27,17 @@ export function allFixtures(kind) {
 }
 
 /** Write bytes to tests/.out/<testName>/<caseName> (git-ignored) so scripts/verify-office-open.ps1 can open them. */
-export function writeOut(testName, caseName, bytes) {
+export function writeOut(testName, caseName, bytes, expect) {
   const dir = path.join(OUT_DIR, testName);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, caseName);
   fs.writeFileSync(file, bytes);
+  // Optional workbook read-back list for scripts/verify-office-open.ps1:
+  // expect = [{ sheet: 'Sheet1', ref: 'B2', value: 42 }, ...] -> <case>.expect.json
+  if (expect) {
+    const cells = Array.isArray(expect) ? expect : expect.cells;
+    fs.writeFileSync(file.replace(/\.[^.\/]+$/, '') + '.expect.json', JSON.stringify({ cells }, null, 2));
+  }
   return file;
 }
 
