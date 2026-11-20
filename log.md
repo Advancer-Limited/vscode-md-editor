@@ -1096,3 +1096,9 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
 - **Tests:**
   - saveAsync.test.mjs, an equivalence matrix between the async and sync paths.
   - saveBlocking.test.mjs, which requires the longest block to stay under 1,000 ms. It allows up to 3 attempts and is the one test that might flake on a loaded CI machine.
+
+## 2026-11-21 — verify-office-open.ps1: PowerShell 7 COM argument fix
+
+- First real run of V1-V3 (Gate R2 checklist) showed every early file failing with "Missing parameter does not have a default value". Cause: PowerShell 7 cannot pass `[Type]::Missing` to COM. `Workbooks.Open` and `Documents.Open` now pass explicit values (Excel: Format 5, Origin 2, CorruptLoad 0; Word: Format 0, Encoding 50001, DocumentDirection 0). Repair stays disabled.
+- `.expect.json` problems were added as a nested array, so an empty result counted as a failure and printed "System.Object[]". Problems are now added one string at a time.
+- Files changed: `scripts/verify-office-open.ps1`, `log.md`.
