@@ -270,14 +270,16 @@ export function toTsv(wb: Workbook, sheet: Sheet, styles: StyleTable, range: rea
   let r1 = Math.min(range[2], dims.rows - 1);
   let c1 = Math.min(range[3], dims.cols - 1);
   if (r0 > r1 || c0 > c1) return '';
-  const present = sheet.cellsIn([r0, c0, r1, c1]);   // row-major
-  if (!present.length) return '';
-  r1 = present[present.length - 1].r;
-  c1 = c0;
-  for (const cell of present) if (cell.c > c1) c1 = cell.c;
+  // Size the trimmed range from the index first (review S6): reading every cell of a range that is
+  // then refused cost 143 MB and 450 ms for 600k cells.
+  const extent = sheet.cellExtentIn([r0, c0, r1, c1]);
+  if (!extent) return '';
+  r1 = extent.lastRow;
+  c1 = Math.max(c0, extent.lastCol);
   const width = c1 - c0 + 1;
   const total = (r1 - r0 + 1) * width;
   if (total > TSV_MAX_CELLS) throw new CopyTooLargeError(total);
+  const present = sheet.cellsIn([r0, c0, r1, c1]);   // row-major
   const emptyRow = '\t'.repeat(width - 1);
   const lines: string[] = [];
   let i = 0;

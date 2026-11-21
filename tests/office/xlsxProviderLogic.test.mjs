@@ -194,6 +194,18 @@ test('S2 toTsv: trims the end to the last stored cell, keeps the start, refuses 
   assert.ok(Date.now() - t0 < 500, 'refusal is cheap');
   // A selection that stays inside the budget still copies.
   assert.strictEqual(toTsv(big.wb, bs, big.styles, [0, 0, 0, 2]), '1');
+  // Review S6: the size is taken from the index; no cell is read for a refused copy.
+  const cellsIn = bs.cellsIn;
+  bs.cellsIn = () => assert.fail('cellsIn must not run before the size check');
+  try {
+    assert.throws(() => toTsv(big.wb, bs, big.styles, [0, 0, 1_048_575, 16_383]), (e) => e instanceof CopyTooLargeError);
+  } finally {
+    bs.cellsIn = cellsIn;
+  }
+  assert.deepStrictEqual(bs.cellExtentIn([0, 0, 1_048_575, 16_383]), { lastRow: 2999, lastCol: 16383 });
+  assert.deepStrictEqual(bs.cellExtentIn([0, 0, 2998, 16_383]), { lastRow: 0, lastCol: 0 });
+  assert.deepStrictEqual(bs.cellExtentIn([1, 1, 2998, 16_382]), null);
+  assert.deepStrictEqual(s.cellExtentIn([0, 0, 999, 2]), { lastRow: 1, lastCol: 1 });
 });
 
 test('find is capped at 1,000 matches and reports truncated', async () => {
