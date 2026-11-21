@@ -1490,4 +1490,21 @@ Worktree `VSMarkdownEditor-int`, started from `feature/office-xlsx-structure-ui`
 - **F4:** `envSaveHooks(env, extensionMode)` returns nothing outside Development/Test; `OfficeDocument.saveHooks` starts undefined and `activate()` sets it.
 - **Listing:** keyword `obsidian` -> `notes` (29), categories Visualization + Other. README: sidebar named "MD & MMD Editor"; `[[` autocomplete is Raw/Split only (Edit view: Insert Link picker); Show Graph = Open Full Graph; Show Link Graph focuses the sidebar; Word zoom keys and Tab semantics; removed the no-op Toggle Graph Mode command and the unused `graph.defaultMode`/`graph.localDepth` settings from the docs (still in package.json — todo). Every README shortcut checked against the code. No "read-only"/"Nothing is ever written" wording was left in README/CHANGELOG; CHANGELOG "Obsidian-style" reworded.
 - **Verification:** check-types, compile, `node esbuild.js --production` (dist/extension.js 555,558 bytes) clean; `npm test` x3 in a row: 2398 tests, 2397 pass, 0 fail, 1 skipped each (140 s, 143 s, 151 s).
+## 2026-11-21 — PowerPoint viewer: spec and plan (feature/pptx-viewer-docs)
+
+Documents only; nothing implemented. New: `docs/pptx-viewer-spec.md`, `docs/pptx-viewer-plan.md`. Changed: `.vscodeignore` (`docs/**`, `spike/**` after `scripts/**`, the same two lines the Office and PDF branches add), `todo.md`, `log.md`.
+
+**User decisions carried in:** view only (no editing, no save path); sequenced last, after the Word/Excel/PDF viewers and their basic editing.
+
+**Recommendation.** An existing renderer in the webview behind a single adapter file, on top of the Office core: `@aiden0z/pptx-renderer` 1.4.0 (Apache-2.0), runner-up `@meshesha/pptxjs` 2.0.0 (MIT), the pick re-confirmed by a bake-off on real PowerPoint decks in the first spike. The host keeps its own model (slide list, text in reading order, notes, alt text, feature census) so find, outline, notes and accessibility do not depend on the library, and sends the webview a render copy with media, fonts, macros and OLE payloads emptied.
+
+**Checked today** (scratch directory outside the repo, `--ignore-scripts`; headless Edge 157, nonce-only scripts from `file://`): npm metadata, licences and distributed files of seven candidates; both finalists render a `pptxgenjs` test deck under `default-src 'none'; script-src 'nonce-…'; style-src 'unsafe-inline'; img-src blob: data:` with 0 CSP violations and 0 requests; our esbuild IIFE of the primary is 1,468 KB minified (renderer 738, ECharts + zrender 629, JSZip 98); document text is not turned into markup by either; `pptx-preview` is closed source and assigns run text with `innerHTML`; PptxViewJS draws to canvas. Reuse points read in the `VSMarkdownEditor-refs` worktree (`OfficePackage.open`, `sniff`, `loadErrors`, `officeDocument` DOCTYPE guard, provider base read-only behaviour, `officeCommon`).
+
+**Not verified** (spike items): fidelity on decks made by PowerPoint, LibreOffice and Google Slides; behaviour inside a real VS Code webview; the render copy with zero-length entries; DOM order versus shape-tree order; performance (the headless run's timings were not usable — the windowed list never completed under virtual time).
+
+**Issue encountered:** the knowledge that PPTXjs is a jQuery plugin is out of date — a TypeScript rewrite was published to npm as `@meshesha/pptxjs` 2.0.0 on 2026-11-20; it was evaluated as the runner-up. A network outage interrupted the session before the first file was written; nothing was lost.
+
+## 2026-11-21 — PowerPoint spec questions answered
+
+- User answered spec §15.2: Q1 (a) open-source renderer, Q2 (a) all six file types, Q3 (b) no Present mode in v1 (XWP-16 moves to post-v1), Q4 (a) hold the registration PR until Gate X2. Files: `docs/pptx-viewer-spec.md`, `docs/pptx-viewer-plan.md`, `log.md`.
 
