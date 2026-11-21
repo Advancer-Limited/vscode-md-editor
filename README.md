@@ -97,7 +97,7 @@ Opening a `.docx` or `.xlsx` file in VS Code shows it in a read-only viewer inst
 - Excel numbers and dates are formatted in US English regardless of your locale. Rotated text, gradient and pattern fills, rich text inside a cell, and zoom are not supported.
 - `.doc`, `.xls`, `.xlsm`, `.csv`, `.pptx` and other Office formats are not handled.
 
-**Switching to another editor.** The viewers become the default for `.docx` and `.xlsx`. To open a file with something else just once, right-click the tab and choose **Reopen Editor With...**, or right-click the file in the Explorer and choose **Open With...**; pick **Configure default editor for '*.docx'...** there to change it permanently. Or set it in `settings.json` (for example `"default"` for VS Code's built-in handling, or another extension's editor id):
+**Switching to another editor.** The viewers become the default for `.docx` and `.xlsx`. The quickest way to change that is the command **Markdown Editor: Choose Editors for Office and PDF Files...** (Command Palette), which sets `workbench.editorAssociations` for you. To open a file with something else just once, right-click the tab and choose **Reopen Editor With...**, or right-click the file in the Explorer and choose **Open With...**; pick **Configure default editor for '*.docx'...** there to change it permanently. Or set it in `settings.json` (for example `"default"` for VS Code's built-in handling, or another extension's editor id):
 
 ```json
 "workbench.editorAssociations": {

@@ -4,6 +4,7 @@ import { MermaidEditorProvider } from './mermaidEditorProvider.js';
 import { GltfEditorProvider } from './gltfEditorProvider.js';
 import { DocxEditorProvider } from './office/docxEditorProvider.js';
 import { XlsxEditorProvider } from './office/xlsxEditorProvider.js';
+import { CHOOSE_DOCUMENT_EDITORS_COMMAND, chooseDocumentEditors } from './office/chooseDocumentEditors.js';
 import { isMarkdownFile } from './utils.js';
 import { LanguageToolService } from './languageToolService.js';
 import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
@@ -79,6 +80,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // 2e. Register the Excel workbook viewer (read-only; docs/office-viewers-spec.md §4.1). Same rules as 2d.
   context.subscriptions.push(XlsxEditorProvider.register(context));
+
+  // 2f. Friendly front end to workbench.editorAssociations for the document viewers.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(CHOOSE_DOCUMENT_EDITORS_COMMAND, () =>
+      chooseDocumentEditors(context.extension.packageJSON)
+    )
+  );
 
   // 3. Create the LanguageTool service
   const languageToolService = new LanguageToolService();
