@@ -41,12 +41,12 @@ import { LIMITS } from '../limits.js';
 import type { OfficePackage } from '../package.js';
 import type { XmlDoc, XmlElement, XmlNode } from '../xml.js';
 import { XmlError, XmlScopeError, attr, child, childrenOf, escapeAttr, parseFragment, serialize, stripIllegalXmlChars } from '../xml.js';
-import type { Block, Container, DocxModel, LockReason, ParagraphProps, Segment } from './model.js';
+import type { Block, Container, DocxModel, ParagraphProps, Segment } from './model.js';
 import { NS_W, isEditable, paragraphProps } from './model.js';
 import type { DocxStyles } from './styles.js';
 import type { DocxNumbering } from './numbering.js';
 import type { BuildOptions, BuiltParagraph } from './paragraphWriter.js';
-import { ATOMS_KEPT_NOTICE, NS_W14, buildParagraphXml, commitParagraph, upsertPPrChild } from './paragraphWriter.js';
+import { ATOMS_KEPT_NOTICE, LOCK_MESSAGES, NS_W14, buildParagraphXml, commitParagraph, upsertPPrChild } from './paragraphWriter.js';
 import { setList, setListLevel, setStyle } from './stylesWrite.js';
 
 export interface DocxContext {
@@ -75,14 +75,6 @@ export const LABELS = Object.freeze({
 });
 
 type AnchorSeg = Extract<Segment, { kind: 'anchor' }>;
-
-const LOCK_MESSAGES: Readonly<Record<LockReason, string>> = {
-  'tracked-changes': "This paragraph contains tracked changes and can't be edited here.",
-  'multi-paragraph-field': "This paragraph is part of a field that spans several paragraphs and can't be edited here.",
-  'unknown-content': "This paragraph contains content this editor doesn't understand, so it is kept as is.",
-  'merged-cell': "This cell is part of a merged cell and can't be edited here.",
-  opaque: "This content can't be edited here. It is preserved as is.",
-};
 
 const err = (code: OfficeError['code'], message: string): OfficeError => ({ code, message });
 const blocked = (message: string): OfficeError => err('blocked', message);

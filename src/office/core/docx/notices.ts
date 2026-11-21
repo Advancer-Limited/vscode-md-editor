@@ -123,7 +123,10 @@ export function segmentDtos(model: DocxModel, styles: DocxStyles, block: Block):
   for (const s of model.segments(block)) {
     if (s.kind === 'text') {
       const t = styles.effectiveToggles(pStyleId, s.rPr);
-      out.push({ kind: 'text', id: s.id, text: s.text, b: t.b, i: t.i, u: t.u, css: styles.runCss(s.rPr) });
+      const css = styles.runCss(s.rPr);
+      const own = styles.ownToggles(s.rPr);
+      if (own.length) css.own = own;   // review S5: the webview leaves the other toggles to the paragraph's cascade
+      out.push({ kind: 'text', id: s.id, text: s.text, b: t.b, i: t.i, u: t.u, css });
     } else if (s.kind === 'atom') {
       out.push({ kind: 'atom', id: s.id, label: s.label, atomType: s.atomType });
     } else if (s.kind === 'anchor') {

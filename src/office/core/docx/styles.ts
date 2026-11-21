@@ -218,6 +218,14 @@ export class DocxStyles {
     return this.toggles(this.sources(pStyleId, rs ? attr(rs, W_NS, 'val') ?? null : null, rPr, true));
   }
 
+  /** Which of b/i/u the run sets itself: in its direct rPr or its character style chain (not the paragraph's). */
+  ownToggles(rPr: XmlElement | null): ('b' | 'i' | 'u')[] {
+    if (!rPr) return [];
+    const rs = child(rPr, W_NS, 'rStyle');
+    const src = this.sources(null, rs ? attr(rs, W_NS, 'val') ?? null : null, rPr, false);
+    return (['b', 'i', 'u'] as Toggle[]).filter((t) => src.some((r) => !!child(r, W_NS, t)));
+  }
+
   /** Same as effectiveToggles with no direct rPr: what the run would be if its own formatting were removed. */
   inheritedToggles(pStyleId: string | null, rStyleId: string | null): { b: boolean; i: boolean; u: boolean } {
     return this.toggles(this.sources(pStyleId, rStyleId, null, true));

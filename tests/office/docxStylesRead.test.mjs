@@ -149,6 +149,16 @@ test('effective toggles on the real basic.docx styles are coherent', () => {
   assert.deepStrictEqual(s.effectiveToggles(null, null), { b: false, i: false, u: false });
 });
 
+test('review S5: ownToggles names the toggles the run sets itself (direct or character style), not the paragraph style', () => {
+  const { s } = load(synth(NORMAL
+    + '<w:style w:type="character" w:styleId="Strongish"><w:name w:val="Strongish"/><w:rPr><w:b/></w:rPr></w:style>'
+    + '<w:style w:type="paragraph" w:styleId="BoldPara"><w:name w:val="BoldPara"/><w:rPr><w:b/><w:i/></w:rPr></w:style>'));
+  assert.deepStrictEqual(s.ownToggles(null), []);
+  assert.deepStrictEqual(s.ownToggles(rPr('<w:sz w:val="20"/>')), []);
+  assert.deepStrictEqual(s.ownToggles(rPr('<w:b w:val="0"/><w:u w:val="single"/>')), ['b', 'u']);
+  assert.deepStrictEqual(s.ownToggles(rPr('<w:rStyle w:val="Strongish"/><w:i/>')), ['b', 'i']);
+});
+
 test('runCss: direct and character-style properties only', () => {
   const { s } = load(synth(NORMAL
     + '<w:style w:type="character" w:styleId="Fancy"><w:name w:val="Fancy"/><w:rPr><w:color w:val="00FF00"/><w:sz w:val="28"/><w:vertAlign w:val="subscript"/></w:rPr></w:style>'));

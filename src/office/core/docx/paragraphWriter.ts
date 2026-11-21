@@ -129,7 +129,8 @@ const isError = (x: BuiltParagraph | OfficeError): x is OfficeError => 'code' in
 
 class WriterRefusal extends Error {}
 
-const LOCK_MESSAGES: Readonly<Record<LockReason, string>> = {
+/** Why a block can't be edited, per lock reason (also used by ops.ts). */
+export const LOCK_MESSAGES: Readonly<Record<LockReason, string>> = {
   'tracked-changes': "This paragraph contains tracked changes and can't be edited here.",
   'multi-paragraph-field': "This paragraph is part of a field that spans several paragraphs and can't be edited here.",
   'unknown-content': "This paragraph contains content this editor doesn't understand, so it is kept as is.",

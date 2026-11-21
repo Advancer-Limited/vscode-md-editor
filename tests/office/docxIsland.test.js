@@ -185,22 +185,44 @@ test('build applies b/i/u and run css; unsafe css values are refused', () => {
     T(2, 'y', {}, { color: 'red;background:url(x)', fontSizePt: Infinity, highlight: 'none', vertAlign: 'baseline', styleClass: 'a b"' }),
   ]);
   const s1 = segSpan(p, 1).style;
-  assert.strictEqual(s1.fontWeight, 'bold');
-  assert.strictEqual(s1.fontStyle, 'normal');
+  assert.strictEqual(s1.fontWeight, '', 'the run sets no toggles itself (no css.own)');
+  assert.strictEqual(s1.fontStyle, '', 'the run does not set italic: left to the cascade (S5)');
   assert.strictEqual(s1.textDecoration, 'underline line-through');
   assert.strictEqual(s1.color, '#FF0000');
   assert.strictEqual(s1.fontSize, '14pt');
   assert.strictEqual(s1.fontFamily, '"Calibribodyx"');
   assert.strictEqual(s1.backgroundColor, '#808000');
   assert.strictEqual(s1.verticalAlign, 'super');
-  assert.strictEqual(segSpan(p, 1).className, 'docx_Emphasis');
+  assert.strictEqual(segSpan(p, 1).className, '', 'the raw w:rStyle id is not used as a class (N1)');
   const s2 = segSpan(p, 2).style;
   assert.strictEqual(s2.color, undefined);
   assert.strictEqual(s2.fontSize, undefined);
   assert.strictEqual(s2.backgroundColor, undefined);
   assert.strictEqual(s2.verticalAlign, undefined);
   assert.strictEqual(segSpan(p, 2).className, '');
-  assert.strictEqual(s2.textDecoration, 'none');
+  assert.strictEqual(s2.textDecoration, '');
+});
+
+test('review S5: only the toggles the run sets itself are written inline; the rest is left to the cascade', () => {
+  // A header-row paragraph bold by its table style: the run sets nothing, so nothing is overridden.
+  const { p } = island([T(1, 'Head'), T(2, 'er', { b: true }, { own: ['b'] }), T(3, '!', { i: true }, { own: ['i', 'x'] }), T(4, 'x', {}, { own: ['b'] })], { fontWeight: '700' });
+  assert.strictEqual(segSpan(p, 1).style.fontWeight, '', 'not overridden: the cascade (the table style) applies');
+  assert.strictEqual(segSpan(p, 1).style.fontStyle, '');
+  assert.strictEqual(segSpan(p, 1).style.textDecoration, '');
+  assert.strictEqual(segSpan(p, 2).style.fontWeight, 'bold', 'direct bold');
+  assert.strictEqual(segSpan(p, 3).style.fontStyle, 'italic');
+  assert.strictEqual(segSpan(p, 3).getAttribute('data-own'), 'i', 'unknown names are dropped');
+  assert.strictEqual(segSpan(p, 4).style.fontWeight, 'normal', 'direct "not bold" (w:b w:val="0") still wins');
+  // Toggling writes the toggled property inline, both ways.
+  const t = island([T(1, 'word')]);
+  const r = I.toggle(t.p, R(textIn(segSpan(t.p, 1)), 0, textIn(segSpan(t.p, 1)), 4), 'i');
+  const span = find(t.p, (n) => n.nodeType === 1 && n.getAttribute('data-i') === '1')[0];
+  assert.strictEqual(span.style.fontStyle, 'italic');
+  assert.strictEqual(span.style.fontWeight, '', 'the other toggles stay with the cascade');
+  I.toggle(t.p, r, 'i');
+  const off = find(t.p, (n) => n.nodeType === 1 && n.getAttribute('data-seg') !== null)[0];
+  assert.strictEqual(off.getAttribute('data-i'), '0');
+  assert.strictEqual(off.style.fontStyle, 'normal');
 });
 
 test('read never changes the DOM', () => {

@@ -73,16 +73,26 @@
   }
   function docOf(el) { return el.ownerDocument; }
 
-  /** Visual b/i/u (+ strike from data-strike) of a seg span, from its data attributes. */
+  /** Toggles the run sets itself (data-own, from DocxRunCss.own, plus every toggle the user flipped). */
+  function ownOf(span) { return span.getAttribute('data-own') || ''; }
+  function addOwn(span, which) { const o = ownOf(span); if (o.indexOf(which) < 0) { span.setAttribute('data-own', o + which); } }
+
+  /**
+   * Visual b/i/u (+ strike from data-strike) of a seg span, from its data attributes. Review S5: only
+   * the toggles the run sets itself (data-own) are written inline; the others are left to the
+   * paragraph's cascade (paragraph style, table style, document defaults as docx-preview rendered
+   * them), so a table style's bold header row still shows bold.
+   */
   function applyLook(span) {
     const f = flagsOf(span);
+    const own = ownOf(span);
     const strike = span.getAttribute('data-strike') === '1';
-    span.style.fontWeight = f.b ? 'bold' : 'normal';
-    span.style.fontStyle = f.i ? 'italic' : 'normal';
+    span.style.fontWeight = own.indexOf('b') >= 0 ? (f.b ? 'bold' : 'normal') : '';
+    span.style.fontStyle = own.indexOf('i') >= 0 ? (f.i ? 'italic' : 'normal') : '';
     const deco = [];
     if (f.u) { deco.push('underline'); }
     if (strike) { deco.push('line-through'); }
-    span.style.textDecoration = deco.length ? deco.join(' ') : 'none';
+    span.style.textDecoration = own.indexOf('u') >= 0 || strike ? (deco.length ? deco.join(' ') : 'none') : '';
   }
 
   function cssColor(v) {
@@ -109,9 +119,12 @@
     if (hl) { span.style.backgroundColor = hl; }
     if (css.vertAlign === 'super' || css.vertAlign === 'sub') { span.style.verticalAlign = css.vertAlign; }
     if (css.strike === true) { span.setAttribute('data-strike', '1'); }
-    if (typeof css.styleClass === 'string' && /^[A-Za-z_][\w-]{0,100}$/.test(css.styleClass)) {
-      span.className = (span.className ? span.className + ' ' : '') + css.styleClass;
+    if (Array.isArray(css.own)) {
+      const own = ['b', 'i', 'u'].filter((t) => css.own.indexOf(t) >= 0).join('');
+      if (own) { span.setAttribute('data-own', own); }
     }
+    // css.styleClass (the raw w:rStyle id) is not applied (review N1): it is not docx-preview's class
+    // name, and the character style's look is already in the properties above and the b/i/u flags.
   }
 
   function setFlagAttrs(span, f) {
@@ -135,6 +148,11 @@
     if (opts && opts.base && typeof opts.base === 'object') {
       return { b: !!opts.base.b, i: !!opts.base.i, u: !!opts.base.u };
     }
+    return computedLook(doc, paragraphEl);
+  }
+
+  /** b/i/u of the paragraph's computed style (plain when there is none). */
+  function computedLook(doc, paragraphEl) {
     try {
       const view = doc && doc.defaultView;
       const cs = view && view.getComputedStyle ? view.getComputedStyle(paragraphEl) : null;
@@ -653,7 +671,7 @@
         while (isWord(e)) { e++; }
       }
     }
-    const flip = (span, on) => { span.setAttribute('data-' + which, on ? '1' : '0'); };
+    const flip = (span, on) => { span.setAttribute('data-' + which, on ? '1' : '0'); addOwn(span, which); };
 
     if (s === e) {
       // Collapsed outside a word: insert an empty span carrying the new look.
