@@ -464,4 +464,11 @@
 - [x] Verify: check-types, compile, production build, npm test, vsce ls / package (4.62 MB), real Excel 177/177, real Word 102/109 (7 known prettyDocx), PDF 121/121
 - [x] Rewrite README / CHANGELOG / Marketplace metadata for users (developer content moved to CONTRIBUTING.md)
 - [ ] Version bump to 1.6.0, PR to develop, then develop -> master, publish
-- [ ] Decide whether `signatures/cla.json` belongs in the VSIX (add to `.vscodeignore`)
+- [x] Decide whether `signatures/cla.json` belongs in the VSIX (add to `.vscodeignore`): excluded (F3)
+- [x] Pre-release fixes: load-robust tests (PG4 canonical compare, event-loop cadence, CPU-time budgets), handled shortcuts stopped before VS Code (capture phase), Word/Excel "Editor" names, F1 notices helper, F3 `.vscodeignore`, F4 corrupt-save hook gated by ExtensionMode, listing/README tidy
+- [ ] Lazy-load the Office/PDF providers (dynamic import on first open) to shrink `dist/extension.js` from 556 KB
+- [ ] CI: run `npm test` on Node >= 22.13 (PDF writer suites skip on older Node)
+- [ ] Fix the `npm run lint` configuration (it does not run cleanly today)
+- [ ] LanguageTool double-dispose on window reload (`LanguageToolDiagnosticsProvider.dispose`, pre-existing)
+- [ ] Graph leftovers: `vscodeMdEditor.toggleGraphMode` is a no-op and `vscodeMdEditor.graph.defaultMode` / `graph.localDepth` are read nowhere (removed from the README) — implement or remove from package.json
+- [ ] Markdown Edit (WYSIWYG) view: `[[` autocomplete only works in Raw/Split (Edit view has the Insert Link picker); decide whether to add it
