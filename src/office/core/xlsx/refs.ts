@@ -140,10 +140,21 @@ interface Node { type: string; loc?: [number, number]; [k: string]: unknown }
 
 const FN_PREFIX_RE = /^(?:_xlfn\.|_xlws\.)+/i;
 const XLPM_RE = /^_xlpm\./i;
-/** A sheet name that may appear without quotes; Excel quotes every other name when it writes a reference. */
-const BARE_SHEET_RE = /^[A-Za-z_\\¡-￿][A-Za-z0-9_.¡-￿]*$/;
+/**
+ * A sheet name that may appear without quotes. Deliberately narrower than what Excel itself writes
+ * bare: Excel refuses some non-ASCII names unquoted (`€x`, `•a`, `a»b`, `©`) and accepts others, and
+ * the rule is not documented, so anything outside plain ASCII letters, digits, `_` and `.` is quoted
+ * when a reference is written and must be quoted when one is typed (Excel accepts unnecessary quotes).
+ */
+const BARE_SHEET_RE = /^[A-Za-z_][A-Za-z0-9_.]*$/;
 const CELL_LIKE_RE = /^\$?[A-Za-z]{1,3}\$?[0-9]+$/;
 const R1C1_LIKE_RE = /^[Rr][0-9]*[Cc][0-9]*$|^[RrCc][0-9]*$/;
+const BOOLEAN_RE = /^(?:TRUE|FALSE)$/i;
+
+/** True when sheet `name` must be in single quotes before `!` (also cell-, R1C1- and TRUE/FALSE-like names). */
+function needsQuotes(name: string): boolean {
+  return !BARE_SHEET_RE.test(name) || CELL_LIKE_RE.test(name) || R1C1_LIKE_RE.test(name) || BOOLEAN_RE.test(name);
+}
 const COLUMN_ONLY_RE = /^[A-Za-z]{1,3}$/;
 const LOTUS_RANGE_RE = /^\$?[A-Za-z]{1,3}\$?[0-9]+\./;
 
@@ -301,7 +312,7 @@ function reference(n: Node, ctx: FormulaContext | undefined): void {
   }
   if (!sheetPart.startsWith("'")) {
     for (const name of sheetPart.split(':')) {
-      if (!BARE_SHEET_RE.test(name) || CELL_LIKE_RE.test(name) || R1C1_LIKE_RE.test(name)) {
+      if (needsQuotes(name)) {
         throw new Reject(pos, `The sheet name "${name}" must be in single quotes here: '${name}'!`);
       }
     }
@@ -653,10 +664,6 @@ function parsePrefix(prefix: string): Prefix | null {
   return { book, sheets };
 }
 
-function needsQuotes(name: string): boolean {
-  return !BARE_SHEET_RE.test(name) || CELL_LIKE_RE.test(name) || R1C1_LIKE_RE.test(name);
-}
-
 /** `name` as written before `!` in a reference: bare when Excel allows it, else in single quotes with `'` doubled. */
 export function quoteSheetName(name: string): string {
   return needsQuotes(name) ? `'${name.replace(/'/g, "''")}'` : name;
@@ -783,7 +790,11 @@ export function shiftRange(ref: string, shift: StructuralShift): string {
   const eps = parts.map((p) => parseEndpoint(p, beam));
   const moved = shiftEndpoints(eps, shift);
   if (moved === null) return '#REF!';
-  return moved === eps ? ref : moved.map(formatEndpoint).join(':');
+  if (moved === eps) return ref;
+  const out = moved.map(formatEndpoint);
+  // A cell range shrunk to one cell is written as that cell (`B4`, as Excel writes it), not `B4:B4` (review N5).
+  if (!beam && out.length === 2 && out[0] === out[1]) return out[0];
+  return out.join(':');
 }
 
 /**

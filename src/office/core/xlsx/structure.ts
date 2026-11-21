@@ -14,10 +14,11 @@
 //  Edited sheet
 //   sheetData           one `node` change per row that changes: the row replaced by its rewritten text
 //                       (built from the source text, so only what moves or changes differs — G4), or
-//                       removed with the whitespace node before it. Per-attribute changes would cost a
-//                       node-path walk per cell (quadratic on a large sheet); a whole-part change would
-//                       orphan the Sheet's tree. Cost is linear in the rows that change: the rewritten
-//                       rows are re-parsed once (and again on undo/redo). Inside a row: row/@r, c/@r, `spans` removed
+//                       removed with the whitespace node before it; or, when many rows change in a tall
+//                       sheet (PER_ROW_BUDGET), one `node` change replacing sheetData with the same text
+//                       (a per-row change locates its row by a search of the children: quadratic then).
+//                       Per-attribute changes would cost a node-path walk per cell; a whole-part change
+//                       would orphan the Sheet's tree. Inside a row: row/@r, c/@r, `spans` removed
 //                       from every row on column operations, formulas shifted (references to this sheet,
 //                       unqualified or qualified), array / data-table `f/@ref` (moved whole; a range
 //                       that would grow, shrink or split is refused — Tier B), data-table `r1`/`r2`.
@@ -30,7 +31,7 @@
 //                       group (no master, several masters for one si, a member outside the master's ref)
 //                       is refused.
 //   dimension/@ref      shifted; "A1" when everything it covered was deleted.
-//   sheetView           pane/@topLeftCell, selection/@activeCell (a deleted cell moves to the first
+//   sheetView           @topLeftCell, pane/@topLeftCell, selection/@activeCell (a deleted cell moves to the first
 //                       row/column after the band; pushed off -> last row/column), selection/@sqref
 //                       (all deleted -> the active cell). Frozen panes (state frozen/frozenSplit) also
 //                       shift xSplit/ySplit as the frozen band [0, split-1]; deleting every frozen
@@ -576,6 +577,9 @@ function planDimension(op: Op, b: EditBuilder, part: string, el: XmlElement, wri
 
 function planSheetViews(op: Op, b: EditBuilder, part: string, views: XmlElement, ns: string, writes: Write[]): void {
   for (const view of childrenOf(views, ns, 'sheetView')) {
+    // The scroll position (the view's top-left cell) follows its cell like the pane's (review N4).
+    const vtl = attr(view, '', 'topLeftCell');
+    if (vtl !== undefined) setAttrW(writes, b, part, view, 'topLeftCell', moveCellClamped(op, vtl, 'view position'));
     const pane = child(view, ns, 'pane');
     if (pane) {
       const tl = attr(pane, '', 'topLeftCell');
@@ -892,7 +896,51 @@ function planTables(op: Op, b: EditBuilder, wb: Workbook, sheet: Sheet, writes: 
     } else if (af) planAutoFilter(op, b, part, af, tns, writes, false);
     const ss = child(troot, tns, 'sortState');
     if (ss) planSortState(op, b, part, ss, tns, writes, false);
+    planTableFormulas(op, b, part, troot, op.name, true, writes);
   }
+}
+
+/** Table column elements whose text is a formula (as sheetsOps rewrites them on rename/delete). */
+const TABLE_FORMULA_LOCALS = ['calculatedColumnFormula', 'totalsRowFormula'];
+
+/**
+ * A table's calculated-column and totals-row formulas, shifted like the cell formulas of the sheet the
+ * table is on (`home`): every reference on the edited sheet, or (another sheet) only qualified ones.
+ */
+function planTableFormulas(op: Op, b: EditBuilder, part: string, troot: XmlElement, home: string, edited: boolean, writes: Write[]): void {
+  const tns = troot.ns;
+  const cols = child(troot, tns, 'tableColumns');
+  if (!cols) return;
+  const tname = attr(troot, '', 'displayName') ?? attr(troot, '', 'name') ?? part;
+  for (const col of childrenOf(cols, tns, 'tableColumn')) {
+    for (const local of TABLE_FORMULA_LOCALS) {
+      const fe = child(col, tns, local);
+      if (!fe) continue;
+      const t = textContent(fe);
+      if (t === '' || (!edited && !t.includes('!'))) continue;
+      const s = shiftText(op, t, home, `of column "${attr(col, '', 'name') ?? ''}" in table "${tname}"`);
+      if (s !== t) replaceW(writes, b, part, fe, withText(fe, s));
+    }
+  }
+}
+
+/** The table parts of `sheet` (resolved through its tableParts relationships); unresolvable ones are refused. */
+function tablePartsOf(wb: Workbook, sheet: Sheet): string[] {
+  const root = sheet.doc.root;
+  const tp = child(root, root.ns, 'tableParts');
+  if (!tp) return [];
+  const rels = readRelationships(wb.pkg, sheet.part);
+  const out: string[] = [];
+  for (const el of childrenOf(tp, root.ns, 'tablePart')) {
+    const id = NS_R.map((u) => attr(el, u, 'id')).find((v) => v !== undefined);
+    const rel = id !== undefined ? rels.find((x) => x.id === id) : undefined;
+    let name: string | undefined;
+    try { name = rel && !rel.external ? partNameFromTarget(sheet.part, rel.target) : undefined; } catch { name = undefined; }
+    const part = name !== undefined ? wb.pkg.partNames().find((p) => p.toLowerCase() === name!.toLowerCase()) : undefined;
+    if (!part) refuse(`A table on sheet "${sheet.part}" can't be found, so its formulas can't be updated.`);
+    out.push(part);
+  }
+  return out;
 }
 
 /** Tier B for tables (§9.6): what Tier A cannot update. */
@@ -919,6 +967,57 @@ function checkTable(op: Op, name: string, rg: Range, headerRows: number, totalsR
 // ---------------------------------------------------------------------------------------------------
 // Sheets
 
+/**
+ * Above this many (changed rows x rows in sheetData), sheetData is replaced as one node instead of one
+ * change per row: a per-row change locates its row by position (EditBuilder / xml.replaceNode search the
+ * parent's children, and a removal shifts them), so per-row recording is O(changed x rows) — quadratic
+ * when an insert near the top renumbers every row (review S3: 100k rows took 10.7 s, undo 12.9 s).
+ * Below it, a few changed rows in a big sheet re-parse only those rows.
+ */
+const PER_ROW_BUDGET = 20_000_000;
+
+/**
+ * sheetData of the edited sheet. Few changed rows: one `node` change per row that changes (replaced, or
+ * removed with the whitespace node before it). Many: one `node` change replacing sheetData with the same
+ * text those per-row changes would have produced (unchanged rows copied from their serialised source),
+ * so the result, undo and redo are byte-identical either way and the cost is linear in the sheet.
+ */
+function planSheetData(op: Op, b: EditBuilder, part: string, sd: XmlElement, ns: string,
+  rewrites: Map<XmlElement, FormulaRewrite>, dropSpans: boolean, writes: Write[]): void {
+  const plans: Array<[XmlElement, string | null]> = [];
+  for (const node of sd.children) {
+    if (node.type !== 'el' || node.ns !== ns || node.local !== 'row') continue;
+    const text = rewriteRow(op, node, ns, rewrites, dropSpans);
+    if (text !== undefined) plans.push([node, text]);
+  }
+  if (plans.length === 0) return;
+  if (plans.length * sd.children.length <= PER_ROW_BUDGET) {
+    for (const [node, text] of plans) {
+      if (text === null) writes.push(() => removeEl(b, part, node));
+      else writes.push(() => { b.replaceNode(part, node, text, { rootScoped: false }); });
+    }
+    return;
+  }
+  const byRow = new Map(plans);
+  const full = serialize(sd);
+  const pieces: string[] = [startTagOf(full)];
+  let lastWs = false;
+  for (const node of sd.children) {
+    const text = node.type === 'el' ? byRow.get(node) : undefined;
+    if (text === undefined) {
+      pieces.push(node.type === 'el' ? serialize(node) : node.raw);
+      lastWs = isWs(node);
+      continue;
+    }
+    if (text === null) { if (lastWs) pieces.pop(); }   // removed with the whitespace before it (removeEl)
+    else pieces.push(text);
+    lastWs = false;
+  }
+  const inner = pieces.slice(1).join('');
+  const next = withInner(sd, full, pieces[0], inner);
+  writes.push(() => { b.replaceNode(part, sd, next, { rootScoped: false }); });
+}
+
 /** Plan the edited sheet: sheetData plus every Tier A element. */
 function planEditedSheet(op: Op, b: EditBuilder, sheet: Sheet, writes: Write[]): void {
   const root = sheet.doc.root;
@@ -934,14 +1033,7 @@ function planEditedSheet(op: Op, b: EditBuilder, sheet: Sheet, writes: Write[]):
     // spans (column-extent hints) go on column operations that move or delete any cell; a column op
     // beyond every cell leaves them correct and changes nothing.
     const dropSpans = !op.rows && anyCellAtOrAfter(sd, ns, op.at);
-    // One change per row that changes (a replaced row, or a removed one with the whitespace before it):
-    // only those rows are re-parsed, on apply and on undo/redo alike.
-    for (const node of sd.children) {
-      if (node.type !== 'el' || node.ns !== ns || node.local !== 'row') continue;
-      const text = rewriteRow(op, node, ns, rewrites, dropSpans);
-      if (text === null) writes.push(() => removeEl(b, part, node));
-      else if (text !== undefined) writes.push(() => { b.replaceNode(part, node, text, { rootScoped: false }); });
-    }
+    planSheetData(op, b, part, sd, ns, rewrites, dropSpans, writes);
   }
   for (const el of elements(root, ns)) {
     switch (el.local) {
@@ -964,7 +1056,7 @@ function planEditedSheet(op: Op, b: EditBuilder, sheet: Sheet, writes: Write[]):
 }
 
 /** Plan another worksheet: formulas (cells, conditional formats, validations) qualified with the edited sheet. */
-function planOtherSheet(op: Op, b: EditBuilder, e: SheetEntry, sheet: Sheet, writes: Write[]): boolean {
+function planOtherSheet(op: Op, b: EditBuilder, wb: Workbook, e: SheetEntry, sheet: Sheet, writes: Write[]): boolean {
   const root = sheet.doc.root;
   const ns = root.ns;
   const part = sheet.part;
@@ -975,6 +1067,11 @@ function planOtherSheet(op: Op, b: EditBuilder, e: SheetEntry, sheet: Sheet, wri
   for (const el of elements(root, ns)) {
     if (el.local === 'conditionalFormatting') planConditionalFormatting(op, b, part, el, ns, e.name, false, local);
     else if (el.local === 'dataValidations') planDataValidations(op, b, part, el, ns, e.name, false, local);
+  }
+  for (const tpart of tablePartsOf(wb, sheet)) {
+    let troot: XmlElement;
+    try { troot = wb.pkg.xml(tpart).root; } catch { return refuse(`A table on sheet "${e.name}" can't be read, so its formulas can't be updated.`); }
+    planTableFormulas(op, b, tpart, troot, e.name, false, local);
   }
   if (local.length === 0) return false;
   if (sheet.readOnlyReason || sheet.truncatedAtRow !== null) {
@@ -1005,8 +1102,10 @@ function planDefinedNames(op: Op, b: EditBuilder, wb: Workbook, writes: Write[])
  * Insert (`count` > 0) or delete (`count` < 0) rows or columns at 0-based `at` of `sheet` (§9.6 Tier A).
  * Records through `b`; nothing is written when the operation is refused (the returned promise rejects
  * with an Error carrying `officeError`). Changes nothing (records nothing) when nothing moves.
+ * `planOnly`: plan (raising every refusal) without writing anything.
  */
-export async function insertOrDelete(b: EditBuilder, wb: Workbook, sheet: Sheet, axis: 'row' | 'col', at: number, count: number): Promise<void> {
+export async function insertOrDelete(b: EditBuilder, wb: Workbook, sheet: Sheet, axis: 'row' | 'col', at: number, count: number,
+  planOnly = false): Promise<void> {
   if (axis !== 'row' && axis !== 'col') refuse('Invalid axis.', 'invalid');
   const max = axis === 'row' ? MAX_ROWS : MAX_COLS;
   if (!Number.isInteger(at) || !Number.isInteger(count) || count === 0 || at < 0 || at >= max || Math.abs(count) > max) {
@@ -1040,10 +1139,12 @@ export async function insertOrDelete(b: EditBuilder, wb: Workbook, sheet: Sheet,
   const writes: Write[] = [];
   const touched: Sheet[] = [sheet];
   planEditedSheet(op, b, sheet, writes);
-  for (const { e, s } of others) if (planOtherSheet(op, b, e, s, writes)) touched.push(s);
+  for (const { e, s } of others) if (planOtherSheet(op, b, wb, e, s, writes)) touched.push(s);
   planTables(op, b, wb, sheet, writes);
   planDefinedNames(op, b, wb, writes);
-  if (writes.length === 0) return;
+  // planOnly: every refusal has been raised (ops.ts asks for a Tier C confirmation only after this
+  // passes, review S5); nothing is written.
+  if (planOnly || writes.length === 0) return;
 
   try {
     for (const w of writes) w();

@@ -235,6 +235,7 @@ test('Tier C: the modal lists what will not follow; Continue applies it with con
   assert.ok(asked, 'modal shown');
   assert.strictEqual(asked.options.modal, true);
   assert.match(asked.options.detail, /pivot table "PivotTable1"/);
+  assert.strictEqual(asked.m, 'This change will not be fully applied everywhere.');
   assert.strictEqual(h.events.length, 1);
 });
 
@@ -271,7 +272,12 @@ test('confirmStructuralEdits:false skips the Tier C prompt but not the delete-sh
   assert.strictEqual(r.ok, true);
   assert.strictEqual(asked, 0, 'no prompt for Tier C');
   S.answer = () => { asked++; return undefined; };
-  const d = await edit(h, { op: 'deleteSheet', sheetId: 3 });
+  // Review S5: "Pivot" hosts a pivot table, which deleteSheet refuses: refused up front, never asked.
+  const p = await edit(h, { op: 'deleteSheet', sheetId: 3 });
+  assert.strictEqual(asked, 0, 'no modal for a delete that would be refused');
+  assert.strictEqual(p.error.code, 'blocked');
+  assert.match(p.error.message, /pivot table/);
+  const d = await edit(h, { op: 'deleteSheet', sheetId: 1 });
   assert.strictEqual(asked, 1, 'the delete-sheet modal is shown even when the setting is off');
   assert.strictEqual(d.error.code, 'cancelled');
 });
@@ -301,6 +307,42 @@ test('addSheet: default name, a fresh xlsxWorkbook selects the new sheet, ids of
   assert.deepStrictEqual(names(lastWorkbook(h)), ['Values', 'Second Sheet']);
 });
 
+// Review S4 / K14: undo/redo used to drop the model, and a fresh model numbers sheets by position, so
+// after an add/delete was undone or redone the webview's active session id named another sheet.
+test('K14: session sheet ids stay stable across undo/redo of add and delete sheet', async () => {
+  ENABLE();
+  const h = await open('basic.xlsx');
+  S.answer = () => 'Continue';
+  const idOf = (wb, name) => wb.sheets.find((s) => s.name === name)?.id;
+  const second = idOf(lastWorkbook(h), 'Second Sheet');
+  const values = idOf(lastWorkbook(h), 'Values');
+  assert.strictEqual((await edit(h, { op: 'addSheet', afterSheetId: values })).ok, true);
+  assert.strictEqual((await edit(h, setOp(second, [[0, 0, 'on second']]))).ok, true);
+  for (let k = 0; k < 2; k++) {
+    await h.events[1].undo();
+    await h.events[0].undo();
+    let wb = lastWorkbook(h);
+    assert.deepStrictEqual(names(wb), ['Values', 'Second Sheet']);
+    assert.strictEqual(idOf(wb, 'Second Sheet'), second, 'Second Sheet keeps its id after undo');
+    await h.events[0].redo();
+    await h.events[1].redo();
+    wb = lastWorkbook(h);
+    assert.deepStrictEqual(names(wb), ['Values', 'Sheet1', 'Second Sheet']);
+    assert.strictEqual(idOf(wb, 'Second Sheet'), second, 'Second Sheet keeps its id after redo');
+    assert.strictEqual(idOf(wb, 'Values'), values);
+    // The id still addresses the same sheet's cells.
+    assert.strictEqual((await cells(h, [0, 0, 0, 0], second)).get('0,0').d, 'on second');
+  }
+  // Delete the first sheet, undo, redo: the others keep their ids.
+  assert.strictEqual((await edit(h, { op: 'deleteSheet', sheetId: values })).ok, true);
+  await h.events[2].undo();
+  assert.strictEqual(idOf(lastWorkbook(h), 'Second Sheet'), second);
+  await h.events[2].redo();
+  assert.deepStrictEqual(names(lastWorkbook(h)), ['Sheet1', 'Second Sheet']);
+  assert.strictEqual(idOf(lastWorkbook(h), 'Second Sheet'), second);
+  assert.strictEqual((await cells(h, [0, 0, 0, 0], second)).get('0,0').d, 'on second');
+});
+
 test('renameSheet: valid names apply; invalid ones are refused with the §5.2 reason', async () => {
   ENABLE();
   const h = await open('basic.xlsx');
@@ -325,10 +367,13 @@ test('deleteSheet: the modal is always shown; Continue removes it and selects a 
   const original = fixture('basic.xlsx');
   const h = await open('basic.xlsx');
   let asked = 0;
-  S.answer = () => { asked++; return 'Continue'; };
+  let title;
+  S.answer = (m) => { asked++; title = m; return 'Continue'; };
   const r = await edit(h, { op: 'deleteSheet', sheetId: 2 });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(asked, 1);
+  // Review N2: a plain delete asks about the sheet, not about a change "not fully applied everywhere".
+  assert.strictEqual(title, 'Delete sheet "Second Sheet"?');
   let wb = lastWorkbook(h);
   assert.deepStrictEqual(names(wb), ['Values']);
   assert.strictEqual(wb.activeSheetId, 1, 'the sheet before the deleted one');

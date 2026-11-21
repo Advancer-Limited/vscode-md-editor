@@ -402,6 +402,28 @@ export class Sheet {
     return out;
   }
 
+  /**
+   * The last row and the right-most column holding a cell node inside `range`, or null when it holds
+   * none. Reads only the index (no cell is decoded), so a caller can size a range before cellsIn.
+   */
+  cellExtentIn(range: Range): { lastRow: number; lastCol: number } | null {
+    const [r0, c0, r1, c1] = range;
+    if (r1 < r0 || c1 < c0) return null;
+    let lastRow = -1;
+    let lastCol = -1;
+    for (let k = lowerBound(this.rowList, r0); k < this.rowList.length; k++) {
+      const r = this.rowList[k];
+      if (r > r1) break;
+      const cols = this.rowMap.get(r)!.cols;
+      const j = lowerBound(cols, c0);
+      if (j >= cols.length || cols[j] > c1) continue;
+      lastRow = r;
+      const end = lowerBound(cols, c1 + 1) - 1;
+      if (cols[end] > lastCol) lastCol = cols[end];
+    }
+    return lastRow < 0 ? null : { lastRow, lastCol };
+  }
+
   /** Row indices (sorted, 0-based) that have a row node. */
   rowIndices(): readonly number[] {
     return this.rowList;

@@ -48,7 +48,7 @@ import type { FormulaContext } from './refs.js';
 import { dateStyleFor } from './stylesWrite.js';
 import { insertOrDelete } from './structure.js';
 import { checkStructuralOp } from './guards.js';
-import { addSheet, deleteSheet, renameSheet, syncSheetEntries } from './sheetsOps.js';
+import { addSheet, deleteSheet, deleteSheetProblem, renameSheet, renameSheetProblem, syncSheetEntries } from './sheetsOps.js';
 import { partNameFromTarget, readRelationships, relsPartFor } from '../opc.js';
 
 export type OpResult =
@@ -94,6 +94,19 @@ export function refreshAfterEdit(wb: Workbook, edit: OfficeEdit, styles?: StyleT
     (styles ?? stylesFor(wb)).reload();
     if (styles && stylesCache.get(wb) !== styles) stylesCache.get(wb)?.reload();
   }
+}
+
+/**
+ * Bring `wb` (and `styles`) in line with its package after changes that are not known one by one (VS
+ * Code's undo/redo applies an edit inside OfficeDocument): as refreshAfterEdit with every part changed.
+ * The sheet list is re-read by syncSheetEntries, so session sheet ids stay stable (review S4 / K14):
+ * dropping the model instead would number the sheets by position again and move the webview's tab.
+ */
+export function refreshAfterUnknownEdit(wb: Workbook, styles?: StyleTable): void {
+  refreshParts(wb, [...wb.pkg.partNames(), wb.workbookPart]);
+  (styles ?? stylesFor(wb)).reload();
+  const cached = stylesCache.get(wb);
+  if (styles && cached && cached !== styles) cached.reload();
 }
 
 /** The sheet-list and sheet-index half of refreshAfterEdit for the changed `parts`; returns them lower-cased. */
@@ -401,12 +414,37 @@ async function clearCells(wb: Workbook, op: Extract<XlsxEditOp, { op: 'clearCell
 const STRUCT_LABELS = { insertRows: 'Insert Rows', deleteRows: 'Delete Rows', insertCols: 'Insert Columns', deleteCols: 'Delete Columns' } as const;
 const SHEET_LABELS = { addSheet: 'Add Sheet', renameSheet: 'Rename Sheet', deleteSheet: 'Delete Sheet' } as const;
 
-async function guard(wb: Workbook, op: XlsxEditOp, opts: ApplyOptions): Promise<OpResult | string[] | null> {
+/**
+ * Tier B / Tier C (guards.ts). Before a Tier C confirmation is returned, `preflight` runs the
+ * operation's planning half (no writes) so a refusal it would raise is reported now instead of after
+ * the user confirmed (review S5).
+ */
+async function guard(wb: Workbook, op: XlsxEditOp, opts: ApplyOptions,
+  preflight: () => Promise<OfficeError | null>): Promise<OpResult | string[] | null> {
   let g: { blocked?: string; confirm?: string[] };
   try { g = await checkStructuralOp(wb, wb.pkg, op); } catch (err) { return errorResult(err); }
   if (g.blocked) return fail('blocked', g.blocked);
-  if (g.confirm && g.confirm.length > 0 && !opts.confirmed) return g.confirm;
+  if (g.confirm && g.confirm.length > 0 && !opts.confirmed) {
+    let problem: OfficeError | null;
+    try { problem = await preflight(); } catch (err) { return errorResult(err); }
+    if (problem) return { ok: false, error: problem };
+    return g.confirm;
+  }
   return null;
+}
+
+/** insertOrDelete's planning half: its refusal, or null. Writes nothing. */
+async function structuralProblem(wb: Workbook, sheet: Sheet, axis: 'row' | 'col', at: number, count: number, label: string): Promise<OfficeError | null> {
+  const b = new EditBuilder(wb.pkg, label);
+  try {
+    await insertOrDelete(b, wb, sheet, axis, at, count, true);
+    return null;
+  } catch (err) {
+    const r = errorResult(err);
+    return r.ok ? null : r.error;
+  } finally {
+    b.abort();   // nothing was recorded: this only closes the builder
+  }
 }
 
 async function structural(wb: Workbook, op: Extract<XlsxEditOp, { op: 'insertRows' | 'deleteRows' | 'insertCols' | 'deleteCols' }>, opts: ApplyOptions): Promise<OpResult> {
@@ -415,13 +453,14 @@ async function structural(wb: Workbook, op: Extract<XlsxEditOp, { op: 'insertRow
   if (op.at >= (axis === 'row' ? MAX_ROWS : MAX_COLS)) return fail('invalid', 'The position is outside the sheet.');
   const sheetOrError = await editableSheet(wb, op.sheetId);
   if (isResult(sheetOrError)) return sheetOrError;
-  const g = await guard(wb, op, opts);
+  // count > 0 inserts, < 0 deletes (the StructuralShift convention of WP-36).
+  const count = op.op.startsWith('insert') ? op.count : -op.count;
+  const g = await guard(wb, op, opts, () => structuralProblem(wb, sheetOrError, axis, op.at, count, STRUCT_LABELS[op.op]));
   if (isResult(g)) return g;
   if (g) return { ok: true, edit: null, invalidate: 'sheet', sheetId: op.sheetId, confirm: g };
   const b = new EditBuilder(wb.pkg, STRUCT_LABELS[op.op]);
   try {
-    // count > 0 inserts, < 0 deletes (the StructuralShift convention of WP-36).
-    await insertOrDelete(b, wb, sheetOrError, axis, op.at, op.op.startsWith('insert') ? op.count : -op.count);
+    await insertOrDelete(b, wb, sheetOrError, axis, op.at, count);
     if (b.size > 0) ensureFullCalcOnLoad(b, wb);
   } catch (err) {
     // insertOrDelete rebuilt the indexes from what it wrote; a failure after it (calc handling)
@@ -437,7 +476,8 @@ async function structural(wb: Workbook, op: Extract<XlsxEditOp, { op: 'insertRow
 async function sheetOp(wb: Workbook, op: Extract<XlsxEditOp, { op: 'addSheet' | 'renameSheet' | 'deleteSheet' }>, opts: ApplyOptions): Promise<OpResult> {
   if (wb.structureLocked) return fail('read-only', 'The workbook structure is protected: sheets cannot be added, renamed or deleted.');
   if (op.op !== 'addSheet' && !wb.entry(op.sheetId)) return fail('invalid', `There is no sheet with id ${op.sheetId}.`);
-  const g = await guard(wb, op, opts);
+  const g = await guard(wb, op, opts, async () => (op.op === 'renameSheet' ? renameSheetProblem(wb, op.sheetId, op.name)
+    : op.op === 'deleteSheet' ? deleteSheetProblem(wb, op.sheetId) : null));
   if (isResult(g)) return g;
   if (g) return { ok: true, edit: null, invalidate: 'workbook', confirm: g };
   const b = new EditBuilder(wb.pkg, SHEET_LABELS[op.op]);

@@ -231,6 +231,14 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
   }
 
   /** All notices to show: the document's host notices plus the kind's. */
+  /**
+   * Notices about this panel only (xlsx: a sheet that could not be displayed), kept when the
+   * link-blocked warning is shown or dropped (review N7: its timer used to wipe them).
+   */
+  protected panelNotices(_panel: vscode.WebviewPanel): OfficeNotice[] {
+    return [];
+  }
+
   protected allNotices(doc: OfficeDocument): OfficeNotice[] {
     return doc.pkg ? [...doc.notices, ...this.kindNotices(doc)] : [...doc.notices];
   }
@@ -318,7 +326,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     const state = this.panelStates.get(panel);
     const url = allowedExternalLink(href);
     if (!url) {
-      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), LINK_BLOCKED_NOTICE] });
+      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), ...this.panelNotices(panel), LINK_BLOCKED_NOTICE] });
       // The warning is about one click: drop it after a while (or on the next link that opens).
       if (state) {
         if (state.linkBlockedTimer) clearTimeout(state.linkBlockedTimer);
@@ -338,7 +346,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     if (!state?.linkBlockedTimer) return;
     clearTimeout(state.linkBlockedTimer);
     state.linkBlockedTimer = undefined;
-    if (!doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+    if (!doc.loadError) this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), ...this.panelNotices(panel)] });
   }
 
   private async openExternally(doc: OfficeDocument): Promise<void> {

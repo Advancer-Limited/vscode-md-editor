@@ -194,6 +194,18 @@ test('S2 toTsv: trims the end to the last stored cell, keeps the start, refuses 
   assert.ok(Date.now() - t0 < 500, 'refusal is cheap');
   // A selection that stays inside the budget still copies.
   assert.strictEqual(toTsv(big.wb, bs, big.styles, [0, 0, 0, 2]), '1');
+  // Review S6: the size is taken from the index; no cell is read for a refused copy.
+  const cellsIn = bs.cellsIn;
+  bs.cellsIn = () => assert.fail('cellsIn must not run before the size check');
+  try {
+    assert.throws(() => toTsv(big.wb, bs, big.styles, [0, 0, 1_048_575, 16_383]), (e) => e instanceof CopyTooLargeError);
+  } finally {
+    bs.cellsIn = cellsIn;
+  }
+  assert.deepStrictEqual(bs.cellExtentIn([0, 0, 1_048_575, 16_383]), { lastRow: 2999, lastCol: 16383 });
+  assert.deepStrictEqual(bs.cellExtentIn([0, 0, 2998, 16_383]), { lastRow: 0, lastCol: 0 });
+  assert.deepStrictEqual(bs.cellExtentIn([1, 1, 2998, 16_382]), null);
+  assert.deepStrictEqual(s.cellExtentIn([0, 0, 999, 2]), { lastRow: 1, lastCol: 1 });
 });
 
 test('find is capped at 1,000 matches and reports truncated', async () => {
@@ -497,6 +509,21 @@ test('the sheet-unavailable warning is cleared once a sheet loads', async () => 
   await waitFor(() => !panel.last('notices').notices.some((n) => n.code === 'sheet-unavailable'), 'cleared');
 });
 
+test('N7: showing or clearing the link-blocked warning keeps the sheet-unavailable warning', async () => {
+  const { panel } = await open('features.xlsx');
+  panel.send({ type: 'ready' });
+  await waitFor(() => panel.last('xlsxWorkbook'), 'xlsxWorkbook');
+  await ask(panel, { type: 'xlsxRequestSheetMeta', sheetId: 99 }, 'notices');
+  const codes = () => panel.last('notices').notices.map((n) => n.code);
+  assert.ok(codes().includes('sheet-unavailable'));
+  await panel.send({ type: 'openLink', href: 'javascript:alert(1)' });
+  await waitFor(() => codes().includes('link-blocked'), 'link-blocked shown');
+  assert.ok(codes().includes('sheet-unavailable'), 'kept while the link warning shows');
+  await panel.send({ type: 'openLink', href: 'https://example.com/' });   // clears the link warning
+  await waitFor(() => !codes().includes('link-blocked'), 'link-blocked cleared');
+  assert.ok(codes().includes('sheet-unavailable'), 'kept after the link warning is cleared');
+});
+
 test('a malformed workbook part shows the error view instead of throwing', async () => {
   const bytes = fixture('basic.xlsx');
   const zip = core.zip.readZip(bytes, core.pkg.zipLimits());
@@ -507,4 +534,32 @@ test('a malformed workbook part shows the error view instead of throwing', async
   panel.send({ type: 'ready' });
   await waitFor(() => panel.last('loadError'), 'loadError');
   assert.ok(!panel.last('xlsxWorkbook'));
+});
+
+test('N7: range hyperlinks are found through a row index; the first range in file order wins, as a scan would', async () => {
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(fixture('basic.xlsx'));
+  const s1 = await zip.file('xl/worksheets/sheet1.xml').async('string');
+  // Overlapping ranges, a tall one (wide list), single cells and many small ones.
+  const ranges = ['B2:D4', 'C3:F10', 'A1:A400', 'E500:E520', 'G1:G2000'];
+  for (let k = 0; k < 300; k++) ranges.push(`H${k * 3 + 1}:I${k * 3 + 2}`);
+  const xml = '<hyperlinks>' + ranges.map((r, i) => `<hyperlink ref="${r}" location="T!A${i + 1}"/>`).join('') + '<hyperlink ref="C3" location="single"/></hyperlinks>';
+  zip.file('xl/worksheets/sheet1.xml', s1.replace(/<pageMargins/, xml + '<pageMargins'));
+  const m = model('links.xlsx', new Uint8Array(await zip.generateAsync({ type: 'uint8array' })));
+  const sheet = await m.wb.sheet(1);
+  const toRg = (a) => { const [x, y = x] = a.split(':'); const p = (s) => { const mm = /^([A-Z]+)(\d+)$/.exec(s); return [Number(mm[2]) - 1, [...mm[1]].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1]; }; const [a0, b0] = p(x); const [a1, b1] = p(y); return [a0, b0, a1, b1]; };
+  const naive = (r, c) => {
+    if (r === 2 && c === 2) return '#single';
+    for (let i = 0; i < ranges.length; i++) { const g = toRg(ranges[i]); if (r >= g[0] && r <= g[2] && c >= g[1] && c <= g[3]) return `#T!A${i + 1}`; }
+    return undefined;
+  };
+  const range = [0, 0, 2100, 9];
+  const got = new Map(win(m, sheet, range).cells.filter((c) => c.link !== undefined).map((c) => [`${c.r},${c.c}`, c.link]));
+  for (let r = 0; r <= 2100; r++) {
+    for (let c = 0; c <= 9; c++) {
+      const want = naive(r, c);
+      if (want !== undefined) assert.strictEqual(got.get(`${r},${c}`), want, `(${r}, ${c})`);
+      else assert.ok(!got.has(`${r},${c}`), `(${r}, ${c}) has no link`);
+    }
+  }
 });

@@ -512,6 +512,17 @@ test('sheetView: pane topLeftCell, frozen split, selection activeCell/sqref [WP-
   assert.match((await refusal(fx4.wb, 1, delR(1))).message, /every frozen row/);
 });
 
+test('N4: sheetView/@topLeftCell (the scroll position) follows its cell; deleted -> first cell after the band', async () => {
+  const bytes = await patched('basic.xlsx', { [S1]: (s) => s.replace(/<sheetView\b/, '<sheetView topLeftCell="C5"') });
+  assert.match(partText(bytes, S1), /<sheetView topLeftCell="C5"/);
+  const { bytes: b1 } = await check(load('basic.xlsx', bytes), 1, insR(2, 3), [S1], 'view-topleft-insert');
+  assert.match(partText(b1, S1), /<sheetView topLeftCell="C8"/);
+  const { bytes: b2 } = await check(load('basic.xlsx', bytes), 1, insC('A'), [S1], 'view-topleft-insert-col');
+  assert.match(partText(b2, S1), /<sheetView topLeftCell="D5"/);
+  const { bytes: b3 } = await check(load('basic.xlsx', bytes), 1, delR(4, 3), [S1], 'view-topleft-delete');
+  assert.match(partText(b3, S1), /<sheetView topLeftCell="C4"/);
+});
+
 test('autoFilter and sortState (sheet level): ref, filterColumn colId, sortCondition', async () => {
   const bytes = await patched('basic.xlsx', {
     [S1]: injectBefore('pageMargins', '<autoFilter ref="A1:C23"><filterColumn colId="2"><filters><filter val="x"/></filters></filterColumn><sortState ref="A2:C23"><sortCondition ref="C2:C23"/></sortState></autoFilter>'),
@@ -664,6 +675,44 @@ test('tables: column ops left of a table move it; intersecting / header / totals
   assert.match(partText(b2, 'xl/tables/table2.xml'), /ref="B10:C13"/);
 });
 
+test('S2: table calculatedColumnFormula / totalsRowFormula shift on the edited sheet and on other sheets', async () => {
+  const T1 = 'xl/tables/table1.xml';
+  const T2 = 'xl/tables/table2.xml';
+  // SalesTable: Total's calculated column and a custom Units total refer to $H$1 on the same sheet.
+  const bytes = await patched('tables.xlsx', {
+    [T1]: (s) => s.replace('[[#This Row],[Price]]</calculatedColumnFormula>', '[[#This Row],[Price]]*$H$1</calculatedColumnFormula>')
+      .replace('name="Units" totalsRowFunction="sum"/>', 'name="Units" totalsRowFunction="custom"><totalsRowFormula>SUBTOTAL(109,SalesTable[Units])+$H$1</totalsRowFormula></tableColumn>'),
+  });
+  const fx = load('tables.xlsx', bytes);
+  const { bytes: b1 } = await check(fx, 1, insR(1), [S1, T1, T2], 'tables-calc-col-insert-row');
+  const t1 = partText(b1, T1);
+  assert.match(t1, /<calculatedColumnFormula>SalesTable\[\[#This Row\],\[Units\]\]\*SalesTable\[\[#This Row\],\[Price\]\]\*\$H\$2<\/calculatedColumnFormula>/);
+  assert.match(t1, /<totalsRowFormula>SUBTOTAL\(109,SalesTable\[Units\]\)\+\$H\$2<\/totalsRowFormula>/);
+  const fx2 = load('tables.xlsx', bytes);
+  const { bytes: b2 } = await check(fx2, 1, insC('G'), [T1], 'tables-calc-col-insert-col');
+  assert.match(partText(b2, T1), /\*\$I\$1<\/calculatedColumnFormula>/);
+  assert.match(partText(b2, T1), /\+\$I\$1<\/totalsRowFormula>/);
+
+  // A table on another sheet whose calculated column refers to the edited sheet (qualified).
+  const base = load('tables.xlsx');
+  const add = await applyXlsxEdit(base.wb, base.pkg, { op: 'addSheet', name: 'Rates' }, { confirmed: true });
+  assert.ok(add.ok && add.edit, 'added a sheet');
+  const withRates = await (async () => {
+    const zip = await JSZip.loadAsync(save(base.pkg));
+    const f = zip.file(T1);
+    zip.file(T1, (await f.async('string')).replace('[[#This Row],[Price]]</calculatedColumnFormula>', '[[#This Row],[Price]]*Rates!$A$1</calculatedColumnFormula>'));
+    return new Uint8Array(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+  })();
+  const fx3 = load('tables.xlsx', withRates);
+  const rates = fx3.wb.sheets.find((e) => e.name === 'Rates').id;
+  const { bytes: b3 } = await check(fx3, rates, insR(1), [T1], 'tables-calc-col-other-sheet');
+  assert.match(partText(b3, T1), /\*Rates!\$A\$2<\/calculatedColumnFormula>/);
+  // Deleting the row it refers to makes it #REF! (as Excel does for a cell formula).
+  const fx4 = load('tables.xlsx', withRates);
+  const { bytes: b4 } = await check(fx4, rates, delR(1), [T1], 'tables-calc-col-other-sheet-delete');
+  assert.match(partText(b4, T1), /\*#REF!<\/calculatedColumnFormula>/);
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Insert then delete restores the original (every fixture)
 
@@ -675,6 +724,9 @@ function calcBaseline(name, bytes) {
   b.finish();
   return pkg.serialize();
 }
+
+/** Fixtures without an editable worksheet: the round-trip test has nothing to shift there. */
+const NO_ROUND_TRIPS = new Set(['damaged-sheet.xlsx', 'protected-sheet.xlsx']);
 
 for (const name of allFixtures('xlsx')) {
   test(`insert -> delete of the same band restores the bytes: ${name}`, async (t) => {
@@ -728,6 +780,10 @@ for (const name of allFixtures('xlsx')) {
       }
     }
     t.diagnostic(`${ran} insert/delete round trips`);
+    // Review S7: the test must have exercised something. Only fixtures with no editable worksheet
+    // (damaged, protected) have no round trip.
+    if (NO_ROUND_TRIPS.has(name)) assert.strictEqual(ran, 0, `${name}: expected no editable worksheet`);
+    else assert.ok(ran > 0, `${name}: no insert/delete round trip ran`);
   });
 }
 
@@ -758,17 +814,77 @@ test('large.xlsx (200,000 cells): insert/delete a row at the top is linear and e
   applyEdit(fx.pkg, invertEdit(del.edit));
   applyEdit(fx.pkg, invertEdit(top.edit));
   assertBytesEqual(fx.pkg.serialize(), orig, 'large: insert, delete, undo both');
-  // Linearity: shifting half the rows costs at most ~ the full shift (an O(n²) shift would be ~4x apart).
-  const fx2 = load('large.xlsx');
-  await fx2.wb.sheet(1);
-  const t2 = performance.now();
-  await structural(fx2.wb, 1, insR(2001));
-  const halfMs = performance.now() - t2;
-  t.diagnostic(`insert row 1: ${top.ms.toFixed(0)} ms (4,000 rows / 200,000 cells renumbered); undo ${undoMs.toFixed(0)} ms; delete row 1: ${del.ms.toFixed(0)} ms; insert at row 2001 (half): ${halfMs.toFixed(0)} ms`);
+  t.diagnostic(`insert row 1: ${top.ms.toFixed(0)} ms (4,000 rows / 200,000 cells renumbered); undo ${undoMs.toFixed(0)} ms; delete row 1: ${del.ms.toFixed(0)} ms`);
   assert.ok(top.ms < 20000, `insert at the top took ${top.ms} ms`);
   writeOut(OUT, 'large-insert-top.xlsx', bytes);
 });
 
+/** basic.xlsx with Sheet1 replaced by `n` rows of two cells (A = row number, B = A*2), rows separated by `sep`. */
+async function tallWorkbook(n, sep = '') {
+  const rows = [];
+  for (let r = 1; r <= n; r++) rows.push(`<row r="${r}"><c r="A${r}"><v>${r}</v></c><c r="B${r}"><f>A${r}*2</f></c></row>`);
+  const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + `<dimension ref="A1:B${n}"/><sheetData>${sep}${rows.join(sep)}${sep}</sheetData></worksheet>`;
+  return patched('basic.xlsx', { [S1]: xml });
+}
+
+// Review S3: per-row changes located each row by a search of sheetData's children, so an insert at the
+// top of a 100k-row sheet took 10.7 s (undo 12.9 s). Many changed rows are now one sheetData change.
+test('S3: insert/delete at the top of a tall sheet is linear (two sizes), and undo/redo are exact', async (t) => {
+  const run = async (n) => {
+    const fx = load('basic.xlsx', await tallWorkbook(n));
+    await fx.wb.sheet(1);
+    const orig = fx.pkg.serialize();
+    const t0 = performance.now();
+    const edit = await structural(fx.wb, 1, insR(1));
+    const applyMs = performance.now() - t0;
+    const t1 = performance.now();
+    outsideUndo(fx.wb, edit, true);
+    const undoMs = performance.now() - t1;
+    assertBytesEqual(fx.pkg.serialize(), orig, `${n}: undo restores the bytes`);
+    outsideUndo(fx.wb, edit, false);
+    return { applyMs, undoMs, changes: edit.changes.length };
+  };
+  await run(5000);   // warm-up
+  const small = await run(25000);
+  const big = await run(100000);
+  t.diagnostic(`insert row 1: 25k rows ${small.applyMs.toFixed(0)} ms (undo ${small.undoMs.toFixed(0)} ms); 100k rows ${big.applyMs.toFixed(0)} ms (undo ${big.undoMs.toFixed(0)} ms); ${big.changes} changes`);
+  // 4x the rows: linear ~4x, quadratic ~16x. Allow noise up to 9x.
+  assert.ok(big.applyMs < 9 * Math.max(small.applyMs, 50), `apply: ${small.applyMs} ms -> ${big.applyMs} ms is not linear`);
+  assert.ok(big.undoMs < 9 * Math.max(small.undoMs, 50), `undo: ${small.undoMs} ms -> ${big.undoMs} ms is not linear`);
+  assert.ok(big.changes < 10, 'the sheetData rows are not recorded one change per row');
+});
+
+test('S3: one sheetData change gives the same bytes as per-row changes (whitespace between rows, deletes)', async () => {
+  // Pretty-printed rows: a deleted row goes with the whitespace before it, as removeEl does per row.
+  const n = 6000;   // 6,000 x 6,000 is over PER_ROW_BUDGET: one sheetData change
+  for (const sep of ['', '\n  ']) {
+    const fx = load('basic.xlsx', await tallWorkbook(n, sep));
+    const { bytes, edit } = await check(fx, 1, delR(2, 5), [S1], `tall-delete${sep ? '-ws' : ''}`);
+    assert.ok(edit.changes.filter((c) => c.part === S1).length < 10, 'one sheetData change');
+    const rows = [];
+    for (let r = 1; r <= n - 5; r++) {
+      const o = r === 1 ? 1 : r + 5;
+      const f = r === 1 ? 'A1*2' : `A${r}*2`;
+      rows.push(`<row r="${r}"><c r="A${r}"><v>${o}</v></c><c r="B${r}"><f>${f}</f></c></row>`);
+    }
+    const want = `<sheetData>${sep}${rows.join(sep)}${sep}</sheetData>`;
+    const got = /<sheetData>[\s\S]*<\/sheetData>/.exec(partText(bytes, S1))[0];
+    assert.strictEqual(got, want);
+    // A few changed rows in a tall sheet stay per-row changes (only those rows re-parsed).
+    const fx2 = load('basic.xlsx', await tallWorkbook(n, sep));
+    const { edit: e2 } = await check(fx2, 1, insR(n - 2), [S1], `tall-insert-near-bottom${sep ? '-ws' : ''}`);
+    assert.ok(e2.changes.filter((c) => c.part === S1 && c.kind === 'node').length === 3, 'three rows replaced one by one');
+  }
+});
+
+
+/** Undo (or redo) from outside, as the provider's stack does it. */
+function outsideUndo(wb, edit, undo) {
+  const e = undo ? invertEdit(edit) : edit;
+  applyEdit(wb.pkg, e);
+  refreshAfterEdit(wb, e);
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Grid (view.cellWindow) after structural ops, undo and redo: view.ts caches hyperlinks, notes and

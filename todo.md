@@ -372,6 +372,8 @@
   - [x] PR-13 integration pass (feature/office-xlsx-structure): stub-era tests rewritten, grid aux invalidation (Sheet.structureGeneration), sheet list after outside undo/redo and aborted sheet ops, add-sheet keeps the calc chain, structural random run (1156 pass / 1 skipped)
   - [x] WP-41 Structure UI + host wiring
   - [x] First real-Excel run (V3) findings: reviewer formulas already refused; 3 damaged synthetic test inputs fixed; structure-UI expectations (A1 = 42); V4 add-after-first is the calcChain false positive
+  - [x] Independent review of Excel structural editing, editor choice and viewer fixes (feature/office-xlsx-fixes): B1 sheet-name quoting, S1 TRUE/FALSE, S2 table formulas, S3 linear row ops, S4 stable sheet ids (checklist K14 fixed), S5 refusals before the Tier C modal, S6 copy size check, S7 tests, nits N1–N7
+  - [ ] Merge the save fix being propagated through the Excel stack into feature/office-xlsx-fixes, then flip `xlsxEdit`
   - [ ] WP-42 v1 release preparation
   - [ ] Gate R4
   - [ ] Gate R-final (Fable)

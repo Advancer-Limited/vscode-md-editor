@@ -198,10 +198,12 @@ async function checkEdit(wb, edit, orig, touched, out) {
 
 test('validateSheetName: rules table', () => {
   const existing = ['Data', 'My Sheet', "O'Brien"];
-  const ok = ['Sheet1', 'Sheet 1', "It's", 'x'.repeat(31), 'Ünïcødé ✓', 'Data2', 'History2', '1', 'A1', 'R1C1', ' lead space'];
+  const ok = ['Sheet1', 'Sheet 1', "It's", 'x'.repeat(31), 'Ünïcødé ✓', '\u{1F600}', 'a b', 'Data2', 'History2', '1', 'A1', 'R1C1', ' lead space'];
   for (const n of ok) assert.strictEqual(validateSheetName(n, existing), null, `"${n}" is valid`);
   const bad = ['', 'x'.repeat(32), 'a[b', 'a]b', 'a:b', 'a*b', 'a?b', 'a/b', 'a\\b', "'lead", "trail'", "'", 'History', 'HISTORY', 'history',
-    'data', 'DATA', 'my sheet', "o'brien", 'tab\there'];
+    'data', 'DATA', 'my sheet', "o'brien", 'tab\there',
+    // Review N1: DEL, C1 controls, U+FFFE/U+FFFF and lone surrogates.
+    'a\u007fb', 'a\u0085b', 'a\u009fb', 'x￾', 'x￿', 'a\ud800b', 'a\udc00b', 'end\ud83d'];
   for (const n of bad) {
     const err = validateSheetName(n, existing);
     assert.ok(err, `"${n}" is refused`);
@@ -323,6 +325,26 @@ test('rename: formulas and names rewritten with quoting; touched set exact', asy
   assert.strictEqual(w.getWorksheet('Data 2024').getCell('C2').formula, "'My Sheet'!A1+'Data 2024'!A2");
   assert.strictEqual(w.getWorksheet('NoCache').getCell('A4').formula, "SUM('Data 2024'!A2:A10)");
   assert.strictEqual(w.getWorksheet('Data 2024').getCell('A1').value !== undefined, true);
+});
+
+// Review B1 / S1: names Excel refuses bare in a reference (or that our validator refused) must be
+// written quoted; the outputs (tests/.out/xlsxSheets/rename-b1-*.xlsx) are opened in real Excel by
+// scripts/verify-office-open.ps1.
+test('B1: rename to non-ASCII and TRUE/FALSE names writes quoted references and saves', async () => {
+  const NAMES = ['€x', '€', '•a', 'a»b', '€1', '©', '£1', 'a¬b', '　', 'TRUE', 'FALSE', '\u{1F600}', 'a–b', 'a×b'];
+  for (const name of NAMES) {
+    const { wb, bytes } = load('formulas.xlsx');
+    await loadAll(wb);
+    const { edit, error } = op(wb, 'rename', byName(wb, 'Data'), name);
+    assert.ok(!error, `${name}: ${JSON.stringify(error)}`);
+    const tag = [...name].map((ch) => ch.codePointAt(0).toString(16)).join('_');
+    const after = await checkEdit(wb, edit, bytes, [WB, ...CALC, 'xl/worksheets/sheet1.xml', 'xl/worksheets/sheet2.xml', 'xl/worksheets/sheet4.xml'], `rename-b1-${tag}`);
+    const q = `'${name}'`;
+    const now = formulasOf(after);
+    assert.strictEqual(now['xl/worksheets/sheet1.xml!C2'], `'My Sheet'!A1+${q}!A2`, name);
+    assert.strictEqual(now['xl/worksheets/sheet4.xml!A4'], `SUM(${q}!A2:A10)`, name);
+    assert.ok(partText(after, WB).includes(`<definedName name="TaxRate">${q}!$G$1</definedName>`), `${name}: defined name quoted`);
+  }
 });
 
 test("rename: a quoted name with an apostrophe to a bare name, and a bare one to one with an apostrophe", async () => {
@@ -459,7 +481,7 @@ test('delete: localSheetId decremented, scoped names removed, activeTab/firstShe
 
 test('delete: every scoped name gone removes definedNames; activeTab moves off hidden sheets; last visible refused', async () => {
   const bytes = await patched('hidden-sheets.xlsx', {
-    [WB]: (t) => replaceOnce('</sheets>', '</sheets><definedName_PLACEHOLDER/>')(replaceOnce('<workbookView ', '<workbookView activeTab="1" ')(t))
+    [WB]: (t) => replaceOnce('</sheets>', '</sheets><definedName_PLACEHOLDER/>')(replaceOnce('<workbookView ', '<workbookView activeTab="1" firstSheet="1" ')(t))
       .replace('<definedName_PLACEHOLDER/>', '<definedNames><definedName name="_xlnm.Print_Area" localSheetId="1">\'Second Sheet\'!$A$1:$C$3</definedName></definedNames>'),
   });
   const { pkg, wb } = load('hidden-sheets.xlsx', bytes);
@@ -468,7 +490,8 @@ test('delete: every scoped name gone removes definedNames; activeTab moves off h
   const t = partText(after, WB);
   assert.ok(!t.includes('<definedNames'), 'empty definedNames removed');
   // Remaining tabs: Values, Hidden Sheet, Very Hidden Sheet; index 1 is hidden, nothing visible after it -> 0.
-  assert.ok(t.includes('<workbookView activeTab="0" '), t.slice(t.indexOf('<workbookView'), t.indexOf('<workbookView') + 60));
+  // Review N3: firstSheet (the first tab shown) also moves off the hidden sheet.
+  assert.ok(t.includes('<workbookView activeTab="0" firstSheet="0" '), t.slice(t.indexOf('<workbookView'), t.indexOf('<workbookView') + 60));
   assert.deepStrictEqual(excelNames(await excel(after)), ['Values', 'Hidden Sheet', 'Very Hidden Sheet']);
   // Values is now the last visible worksheet: refused; hidden sheets can still go.
   const r = op(wb, 'delete', byName(wb, 'Values'));

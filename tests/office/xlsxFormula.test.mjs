@@ -121,7 +121,7 @@ const synthetic = () => patched('formulas.xlsx', {
 const VALID = ['1+1', 'SUM(A1:B2)', "'My Sheet'!A1*2", 'Data!A2+\'O\'\'Brien\'!A1', 'A2*TaxRate', 'A3+[0]!LocalName',
   '_xlfn.XLOOKUP(3,A2:A10,B2:B10)', 'XLOOKUP(3,A2:A10,B2:B10)', 'IF(A8>5,"hi","lo")', '"a""b"&A1', '{1,2;3,4}',
   'SUM(A1,)', 'A1 B1', '1 + 2', 'SUM( A1 , B2 )', 'LET(x,1,x+1)', 'LAMBDA(a,b,a*b)(2,3)', 'Table1[Col]',
-  'A:A', '1:1', '-A1%', 'A1^2', 'A1<>B1', '#N/A', 'TRUE', 'A1\n+B1', 'SUM((A1,B1))', 'IF(,1,2)', 'été!A1',
+  'A:A', '1:1', '-A1%', 'A1^2', 'A1<>B1', '#N/A', 'TRUE', 'A1\n+B1', 'SUM((A1,B1))', 'IF(,1,2)', "'été'!A1", "'€x'!A1", "'TRUE'!A1",
   // Gate R2 F2: what the semantic checks must keep accepting.
   'TRUE()', 'NOW()', 'ROW()', 'IF(A1,,)', 'ROUND(1.5,0)', 'A1:A2:A3', 'SUM(A1:A2,B1:B2)', '{1,2;3,4}', '{"a";"b"}',
   '"' + 'x'.repeat(255) + '"', '9.99999999999999E+307', '-9.99999999999999E+307', '1E-307', "'Sheet 1'!A1", "'A1'!B1",
@@ -141,6 +141,10 @@ const REFUSED = [
   ['A1..B2', /a range is written with ":"/], ['A1:B', /"B" is not a reference here/], ['B:A1', /"B" is not a reference/],
   ['Sheet 1!A1', /sheet name "1" must be in single quotes/], ['A1!B1', /sheet name "A1" must be in single quotes/],
   ['R1C1!A1', /single quotes/], ['A1,B1', /union of references/], ['(A1),B1', /union/],
+  // Review B1: only plain ASCII names may be bare (Excel refuses €x!A1, •a!A1, a»b!A1, ©!A1 unquoted).
+  ['été!A1', /sheet name "été" must be in single quotes/], ['€x!A1', /sheet name "€x" must be in single quotes/],
+  ['•a!A1', /single quotes/], ['a»b!A1', /single quotes/], ['€1!A1', /single quotes/],
+  ['SUM(Sheet1:€x!A1)', /"€x" must be in single quotes/],
   ['[@Col]', /needs its table name/],
   ['[1]Sheet1!A1', /other workbooks/, 'blocked'], ['[Book2.xlsx]Sheet1!A1', /other workbooks/, 'blocked'],
   ['[1]!Name', /other workbooks/, 'blocked'], ['SUM([2]Sheet1!A1:B2)', /other workbooks/, 'blocked'],
@@ -160,7 +164,7 @@ const ACCEPTED_IN_CONTEXT = [
 ];
 const INVALID = [
   ['SUM(A1', 6], ['1+', 2], [')', 0], ['foo(', 4], ['"abc', 4], ['=A1', 0], ['A1#', 2], ['@A1:A3', 0], ['{A1}', 3],
-  ['SUM(A1:A3)#', 10], ['a b c', 4], [' ', 1], ['A1+\u0001', 3], ['A1+\ud800', 3], ['x'.repeat(MAX_FORMULA_CHARS + 1), MAX_FORMULA_CHARS],
+  ['SUM(A1:A3)#', 10], ['a b c', 4], [' ', 1], ['A1+\u0001', 3], ['A1+\ud800', 3], ['TRUE!A1', 5], ['false!A1', 6], ['©!A1', 2], ['a¬b!A1', 4], ['x'.repeat(MAX_FORMULA_CHARS + 1), MAX_FORMULA_CHARS],
 ];
 
 test('validateFormula accepts what Excel accepts', () => {

@@ -26,7 +26,8 @@ const MIN_COLS = 26;
 
 interface SheetAux {
   links: Map<string, string>;                 // "B2" -> target (single-cell refs)
-  linkRanges: Array<[Range, string]>;         // range refs
+  linkRanges: Array<[Range, string]>;         // range refs, in file order (the first containing range wins)
+  linkIndex: RangeIndex;                      // linkRanges by row block (review N7: linkAt was O(ranges) per cell)
   notes: Map<string, string>;                 // "B2" -> legacy comment text
   locked: Range[];                            // multi-cell array formulas and table header rows
   generation: number;                         // Sheet.structureGeneration it was built at
@@ -77,18 +78,48 @@ function auxFor(wb: Workbook, sheet: Sheet): SheetAux {
   for (const t of sheet.tables()) {
     if (t.headerRows > 0) locked.push([t.ref[0], t.ref[1], t.ref[0] + t.headerRows - 1, t.ref[3]]);
   }
-  const aux = { links, linkRanges, notes: legacyNotes(wb, sheet), locked, generation: sheet.structureGeneration };
+  const aux = { links, linkRanges, linkIndex: indexRanges(linkRanges), notes: legacyNotes(wb, sheet), locked, generation: sheet.structureGeneration };
   auxCache.set(sheet, aux);
   return aux;
 }
 
 const inRange = (rg: Range, r: number, c: number): boolean => r >= rg[0] && r <= rg[2] && c >= rg[1] && c <= rg[3];
 
+/** Rows per bucket of RangeIndex; a range spanning more than WIDE_BLOCKS buckets goes on the `wide` list. */
+const ROW_BLOCK = 64;
+const WIDE_BLOCKS = 64;
+
+/** Positions (into the indexed list) of the ranges touching each block of ROW_BLOCK rows, ascending. */
+interface RangeIndex { blocks: Map<number, number[]>; wide: number[] }
+
+function indexRanges(list: ReadonlyArray<readonly [Range, string]>): RangeIndex {
+  const blocks = new Map<number, number[]>();
+  const wide: number[] = [];
+  list.forEach(([rg], i) => {
+    const b0 = Math.floor(rg[0] / ROW_BLOCK);
+    const b1 = Math.floor(rg[2] / ROW_BLOCK);
+    if (b1 - b0 >= WIDE_BLOCKS) { wide.push(i); return; }
+    for (let b = b0; b <= b1; b++) {
+      const at = blocks.get(b);
+      if (at) at.push(i); else blocks.set(b, [i]);
+    }
+  });
+  return { blocks, wide };
+}
+
 function linkAt(aux: SheetAux, r: number, c: number): string | undefined {
   const hit = aux.links.get(rcToA1(r, c));
   if (hit !== undefined) return hit;
-  for (const [rg, target] of aux.linkRanges) if (inRange(rg, r, c)) return target;
-  return undefined;
+  // The first range in file order that contains (r, c), as a scan of linkRanges would find.
+  let best = -1;
+  for (const list of [aux.linkIndex.blocks.get(Math.floor(r / ROW_BLOCK)), aux.linkIndex.wide]) {
+    if (!list) continue;
+    for (const i of list) {
+      if (best >= 0 && i >= best) break;   // ascending: nothing earlier left in this list
+      if (inRange(aux.linkRanges[i][0], r, c)) { best = i; break; }
+    }
+  }
+  return best >= 0 ? aux.linkRanges[best][1] : undefined;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -270,14 +301,16 @@ export function toTsv(wb: Workbook, sheet: Sheet, styles: StyleTable, range: rea
   let r1 = Math.min(range[2], dims.rows - 1);
   let c1 = Math.min(range[3], dims.cols - 1);
   if (r0 > r1 || c0 > c1) return '';
-  const present = sheet.cellsIn([r0, c0, r1, c1]);   // row-major
-  if (!present.length) return '';
-  r1 = present[present.length - 1].r;
-  c1 = c0;
-  for (const cell of present) if (cell.c > c1) c1 = cell.c;
+  // Size the trimmed range from the index first (review S6): reading every cell of a range that is
+  // then refused cost 143 MB and 450 ms for 600k cells.
+  const extent = sheet.cellExtentIn([r0, c0, r1, c1]);
+  if (!extent) return '';
+  r1 = extent.lastRow;
+  c1 = Math.max(c0, extent.lastCol);
   const width = c1 - c0 + 1;
   const total = (r1 - r0 + 1) * width;
   if (total > TSV_MAX_CELLS) throw new CopyTooLargeError(total);
+  const present = sheet.cellsIn([r0, c0, r1, c1]);   // row-major
   const emptyRow = '\t'.repeat(width - 1);
   const lines: string[] = [];
   let i = 0;

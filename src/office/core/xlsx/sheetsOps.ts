@@ -531,6 +531,18 @@ function minimalWorksheet(wb: Workbook, s: Sheets): string {
 
 /** Rename sheet `sheetId` (session id) to `name` and requalify every formula reference to it (§9.7). */
 export function renameSheet(b: EditBuilder, wb: Workbook, sheetId: number, name: string): OfficeError | null {
+  return renameOrPlan(b, wb, sheetId, name);
+}
+
+/**
+ * Why renameSheet would refuse, or null: its planning half only (reads, never writes). ops.ts runs it
+ * before showing a Tier C confirmation, so the user is never asked to confirm a refused edit (review S5).
+ */
+export function renameSheetProblem(wb: Workbook, sheetId: number, name: string): OfficeError | null {
+  return renameOrPlan(null, wb, sheetId, name);
+}
+
+function renameOrPlan(b: EditBuilder | null, wb: Workbook, sheetId: number, name: string): OfficeError | null {
   return run(() => {
     if (wb.structureLocked) refuse('read-only', 'The workbook structure is protected: sheets cannot be added, renamed or deleted.');
     const e = wb.entry(sheetId);
@@ -555,6 +567,7 @@ export function renameSheet(b: EditBuilder, wb: Workbook, sheetId: number, name:
       const r = planRewrite(site, needles, transform);
       if (r) plan.push(r);
     }
+    if (!b) return;
     b.setAttr(wb.workbookPart, target.el, '', 'name', name);
     for (const r of plan) applyRewrite(b, r);
     syncSheetEntries(wb);
@@ -566,6 +579,15 @@ export function renameSheet(b: EditBuilder, wb: Workbook, sheetId: number, name:
 
 /** Delete worksheet `sheetId` (session id) and everything only it owns (§9.7). See the header for refusals. */
 export function deleteSheet(b: EditBuilder, wb: Workbook, sheetId: number): OfficeError | null {
+  return deleteOrPlan(b, wb, sheetId);
+}
+
+/** Why deleteSheet would refuse, or null: its planning half only (see renameSheetProblem). */
+export function deleteSheetProblem(wb: Workbook, sheetId: number): OfficeError | null {
+  return deleteOrPlan(null, wb, sheetId);
+}
+
+function deleteOrPlan(b: EditBuilder | null, wb: Workbook, sheetId: number): OfficeError | null {
   return run(() => {
     if (wb.structureLocked) refuse('read-only', 'The workbook structure is protected: sheets cannot be added, renamed or deleted.');
     const e = wb.entry(sheetId);
@@ -635,6 +657,7 @@ export function deleteSheet(b: EditBuilder, wb: Workbook, sheetId: number): Offi
     }
 
     // --- writes ---
+    if (!b) return;
     // workbook.xml: names, views, the <sheet> element.
     if (dn && names.length > 0 && names.every((d) => dnScoped.has(d))) {
       b.removeNode(wb.workbookPart, dn);
@@ -655,7 +678,14 @@ export function deleteSheet(b: EditBuilder, wb: Workbook, sheetId: number): Offi
       setViewIndex(b, wb, v, 'activeTab', a);
       let f = intAttr(v, 'firstSheet');
       if (f > idx) f--;
-      setViewIndex(b, wb, v, 'firstSheet', Math.min(f, remaining.length - 1));
+      f = Math.min(f, remaining.length - 1);
+      // The first tab shown must be a visible sheet (review N3), as for activeTab.
+      if (remaining[f].state !== 'visible') {
+        let j = remaining.findIndex((x, i) => i >= f && x.state === 'visible');
+        if (j < 0) j = remaining.map((x) => x.state).lastIndexOf('visible');
+        if (j >= 0) f = j;
+      }
+      setViewIndex(b, wb, v, 'firstSheet', f);
     }
     for (const r of plan) applyRewrite(b, r);
     b.removeNode(wb.workbookPart, target.el);

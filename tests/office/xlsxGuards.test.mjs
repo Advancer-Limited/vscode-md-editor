@@ -440,3 +440,111 @@ test('cell edits are not structural: no guard result', async () => {
   const ctx = load('basic.xlsx');
   assertOk(await guard(ctx, { op: 'setCells', sheetId: 1, cells: [{ r: 0, c: 0, input: '1' }] }));
 });
+
+// ---------------------------------------------------------------------------------------------------
+// Review S5: refusals the operation itself raises are reported before a Tier C confirmation, so the
+// user is never asked to confirm an edit that is then refused. Review S7: Tier B end to end through
+// applyXlsxEdit, with the package bytes unchanged.
+
+/** applyXlsxEdit unconfirmed and confirmed: both refused with `code`, the package bytes unchanged. */
+async function refusedUpFront(ctx, op, re, code = 'blocked') {
+  for (const confirmed of [false, true]) {
+    const res = await applyXlsxEdit(ctx.wb, ctx.pkg, op, { confirmed });
+    assert.strictEqual(res.ok, false, `${op.op} (confirmed: ${confirmed}) must be refused, got ${JSON.stringify(res)}`);
+    assert.ok(!res.confirm, 'no confirmation for a refused edit');
+    assert.strictEqual(res.error.code, code, res.error.message);
+    assert.match(res.error.message, re);
+    assertBytesEqual(ctx.pkg.serialize(), ctx.bytes, `${op.op}: refused, package unchanged`);
+  }
+}
+
+const PIVOT_DATA = 'xl/worksheets/sheet2.xml';   // features.xlsx: moving its rows asks (pivot source, hyperlink)
+
+test('S5: deleting every frozen row is refused before the Tier C confirmation', async () => {
+  const ctx = await patched('features.xlsx', {
+    [PIVOT_DATA]: replaceOnce('<sheetView workbookViewId="0"/>',
+      '<sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView>'),
+  });
+  const op = { op: 'deleteRows', sheetId: idOf(ctx.wb, 'PivotData'), at: 0, count: 1 };
+  assertConfirm(await guard(ctx, op), 'pivot table');   // the guard alone would ask
+  await refusedUpFront(ctx, op, /every frozen row/);
+});
+
+test('S5: sheet elements the shift does not rewrite (scenarios) are refused before the confirmation', async () => {
+  const ctx = await patched('features.xlsx', {
+    [PIVOT_DATA]: replaceOnce('<pageMargins', '<scenarios><scenario name="s" count="1"><inputCells r="A1" val="1"/></scenario></scenarios><pageMargins'),
+  });
+  await refusedUpFront(ctx, { op: 'insertRows', sheetId: idOf(ctx.wb, 'PivotData'), at: 0, count: 1 }, /scenarios/);
+});
+
+test('S5: deleting a sheet that hosts a pivot table is refused without the modal', async () => {
+  const ctx = load('features.xlsx');
+  await refusedUpFront(ctx, { op: 'deleteSheet', sheetId: idOf(ctx.wb, 'Pivot') }, /contains a pivot table/);
+});
+
+test('S5: deleting a sheet whose table a formula elsewhere uses is refused without the modal', async () => {
+  const base = load('tables.xlsx');
+  const add = await applyXlsxEdit(base.wb, base.pkg, { op: 'addSheet', name: 'Uses' }, { confirmed: true });
+  assert.ok(add.ok && add.edit);
+  const uses = idOf(base.wb, 'Uses');
+  const set = await applyXlsxEdit(base.wb, base.pkg, { op: 'setCells', sheetId: uses, cells: [{ r: 0, c: 0, input: '=SUM(SalesTable[Units])' }] }, { confirmed: true });
+  assert.ok(set.ok && set.edit, JSON.stringify(set));
+  const ctx = load('tables.xlsx', base.pkg.serialize());
+  await refusedUpFront(ctx, { op: 'deleteSheet', sheetId: idOf(ctx.wb, 'Sales') }, /uses a table on sheet "Sales"/);
+});
+
+test('S5: deleting a sheet another part links to is refused without the modal', async () => {
+  const REL = '<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="sheet2.xml"/>';
+  const ctx = await patched('formulas.xlsx', {
+    'xl/worksheets/_rels/sheet1.xml.rels': (t) => (t ? t.replace('</Relationships>', `${REL}</Relationships>`)
+      : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${REL}</Relationships>`),
+  });
+  await refusedUpFront(ctx, { op: 'deleteSheet', sheetId: idOf(ctx.wb, 'My Sheet') }, /is linked from xl\/worksheets\/sheet1\.xml/);
+});
+
+test('S5: a rename with a confirmation and an invalid name answers "invalid" before asking', async () => {
+  // features.xlsx: renaming PivotData asks (pivot source named by sheet); "a:b" is not a valid name.
+  const ctx = load('features.xlsx');
+  const op = { op: 'renameSheet', sheetId: idOf(ctx.wb, 'PivotData'), name: 'a:b' };
+  assertConfirm(await guard(ctx, op), 'pivot');
+  await refusedUpFront(ctx, op, /./, 'invalid');
+});
+
+test('S7: Tier B conditions end to end through applyXlsxEdit leave the bytes unchanged', async () => {
+  const ins = (ctx, sheet, at) => ({ op: 'insertRows', sheetId: idOf(ctx.wb, sheet), at, count: 1 });
+  let ctx = load('features.xlsx');
+  await refusedUpFront(ctx, ins(ctx, 'Pivot', 0), /pivot table "PivotTable1"/);
+  ctx = await threadedBook();
+  await refusedUpFront(ctx, ins(ctx, ctx.wb.sheets[0].name, 4), /comment at C5/);
+  ctx = await dataTableBook();
+  await refusedUpFront(ctx, ins(ctx, ctx.wb.sheets[0].name, 30), /split the data table B30:B32/);
+  ctx = await threeDBook();
+  await refusedUpFront(ctx, ins(ctx, 'Data', 0), /3-D reference/);
+  ctx = await protectedDependantBook();
+  await refusedUpFront(ctx, ins(ctx, 'Data', 0), /"My Sheet" refers to cells on "Data".*protected/);
+  ctx = load('damaged-sheet.xlsx');
+  await refusedUpFront(ctx, ins(ctx, ctx.wb.sheets[0].name, 0), /"Damaged Sheet" can.t be read/);
+  ctx = load('formulas.xlsx');
+  await refusedUpFront(ctx, ins(ctx, 'Data', 2), /split the array formula E2:E4/);
+  // Another sheet over the size limit (cells) that refers to the edited one: NoCache gets 200 extra cells
+  // and the cell limit is lowered between Data's size and NoCache's.
+  const L = core.limits.LIMITS;
+  const old = L.xlsxMaxCells;
+  try {
+    ctx = await patched('formulas.xlsx', {
+      'xl/worksheets/sheet4.xml': replaceOnce('</sheetData>', Array.from({ length: 200 }, (_, i) => `<row r="${100 + i}"><c r="A${100 + i}"><v>${i}</v></c></row>`).join('') + '</sheetData>'),
+    });
+    L.xlsxMaxCells = 150;
+    const data = await ctx.wb.sheet(idOf(ctx.wb, 'Data'));
+    assert.ok(!data.overLimits, 'the edited sheet is within the limit');
+    for (const confirmed of [false, true]) {
+      const res = await applyXlsxEdit(ctx.wb, ctx.pkg, ins(ctx, 'Data', 0), { confirmed });
+      assert.strictEqual(res.ok, false, JSON.stringify(res));
+      assert.ok(['blocked', 'read-only'].includes(res.error.code), res.error.code);
+      assert.match(res.error.message, /NoCache|too-large|size limit/);
+      assertBytesEqual(ctx.pkg.serialize(), ctx.bytes, 'over the limit: unchanged');
+    }
+  } finally {
+    L.xlsxMaxCells = old;
+  }
+});

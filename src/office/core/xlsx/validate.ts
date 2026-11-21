@@ -110,8 +110,19 @@ export function sheetNameProblem(name: string): string | undefined {
   if (name.length > 31) return 'is longer than 31 characters';
   if (/[:\\/?*[\]]/.test(name)) return 'contains one of : \\ / ? * [ ]';
   if (name.startsWith("'") || name.endsWith("'")) return "starts or ends with '";
+  // C0 and C1 controls and DEL (review N1: DEL, C1, U+FFFE/U+FFFF and lone surrogates used to pass).
   // eslint-disable-next-line no-control-regex
-  if (/[\x00-\x1F]/.test(name)) return 'contains a control character';
+  if (/[\x00-\x1F\x7F-\x9F]/.test(name)) return 'contains a control character';
+  if (/[￾￿]/.test(name)) return 'contains a character that is not allowed in a workbook';
+  for (let i = 0; i < name.length; i++) {
+    const ch = name.charCodeAt(i);
+    if (ch >= 0xd800 && ch <= 0xdbff) {
+      const next = name.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) { i++; continue; }
+      return 'contains an incomplete character (a lone surrogate)';
+    }
+    if (ch >= 0xdc00 && ch <= 0xdfff) return 'contains an incomplete character (a lone surrogate)';
+  }
   return undefined;
 }
 

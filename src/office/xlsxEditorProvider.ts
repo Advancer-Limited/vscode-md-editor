@@ -22,7 +22,7 @@ import { Workbook, SheetLoadError } from './core/xlsx/workbook.js';
 import type { Sheet } from './core/xlsx/sheet.js';
 import { StyleTable } from './core/xlsx/styles.js';
 import { editSeed } from './core/xlsx/format.js';
-import { applyXlsxEdit, refreshAfterEdit } from './core/xlsx/ops.js';
+import { applyXlsxEdit, refreshAfterEdit, refreshAfterUnknownEdit } from './core/xlsx/ops.js';
 import { displayFormula } from './core/xlsx/sharedFormula.js';
 import { CopyTooLargeError, TSV_MAX_CELLS, cellWindow, clampRange, sheetMeta, toTsv } from './core/xlsx/view.js';
 import { findInWorkbook } from './core/xlsx/find.js';
@@ -35,6 +35,19 @@ import { SAVE_BUSY_MESSAGE } from './saveErrors.js';
 
 /** `fullCalcAtLoad`: the workbook asks Excel to recalculate on open (`calcPr/@fullCalcOnLoad`, Gate R2 F9). */
 interface Model { wb: Workbook; styles: StyleTable; fullCalcAtLoad: boolean }
+
+/**
+ * The Tier C modal's title (review N2): a delete-sheet confirmation names the sheet (its detail says
+ * what goes with it); the other lists are about content that will not follow the change.
+ */
+export function confirmTitle(op: XlsxEditOp, wb: Workbook): string {
+  if (op.op === 'deleteSheet') {
+    const name = wb.entry(op.sheetId)?.name;
+    return name !== undefined ? `Delete sheet "${name}"?` : 'Delete this sheet?';
+  }
+  if (op.op === 'renameSheet') return 'Some content refers to this sheet by name and will not be updated.';
+  return 'This change will not be fully applied everywhere.';
+}
 
 /** Whether `workbook.xml` has `calcPr/@fullCalcOnLoad` on: cached formula results may be out of date (§9.5). */
 function hasFullCalcOnLoad(wb: Workbook): boolean {
@@ -104,8 +117,8 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private readonly editedAt = new WeakMap<OfficeDocument, number>();
   /** Last meta built per sheet (see `metaFor`). */
   private metaCache = new WeakMap<Sheet, XlsxSheetMeta>();
-  /** Panels showing the sheet-unavailable warning (cleared when a sheet then loads). */
-  private readonly unavailableShown = new WeakSet<vscode.WebviewPanel>();
+  /** Panels showing the sheet-unavailable warning, with it (cleared when a sheet then loads). */
+  private readonly unavailableShown = new WeakMap<vscode.WebviewPanel, OfficeNotice>();
   /** requestId of the newest find per panel; older finds still running stop at their next yield. */
   private readonly latestFind = new WeakMap<vscode.WebviewPanel, number>();
 
@@ -222,13 +235,21 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   }
 
   /**
-   * Undo/redo (VS Code's stack) changed the package in place. The workbook model and its sheet
-   * indexes are keyed by package, so they are dropped and rebuilt on the next request; the webview is
-   * told to refetch. (`refreshAfterEdit` would need the edit, which the document does not pass on; a
-   * fresh model is equivalent and cheap.)
+   * Undo/redo (VS Code's stack) changed the package in place. The workbook model is refreshed in place
+   * (sheet list re-read, every loaded sheet re-indexed, styles reloaded) rather than dropped: a fresh
+   * model numbers the sheets by position, so after an add/delete sheet was undone the webview's session
+   * sheet id would name another sheet (review S4, K14). The webview is told to refetch.
    */
   protected onEdited(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
-    if (doc.pkg) this.models.delete(doc.pkg);
+    const m = doc.pkg ? this.models.get(doc.pkg) : undefined;
+    if (m) {
+      try {
+        refreshAfterUnknownEdit(m.wb, m.styles);
+      } catch (e) {
+        console.error('[XlsxEditor] model refresh after undo/redo failed; rebuilding it', e);
+        if (doc.pkg) this.models.delete(doc.pkg);
+      }
+    }
     this.editedAt.set(doc, doc.generation);
     this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
     this.onReloaded(doc, panel);
@@ -241,6 +262,11 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private resultsMayBeStale(doc: OfficeDocument): boolean {
     if (this.editedAt.get(doc) === doc.generation) return true;
     return doc.pkg !== null && this.models.get(doc.pkg)?.fullCalcAtLoad === true;
+  }
+
+  protected panelNotices(panel: vscode.WebviewPanel): OfficeNotice[] {
+    const n = this.unavailableShown.get(panel);
+    return n ? [n] : [];
   }
 
   /** The stale-formulas banner (spec §9.5). */
@@ -303,11 +329,9 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const r = await this.loadSheet(m, sheetId);
     if ('error' in r) {
       // `xlsxRequestSheetMeta` has no requestId: report through the notices bar.
-      this.post(panel, {
-        type: 'notices',
-        notices: [...this.allNotices(doc), { severity: 'warning', code: 'sheet-unavailable', message: r.error.message }],
-      });
-      this.unavailableShown.add(panel);
+      const notice: OfficeNotice = { severity: 'warning', code: 'sheet-unavailable', message: r.error.message };
+      this.unavailableShown.set(panel, notice);
+      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), notice] });
       return;
     }
     this.post(panel, { type: 'xlsxSheetMeta', meta: this.metaFor(m, r.sheet, sheetId, version) });
@@ -412,7 +436,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       if (!res.ok) { fail(res.error); return; }
       if (res.confirm && res.confirm.length > 0 && !confirmed) {
         // Tier C (spec §9.6): ask, then run the same operation again with the confirmation.
-        if (!(await this.confirmEdit(msg.edit, res.confirm))) { fail({ code: 'cancelled', message: 'Cancelled.' }); return; }
+        if (!(await this.confirmEdit(msg.edit, res.confirm, m.wb))) { fail({ code: 'cancelled', message: 'Cancelled.' }); return; }
         if (msg.baseVersion !== doc.version) { stale(); return; }
         confirmed = true;
         continue;
@@ -467,13 +491,13 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   }
 
   /** The modal for a Tier C list (default button Cancel); skipped when `confirmStructuralEdits` is off (spec §4.1). */
-  private async confirmEdit(op: XlsxEditOp, lines: readonly string[]): Promise<boolean> {
+  private async confirmEdit(op: XlsxEditOp, lines: readonly string[], wb: Workbook): Promise<boolean> {
     const alwaysAsk = op.op === 'deleteSheet';   // §9.7: deleting a sheet always asks
     const setting = vscode.workspace.getConfiguration('vscodeMdEditor.office').get<boolean>('confirmStructuralEdits', true);
     if (setting === false && !alwaysAsk) return true;
     const proceed = 'Continue';
     const answer = await vscode.window.showWarningMessage(
-      'This change will not be fully applied everywhere.',
+      confirmTitle(op, wb),
       { modal: true, detail: lines.join('\n') },
       proceed,
     );
