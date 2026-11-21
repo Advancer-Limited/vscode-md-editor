@@ -1712,17 +1712,19 @@
   // ================================================
   // Keyboard shortcuts
   // ================================================
+  // Handled chords are also stopped so VS Code's keydown listener in the webview does not forward them to
+  // the workbench (Ctrl+B would toggle the side bar, Ctrl+K would start a chord, Ctrl+I open chat).
   textarea.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       wrapSelection('**', '**');
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       wrapSelection('*', '*');
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       document.getElementById('btn-link')?.click();
     }
   });
@@ -1730,15 +1732,15 @@
   // Keyboard shortcuts for contenteditable preview mode
   previewContent.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       document.execCommand('bold');
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       document.execCommand('italic');
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       const url = prompt('Enter URL:');
       if (url) { document.execCommand('createLink', false, url); }
     }

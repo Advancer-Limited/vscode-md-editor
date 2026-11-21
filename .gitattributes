@@ -6,3 +6,9 @@ media/markdown-it.min.js -text
 media/mermaid.min.js -text
 media/three-bundle.js -text
 media/turndown.browser.umd.js -text
+media/docx-preview.min.js -text
+media/jszip.min.js -text
+tests/fixtures/office/** binary
+media/pdfjs-bundle.js -text
+media/pdfjs/** -text
+tests/fixtures/pdf/** binary

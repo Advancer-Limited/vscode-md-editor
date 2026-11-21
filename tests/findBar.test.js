@@ -79,13 +79,25 @@ function setup(initial) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../media/findBar.js'), 'utf8'), ctx);
   ctx.initFindBar({ textarea, previewContent, editorContainer, isPreviewMode: () => false });
-  const press = (key, mods = {}) => {
-    let prevented = false;
-    docListeners.keydown.forEach((f) => f({ key, preventDefault() { prevented = true; }, ...mods }));
-    return prevented;
+  const pressEvent = (key, mods = {}) => {
+    const r = { prevented: false, stopped: false };
+    docListeners.keydown.forEach((f) => f({ key, preventDefault() { r.prevented = true; }, stopPropagation() { r.stopped = true; }, ...mods }));
+    return r;
   };
-  return { els, textarea, press };
+  const press = (key, mods = {}) => pressEvent(key, mods).prevented;
+  return { els, textarea, press, pressEvent };
 }
+
+test('handled find keys are stopped (VS Code must not also act on them); other chords pass through', () => {
+  const { pressEvent } = setup('hello world');
+  assert.deepStrictEqual(pressEvent('F3'), { prevented: false, stopped: false }, 'F3 with the bar closed is not ours');
+  assert.deepStrictEqual(pressEvent('f', { ctrlKey: true }), { prevented: true, stopped: true });
+  assert.deepStrictEqual(pressEvent('h', { metaKey: true }), { prevented: true, stopped: true });
+  assert.deepStrictEqual(pressEvent('F3'), { prevented: true, stopped: true });
+  for (const k of ['s', 'z', 'y', 'w', 'p']) {
+    assert.deepStrictEqual(pressEvent(k, { ctrlKey: true }), { prevented: false, stopped: false }, `Ctrl+${k} reaches VS Code`);
+  }
+});
 
 test('Ctrl+F opens the bar and Ctrl+H also reveals the replace row', () => {
   const { els, press } = setup('hello world');

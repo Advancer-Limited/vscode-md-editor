@@ -1,0 +1,120 @@
+/* Excel grid (WP-15, spec 7.2 / 11). Theme tokens only; literal colours appear solely as
+   var() fallbacks, in the "light" appearance and inside the forced-colors block. */
+.xg-root {
+  --xg-bg: var(--vscode-editor-background, #1e1e1e);
+  --xg-fg: var(--vscode-editor-foreground, #cccccc);
+  --xg-grid: var(--vscode-editorIndentGuide-background1, var(--vscode-editorGroup-border, #444444));
+  --xg-hdr-bg: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, #252526));
+  --xg-hdr-fg: var(--vscode-descriptionForeground, var(--vscode-foreground, #cccccc));
+  --xg-hdr-border: var(--vscode-editorGroup-border, var(--vscode-contrastBorder, #555555));
+  --xg-sel: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.6));
+  --xg-focus: var(--vscode-focusBorder, #007fd4);
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--xg-bg);
+  color: var(--xg-fg);
+  font-family: var(--vscode-editor-font-family, var(--vscode-font-family, sans-serif));
+  font-size: var(--vscode-font-size, 13px);
+  outline: none;
+}
+.xg-root.xg-light {
+  --xg-bg: #ffffff;
+  --xg-fg: #000000;
+  --xg-grid: #d4d4d4;
+  --xg-hdr-bg: #f3f3f3;
+  --xg-hdr-fg: #333333;
+  --xg-hdr-border: #bbbbbb;
+  --xg-sel: rgba(0, 120, 215, 0.25);
+}
+.xg-root:focus-visible { outline: 1px solid var(--xg-focus); outline-offset: -1px; }
+
+.xg-scroller {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+}
+.xg-sizer { position: relative; }
+
+.xg-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; overflow: visible; }
+.xg-body { z-index: 1; }
+/* Zero-size sticky anchors: their absolutely positioned children are pinned on one/both axes. */
+.xg-sticky { position: sticky; }
+.xg-top { top: 0; left: auto; z-index: 3; }
+.xg-left { left: 0; top: auto; z-index: 3; }
+.xg-corner { top: 0; left: 0; z-index: 4; }
+/* sticky layers sit in flow after the (absolute) body layer; keep them at the sizer origin */
+.xg-top, .xg-left, .xg-corner { margin: 0; }
+
+.xg-row { position: absolute; left: 0; pointer-events: none; }
+
+.xg-cell {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 0 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  background: var(--xg-bg);
+  color: var(--xg-fg);
+  border-right: 1px solid var(--xg-grid);
+  border-bottom: 1px solid var(--xg-grid);
+  pointer-events: auto;
+  user-select: none;
+  cursor: cell;
+  line-height: 1.25;
+}
+.xg-wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.xg-num { font-variant-numeric: tabular-nums; }
+
+.xg-hdr {
+  background: var(--xg-hdr-bg);
+  color: var(--xg-hdr-fg);
+  border-right: 1px solid var(--xg-hdr-border);
+  border-bottom: 1px solid var(--xg-hdr-border);
+  justify-content: center;
+  align-items: center;
+  cursor: default;
+}
+.xg-hdr-sel { background: var(--vscode-list-inactiveSelectionBackground, var(--xg-sel)); color: var(--vscode-foreground, var(--xg-fg)); font-weight: 600; }
+/* thin marker where hidden rows/columns are collapsed (not colour alone: a thick double rule) */
+.xg-hdr-col.xg-hid-after { border-right: 3px double var(--xg-focus); }
+.xg-hdr-col.xg-hid-before { border-left: 3px double var(--xg-focus); }
+.xg-hdr-row.xg-hid-after { border-bottom: 3px double var(--xg-focus); }
+.xg-hdr-row.xg-hid-before { border-top: 3px double var(--xg-focus); }
+
+.xg-sel { box-shadow: inset 0 0 0 1000px var(--xg-sel); }
+.xg-active { outline: 2px solid var(--xg-focus); outline-offset: -2px; z-index: 2; }
+.xg-root:not(:focus-within) .xg-active { outline-style: dashed; }
+
+.xg-link { cursor: pointer; }
+.xg-err { font-weight: 600; }
+
+/* Markers that never rely on colour alone. */
+.xg-stale::after { content: "\00a0\25B3"; font-size: 0.8em; flex: none; }
+.xg-ro::after { content: "\00a0\1F512"; font-size: 0.7em; flex: none; }
+.xg-note::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-top: 6px solid var(--vscode-editorWarning-foreground, #cca700);
+  border-left: 6px solid transparent;
+}
+
+@media (forced-colors: active) {
+  .xg-cell { background: Canvas; color: CanvasText; border-color: GrayText; forced-color-adjust: auto; }
+  .xg-hdr { background: ButtonFace; color: ButtonText; }
+  .xg-sel { box-shadow: none; background: Highlight; color: HighlightText; }
+  .xg-active { outline-color: Highlight; }
+  .xg-note::before { border-top-color: Highlight; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .xg-scroller { scroll-behavior: auto; }
+}

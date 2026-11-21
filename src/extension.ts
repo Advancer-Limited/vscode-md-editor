@@ -2,6 +2,11 @@ import * as vscode from 'vscode';
 import { MarkdownEditorProvider } from './markdownEditorProvider.js';
 import { MermaidEditorProvider } from './mermaidEditorProvider.js';
 import { GltfEditorProvider } from './gltfEditorProvider.js';
+import { DocxEditorProvider } from './office/docxEditorProvider.js';
+import { XlsxEditorProvider } from './office/xlsxEditorProvider.js';
+import { PdfEditorProvider } from './pdf/pdfEditorProvider.js';
+import { OfficeDocument, envSaveHooks } from './office/officeDocument.js';
+import { CHOOSE_DOCUMENT_EDITORS_COMMAND, chooseDocumentEditors } from './office/chooseDocumentEditors.js';
 import { isMarkdownFile } from './utils.js';
 import { LanguageToolService } from './languageToolService.js';
 import { LanguageToolDiagnosticsProvider } from './diagnosticsProvider.js';
@@ -68,6 +73,28 @@ export function activate(context: vscode.ExtensionContext): void {
         webviewOptions: { retainContextWhenHidden: true },
         supportsMultipleEditorsPerDocument: false,
       }
+    )
+  );
+
+  // 2d. Register the Word document viewer/editor (docs/office-viewers-spec.md §4.1; editing per
+  // OFFICE_FLAGS.docxEdit, on since 1.6). Independent of
+  // the editors above, and cheap here: nothing is read until a .docx is opened.
+  context.subscriptions.push(DocxEditorProvider.register(context));
+  // Gate R2's manual verification-failure hook (VSMD_OFFICE_CORRUPT_SAVE): Development/Test mode only.
+  OfficeDocument.saveHooks = envSaveHooks(process.env, context.extensionMode);
+
+  // 2e. Register the Excel workbook viewer/editor (docs/office-viewers-spec.md §4.1; editing per
+  // OFFICE_FLAGS.xlsxEdit / xlsxStructure, on since 1.6). Same rules as 2d.
+  context.subscriptions.push(XlsxEditorProvider.register(context));
+
+  // 2f. Register the PDF viewer (read-only for now; docs/pdf-viewer-spec.md §4.1) as the default editor
+  // for *.pdf. Same rules as 2d: nothing is read until a .pdf is opened.
+  context.subscriptions.push(PdfEditorProvider.register(context));
+
+  // 2g. Friendly front end to workbench.editorAssociations for the document viewers (Word, Excel, PDF).
+  context.subscriptions.push(
+    vscode.commands.registerCommand(CHOOSE_DOCUMENT_EDITORS_COMMAND, () =>
+      chooseDocumentEditors(context.extension.packageJSON)
     )
   );
 

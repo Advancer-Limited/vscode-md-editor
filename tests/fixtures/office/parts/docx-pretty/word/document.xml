@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Pretty-printed WordprocessingML body (hand-authored test part for the lossless XML layer) -->
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+            xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+            xmlns:o="urn:schemas-microsoft-com:office:office"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"
+            xmlns:v="urn:schemas-microsoft-com:vml"
+            xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+            xmlns:w10="urn:schemas-microsoft-com:office:word"
+            xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+            xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"
+            mc:Ignorable="w14 w15">
+  <w:body>
+    <w:p w14:paraId="1A2B3C4D" w14:textId="77777777" w:rsidR="00A12B34" w:rsidRDefault="00A12B34">
+      <w:pPr>
+        <w:pStyle w:val="Heading1"/>
+      </w:pPr>
+      <w:bookmarkStart w:id="0" w:name="_Toc1"/>
+      <w:r>
+        <w:t>Introduction &amp; Scope</w:t>
+      </w:r>
+      <w:bookmarkEnd w:id="0"/>
+    </w:p>
+    <w:p w14:paraId="2B3C4D5E" w14:textId="77777777" w:rsidR="00A12B34" w:rsidRDefault="00C45D67">
+      <w:r>
+        <w:t xml:space="preserve">Plain run, </w:t>
+      </w:r>
+      <w:r w:rsidRPr="00C45D67">
+        <w:rPr>
+          <w:b/>
+          <w:bCs/>
+        </w:rPr>
+        <w:t>bold run</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr>
+          <w:i/>
+          <w:color w:val="FF0000"/>
+        </w:rPr>
+        <w:t xml:space="preserve"> italic red, it&#x2019;s &lt;quoted&gt; &quot;text&quot; </w:t>
+      </w:r>
+      <w:r>
+        <w:tab/>
+        <w:t>after tab</w:t>
+        <w:br/>
+        <w:t>after break</w:t>
+      </w:r>
+      <w:commentRangeStart w:id="3"/>
+      <w:r>
+        <w:t>commented</w:t>
+      </w:r>
+      <w:commentRangeEnd w:id="3"/>
+      <w:r>
+        <w:rPr>
+          <w:rStyle w:val="CommentReference"/>
+        </w:rPr>
+        <w:commentReference w:id="3"/>
+      </w:r>
+    </w:p>
+    <w:p w14:paraId="3C4D5E6F" w14:textId="77777777" w:rsidR="00A12B34" w:rsidRDefault="00A12B34">
+      <w:r>
+        <w:t xml:space="preserve">Page </w:t>
+      </w:r>
+      <w:fldSimple w:instr=" PAGE   \* MERGEFORMAT ">
+        <w:r>
+          <w:rPr>
+            <w:noProof/>
+          </w:rPr>
+          <w:t>1</w:t>
+        </w:r>
+      </w:fldSimple>
+      <w:r>
+        <w:t xml:space="preserve"> printed on </w:t>
+      </w:r>
+      <w:r>
+        <w:fldChar w:fldCharType="begin"/>
+      </w:r>
+      <w:r>
+        <w:instrText xml:space="preserve"> DATE \@ "d MMMM yyyy" </w:instrText>
+      </w:r>
+      <w:r>
+        <w:fldChar w:fldCharType="separate"/>
+      </w:r>
+      <w:r>
+        <w:t>20 November 2026</w:t>
+      </w:r>
+      <w:r>
+        <w:fldChar w:fldCharType="end"/>
+      </w:r>
+      <w:hyperlink r:id="rId5" w:history="1">
+        <w:r>
+          <w:rPr>
+            <w:rStyle w:val="Hyperlink"/>
+          </w:rPr>
+          <w:t>link</w:t>
+        </w:r>
+      </w:hyperlink>
+    </w:p>
+    <w:tbl>
+      <w:tblPr>
+        <w:tblStyle w:val="TableGrid"/>
+        <w:tblW w:w="0" w:type="auto"/>
+        <w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>
+      </w:tblPr>
+      <w:tblGrid>
+        <w:gridCol w:w="4508"/>
+        <w:gridCol w:w="4508"/>
+      </w:tblGrid>
+      <w:tr w:rsidR="00A12B34" w14:paraId="4D5E6F70" w14:textId="77777777">
+        <w:tc>
+          <w:tcPr>
+            <w:tcW w:w="4508" w:type="dxa"/>
+          </w:tcPr>
+          <w:p w14:paraId="5E6F7081" w14:textId="77777777" w:rsidR="00A12B34" w:rsidRDefault="00A12B34">
+            <w:r>
+              <w:t>Cell A1</w:t>
+            </w:r>
+          </w:p>
+        </w:tc>
+        <w:tc>
+          <w:tcPr>
+            <w:tcW w:w="4508" w:type="dxa"/>
+          </w:tcPr>
+          <w:tbl>
+            <w:tblPr>
+              <w:tblW w:w="0" w:type="auto"/>
+            </w:tblPr>
+            <w:tblGrid>
+              <w:gridCol w:w="2000"/>
+            </w:tblGrid>
+            <w:tr>
+              <w:tc>
+                <w:tcPr>
+                  <w:tcW w:w="2000" w:type="dxa"/>
+                </w:tcPr>
+                <w:p w14:paraId="6F708192" w14:textId="77777777">
+                  <w:r>
+                    <w:t>Nested cell</w:t>
+                  </w:r>
+                </w:p>
+              </w:tc>
+            </w:tr>
+          </w:tbl>
+          <w:p w14:paraId="708192A3" w14:textId="77777777"/>
+        </w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p w14:paraId="8192A3B4" w14:textId="77777777">
+      <w:r>
+        <mc:AlternateContent>
+          <mc:Choice Requires="wps">
+            <w:t>choice</w:t>
+          </mc:Choice>
+          <mc:Fallback>
+            <w:pict>
+              <v:rect style="width:10pt;height:10pt" o:gfxdata=""/>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r>
+    </w:p>
+    <w:sectPr w:rsidR="00A12B34">
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>
+      <w:cols w:space="708"/>
+      <w:docGrid w:linePitch="360"/>
+    </w:sectPr>
+  </w:body>
+</w:document>

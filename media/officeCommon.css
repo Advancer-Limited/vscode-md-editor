@@ -1,0 +1,109 @@
+/* Common chrome for the Office viewers (spec §11). Theme tokens only; colours appear
+   solely as var() fallbacks or system colours inside the forced-colors block. */
+.office-chrome {
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-foreground);
+}
+
+.office-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-contrastBorder, transparent));
+}
+
+.office-toolbar { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+
+.office-btn {
+  font: inherit;
+  padding: 3px 10px;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
+  border-radius: 2px;
+  cursor: pointer;
+}
+.office-btn:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground)); }
+.office-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.office-btn:disabled { opacity: 0.5; cursor: default; }
+.office-btn[aria-pressed="true"] {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+/* A check mark on pressed toggles so state never relies on colour alone. */
+.office-btn[aria-pressed="true"]::before { content: "\2713\00a0"; }
+.office-btn-primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.office-btn-primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+
+.office-reason { color: var(--vscode-descriptionForeground); }
+
+.office-notices { display: flex; flex-direction: column; }
+.office-notice {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, transparent);
+  color: var(--vscode-foreground);
+}
+.office-notice-label { font-weight: 600; }
+.office-notice-info {
+  background: var(--vscode-inputValidation-infoBackground, transparent);
+  border-left: 3px solid var(--vscode-inputValidation-infoBorder, var(--vscode-focusBorder));
+}
+.office-notice-warning {
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  border-left: 3px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-foreground));
+}
+
+.office-hint {
+  padding: 4px 8px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-contrastBorder, transparent));
+}
+
+.office-visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.office-error { padding: 24px; max-width: 640px; }
+.office-error-title { margin: 0 0 12px; font-size: 1.3em; font-weight: 600; }
+.office-error-detail {
+  margin: 8px 0 0;
+  padding: 8px;
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, transparent);
+}
+.office-error-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+/* Viewers mark their own content area with .office-content so an error view replaces it. */
+body.office-has-error .office-content { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .office-chrome *, .office-chrome *::before, .office-chrome *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .office-btn { border: 1px solid ButtonText; }
+  .office-btn[aria-pressed="true"] { background: Highlight; color: HighlightText; }
+  .office-btn:focus-visible { outline: 2px solid Highlight; }
+  .office-notice, .office-hint, .office-bar { border: 1px solid CanvasText; }
+}

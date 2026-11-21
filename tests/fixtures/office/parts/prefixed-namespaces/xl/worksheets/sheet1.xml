@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<x:worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" mc:Ignorable="x14ac" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <x:sheetPr>
+    <x:pageSetUpPr fitToPage="1" />
+  </x:sheetPr>
+  <x:dimension ref="A1:C4" />
+  <x:sheetViews>
+    <x:sheetView tabSelected="1" workbookViewId="0">
+      <x:pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen" />
+      <x:selection pane="bottomLeft" activeCell="B3" sqref="B3" />
+    </x:sheetView>
+  </x:sheetViews>
+  <x:sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25" />
+  <x:cols>
+    <x:col min="1" max="1" width="18.7109375" customWidth="1" />
+  </x:cols>
+  <x:sheetData>
+    <x:row r="1" spans="1:3" x14ac:dyDescent="0.25">
+      <x:c r="A1" t="s">
+        <x:v>0</x:v>
+      </x:c>
+      <x:c r="B1" t="s">
+        <x:v>1</x:v>
+      </x:c>
+      <x:c r="C1" t="inlineStr">
+        <x:is>
+          <x:t>Inline &amp; text</x:t>
+        </x:is>
+      </x:c>
+    </x:row>
+    <x:row r="2" spans="1:3" x14ac:dyDescent="0.25">
+      <x:c r="A2">
+        <x:v>42</x:v>
+      </x:c>
+      <x:c r="B2" s="1">
+        <x:v>46346</x:v>
+      </x:c>
+      <x:c r="C2" t="b">
+        <x:v>1</x:v>
+      </x:c>
+    </x:row>
+    <x:row r="3" spans="1:3" x14ac:dyDescent="0.25">
+      <x:c r="A3">
+        <x:f>A2*2</x:f>
+        <x:v>84</x:v>
+      </x:c>
+      <x:c r="B3">
+        <x:f t="shared" ref="B3:B4" si="0">IF(A2&gt;0,A2&lt;100,"&lt;none&gt;")</x:f>
+        <x:v>1</x:v>
+      </x:c>
+      <x:c r="C3" t="e">
+        <x:v>#DIV/0!</x:v>
+      </x:c>
+    </x:row>
+    <x:row r="4" spans="1:3" x14ac:dyDescent="0.25">
+      <x:c r="B4">
+        <x:f t="shared" si="0" />
+        <x:v>0</x:v>
+      </x:c>
+      <x:c r="C4" t="str">
+        <x:f>"a"&amp;"b"</x:f>
+        <x:v>ab</x:v>
+      </x:c>
+    </x:row>
+  </x:sheetData>
+  <x:mergeCells count="1">
+    <x:mergeCell ref="A4:A4" />
+  </x:mergeCells>
+  <x:pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3" />
+  <x:legacyDrawing r:id="rId1" />
+</x:worksheet>

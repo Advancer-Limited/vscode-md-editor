@@ -1,8 +1,8 @@
 {
   "name": "vscode-md-editor",
-  "displayName": "VS Code MD Editor",
-  "description": "A rich Markdown editor with live preview, Mermaid diagrams, task checklists, wikilinks, graph visualizer, version diff, and LanguageTool grammar checking",
-  "version": "1.5.0",
+  "displayName": "MD Editor & Office Viewer: Markdown, Word, Excel, PDF",
+  "description": "Edit Markdown, view and edit Word and Excel files, and read PDFs in VS Code, with Mermaid diagrams, wikilinks, a link graph and grammar checking.",
+  "version": "1.6.0",
   "license": "MIT",
   "author": {
     "name": "Advancer Limited",
@@ -19,10 +19,42 @@
     "url": "https://github.com/Advancer-Limited/vscode-md-editor/issues"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
+    "Visualization",
     "Other"
+  ],
+  "keywords": [
+    "markdown",
+    "markdown editor",
+    "wysiwyg",
+    "mermaid",
+    "wikilinks",
+    "word",
+    "docx",
+    "docx editor",
+    "excel",
+    "xlsx",
+    "xlsx editor",
+    "spreadsheet",
+    "office",
+    "office editing",
+    "office viewer",
+    "pdf",
+    "pdf viewer",
+    "document viewer",
+    "preview",
+    "gltf",
+    "grammar",
+    "languagetool",
+    "diagram",
+    "notes",
+    "backlinks",
+    "knowledge graph",
+    "word editor",
+    "excel editor",
+    "3d viewer"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
@@ -81,9 +113,44 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.docx",
+        "displayName": "Word Document Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.docx"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.xlsx",
+        "displayName": "Excel Workbook Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.xlsx"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.pdf",
+        "displayName": "PDF Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "commands": [
+      {
+        "command": "vscodeMdEditor.chooseDocumentEditors",
+        "title": "Choose Editors for Office and PDF Files…",
+        "category": "Markdown Editor"
+      },
       {
         "command": "vscodeMdEditor.openWithEditor",
         "title": "Open with VS Code MD Editor",
@@ -133,6 +200,46 @@
     "configuration": {
       "title": "VS Code MD Editor",
       "properties": {
+        "vscodeMdEditor.pdf.defaultZoom": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "page-width",
+            "page-fit",
+            "actual"
+          ],
+          "enumDescriptions": [
+            "Automatic: page width, but never larger than actual size.",
+            "Fit the page width to the window.",
+            "Fit the whole page in the window.",
+            "Show pages at actual size (100%)."
+          ],
+          "default": "auto",
+          "description": "Initial zoom when a PDF opens in the PDF Viewer. A zoom you set while viewing is remembered for that tab."
+        },
+        "vscodeMdEditor.office.sheetAppearance": {
+          "type": "string",
+          "enum": [
+            "theme",
+            "light"
+          ],
+          "enumDescriptions": [
+            "Follow the VS Code color theme.",
+            "Always show the sheet on a light background, as authored."
+          ],
+          "default": "theme",
+          "description": "How Excel workbooks are drawn in the Excel Workbook Editor: following the VS Code theme, or always as a light sheet."
+        },
+        "vscodeMdEditor.office.startInEditMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open editable Word and Excel files with Edit already on. When off, files open in View mode and Edit (Ctrl+E) turns editing on."
+        },
+        "vscodeMdEditor.office.confirmStructuralEdits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation before inserting or deleting Excel rows, columns or sheets when the change cannot fully update everything that refers to them (charts, pivot tables and drawings keep their position or range). When off, those changes go ahead without the prompt. Deleting a sheet always asks."
+        },
         "vscodeMdEditor.languageTool.enabled": {
           "type": "boolean",
           "default": true,
@@ -242,19 +349,29 @@
     "watch": "npm run copy-vendor && node esbuild.js --watch",
     "package": "npm run check-types && npm run copy-vendor && node esbuild.js --production",
     "lint": "eslint src",
-    "test": "node --test \"tests/**/*.test.{js,mjs}\""
+    "test": "node esbuild.js --test-bundle && node --test \"tests/**/*.test.{js,mjs}\""
   },
   "devDependencies": {
+    "@cantoo/pdf-lib": "2.11.1",
+    "@hyzyla/pdfium": "3.0.0",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^20.19.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.95.0",
     "esbuild": "^0.28.0",
+    "exceljs": "4.4.0",
+    "saxes": "6.0.0",
     "typescript": "^5.9.0"
   },
   "dependencies": {
+    "@borgar/fx": "5.1.3",
+    "docx-preview": "0.4.1",
+    "fflate": "0.8.3",
     "force-graph": "^1.51.1",
+    "jszip": "3.10.2",
     "markdown-it": "^14.3.2",
     "mermaid": "^12.1.0",
+    "numfmt": "4.1.4",
+    "pdfjs-dist": "6.5.438",
     "three": "^0.185.1",
     "turndown": "^7.2.2"
   }

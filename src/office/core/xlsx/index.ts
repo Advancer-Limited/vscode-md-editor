@@ -1,0 +1,22 @@
+// Barrel for core/xlsx modules. Written once by WP-02; WPs replace stubs, never this file.
+export * as types from './types.js';
+export * as workbook from './workbook.js';
+export * as sheet from './sheet.js';
+export * as sharedStrings from './sharedStrings.js';
+export * as styles from './styles.js';
+export * as format from './format.js';
+export * as view from './view.js';
+export * as find from './find.js';
+export * as notices from './notices.js';
+export * as input from './input.js';
+export * as ops from './ops.js';
+export * as calc from './calc.js';
+export * as sharedFormula from './sharedFormula.js';
+export * as xlfn from './xlfn.js';
+export * as stylesWrite from './stylesWrite.js';
+export * as refs from './refs.js';
+export * as structure from './structure.js';
+export * as guards from './guards.js';
+export * as sheetsOps from './sheetsOps.js';
+export * as validate from './validate.js';
+export * as markdown from './markdown.js';
