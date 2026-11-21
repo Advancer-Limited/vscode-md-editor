@@ -1055,3 +1055,8 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 
 - **PWP-10** (`fd242c1`, Sonnet): `media/pdfFind.js/.css` — find bar on pdf.js `PDFFindController` (Ctrl+F, Enter/Shift+Enter, F3, Esc returns focus; match case, whole words, highlight all persisted; "3 of more than 17" until every page is scanned; scanned files disable find with a note; announcements without repeats). 16 tests (11 shim, 5 real pdf.js incl. cjk and large.pdf). Note: the partial count reads pdf.js's private `_pendingFindMatches` (falls back safely) — re-check on a pdf.js upgrade. Merged with PWP-09 by keeping both entries in the provider's script/style lists. Suite 792 pass.
 
+### 2026-11-21 — Choose Editors for Office and PDF Files command (feature/office-editor-choice)
+- New `src/office/editorAssociations.ts` (pure: `DOCUMENT_TYPES` table, `availableTypes`, `describeCurrent`, `buildTypeItems`/`buildChoiceItems`, `nextAssociations`, `workspaceOverrides`) and `src/office/chooseDocumentEditors.ts` (QuickPick wiring; reads viewTypes from `context.extension.packageJSON`). Registered in `src/extension.ts` step 2f; command + category "Markdown Editor" in package.json.
+- Writes at Global scope, preserves other keys; reports a workspace/folder override of the same pattern in an info message. Rows are offered only when their viewType is in `contributes.customEditors` (data-driven), so the PDF row can be added on the PDF branch without surfacing early.
+- `tests/office/_vscodeStub.cjs`: added `ConfigurationTarget`, `getConfiguration().inspect/update`, `window.showQuickPick` (queued answers), `state.inspected/updates/quickPicks`. Tests: `tests/office/editorAssociations.test.mjs`.
+- README (switching editors) and CHANGELOG Unreleased updated.

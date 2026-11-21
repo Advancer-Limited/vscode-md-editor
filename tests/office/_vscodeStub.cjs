@@ -38,8 +38,14 @@ const state = {
   messages: [],
   registered: [],
   config: {},
+  /** 'section.key' -> { globalValue, workspaceValue, workspaceFolderValue } for getConfiguration().inspect */
+  inspected: {},
+  /** getConfiguration().update calls: { key, value, target } */
+  updates: [],
+  /** answers handed to window.showQuickPick in order (a function receives the items) */
+  quickPicks: [],
   reset() {
-    this.config = {};
+    this.config = {}; this.inspected = {}; this.updates.length = 0; this.quickPicks.length = 0;
     this.files.clear(); this.watchers.length = 0; this.opened.length = 0;
     this.clipboard = undefined; this.messages.length = 0; this.registered.length = 0;
     this.reads.length = 0; env.remoteName = undefined;
@@ -70,7 +76,11 @@ const workspace = {
   },
   /** Settings: tests put values in `__state.config` keyed 'section.key'. */
   getConfiguration(section) {
-    return { get: (key, dflt) => { const k = `${section}.${key}`; return k in state.config ? state.config[k] : dflt; } };
+    return {
+      get: (key, dflt) => { const k = `${section}.${key}`; return k in state.config ? state.config[k] : dflt; },
+      inspect: (key) => state.inspected[`${section}.${key}`],
+      async update(key, value, target) { state.updates.push({ key: `${section}.${key}`, value, target }); },
+    };
   },
   createFileSystemWatcher(pattern) {
     const change = new EventEmitter(), create = new EventEmitter(), del = new EventEmitter();
@@ -98,10 +108,17 @@ const window = {
   async showInformationMessage(...a) { state.messages.push(['info', ...a]); return undefined; },
   async showWarningMessage(...a) { state.messages.push(['warning', ...a]); return undefined; },
   async showErrorMessage(...a) { state.messages.push(['error', ...a]); return undefined; },
+  async showQuickPick(items, options) {
+    state.quickPickCalls = (state.quickPickCalls || 0) + 1;
+    const a = state.quickPicks.shift();
+    return typeof a === 'function' ? a(items, options) : a;
+  },
   registerCustomEditorProvider(viewType, provider, options) {
     state.registered.push({ viewType, provider, options });
     return { dispose() {} };
   },
 };
 
-module.exports = { Uri, EventEmitter, RelativePattern, workspace, env, window, __state: state };
+const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };
+
+module.exports = { ConfigurationTarget, Uri, EventEmitter, RelativePattern, workspace, env, window, __state: state };

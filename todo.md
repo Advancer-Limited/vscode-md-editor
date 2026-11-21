@@ -398,3 +398,5 @@
 - [ ] PWP-11: emit data-default-zoom in bodyHtml
 - [ ] Merge note: PWP-05 generalised src/office/officeEditorProviderBase.ts (OfficeHostDocument, createDocument, bodyHtml(webview)); the Office editing branches also change that file, so expect a conflict when the PDF stack is rebased after Office
 - [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it
+
+- [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)
