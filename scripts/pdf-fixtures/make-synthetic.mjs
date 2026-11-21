@@ -337,8 +337,15 @@ function hybridXref() { // classic table + /XRefStm; page 2 lives in an object s
   const xs = Buffer.from([2, 0, 8, 0]); // object 6: type 2, in object stream 8, index 0
   obj(9, stream('/Type /XRef /W [1 2 1] /Index [6 1] /Size 10', xs));
   const xrefOff = off;
-  let x = 'xref\n0 10\n0000000000 65535 f \n';
-  for (let n = 1; n <= 9; n++) x += n === 6 ? '0000000000 00000 f \n' : `${String(offs[n]).padStart(10, '0')} 00000 n \n`;
+  // Object 6 is left OUT of the classic table (subsections 0-5 and 7-9), so only the /XRefStm knows it. Listing it as
+  // free instead (as this generator first did) makes it free for pdf.js: pdf.js reads a section's table before its
+  // /XRefStm and keeps the first entry it sees for a number, so page 2's kid resolved to nothing.
+  let x = 'xref\n0 6\n0000000000 65535 f \n';
+  for (let n = 1; n <= 9; n++) {
+    if (n === 6) continue;
+    if (n === 7) x += '7 3\n';
+    x += `${String(offs[n]).padStart(10, '0')} 00000 n \n`;
+  }
   x += `trailer\n<< /Size 10 /Root 1 0 R /XRefStm ${offs[9]} >>\nstartxref\n${xrefOff}\n%%EOF\n`;
   w(x);
   return Buffer.concat(parts);
