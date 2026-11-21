@@ -573,3 +573,22 @@ test('flush before save waits for edits already applied: the saved file holds th
   const reopened = await open('flush.xlsx', S.read(h.uri));
   assert.strictEqual((await cells(reopened, [0, 0, 3, 3])).get('1,1').v, 314);
 });
+
+test('review B1: an edit sent while a save is writing waits for the save and is applied after it (not refused)', async () => {
+  ENABLE();
+  const h = await open('basic.xlsx');
+  await edit(h, setOp(1, [[1, 1, '100']]));
+  let during = null;
+  S.fail = (op) => {
+    if (op === 'write' && !during) during = edit(h, setOp(1, [[1, 1, '200']]), h.doc.version);
+    return undefined;
+  };
+  await h.doc.save(token);
+  const res = await during;
+  assert.strictEqual(res.ok, true, JSON.stringify(res.error));
+  assert.strictEqual(h.doc.isDirty(), true, 'the late edit is not on disk, so the document stays dirty');
+  assert.strictEqual(h.events.length, 2, 'both edits are on the undo stack');
+  const saved = await open('saved.xlsx', S.read(h.uri));
+  assert.strictEqual((await cells(saved, [0, 0, 3, 3])).get('1,1').v, 100, 'the save wrote the state before the late edit');
+  assert.strictEqual((await cells(h, [0, 0, 3, 3])).get('1,1').v, 200);
+});
