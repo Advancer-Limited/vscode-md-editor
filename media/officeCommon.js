@@ -174,7 +174,9 @@
 
   function requestEditMode(editMode) {
     if (!state.canEdit) {
-      hint((state.readOnlyReason && READ_ONLY_TEXT[state.readOnlyReason]) || EDIT_HINT);
+      // With a reason, say why editing is unavailable. Without one, this build has no editing at
+      // all (no Edit button), so there is nothing to tell the user to press.
+      if (state.readOnlyReason) { hint(READ_ONLY_TEXT[state.readOnlyReason] || 'Read-only.'); }
       syncEditButton();
       return;
     }
