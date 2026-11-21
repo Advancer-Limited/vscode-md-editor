@@ -167,6 +167,9 @@ export class DocxEditorProvider extends OfficeEditorProviderBase {
         pkg, model, styles: DocxStyles.load(pkg, model.mainPart), numbering: DocxNumbering.load(pkg, model.mainPart),
       };
       this.models.set(pkg, ctx);
+      // Review S4: the model can find the document view-only (too many blocks, an XML layout it cannot
+      // write). That is a read-only reason like the package's own; callers re-send the state.
+      if (model.viewOnlyReason && doc.pkg === pkg && doc.readOnlyReason === null) doc.readOnlyReason = model.viewOnlyReason;
       return ctx;
     } catch (e) {
       if (doc.pkg === pkg) {
@@ -254,6 +257,12 @@ export class DocxEditorProvider extends OfficeEditorProviderBase {
       const pkg: OfficePackage | null = doc.pkg;
       const ctx = await this.docxContext(doc);
       if (!ctx || !pkg) { this.sendState(doc, panel); return; }
+      if (!doc.canEdit) {
+        // The model made it view-only (S4): tell the webview, then render as the view-only viewer does.
+        this.sendState(doc, panel);
+        this.post(panel, { type: 'docxRender', version: doc.version, bytes: plainBytes(pkg.originalBytes), blocks: [] });
+        return;
+      }
       const version = doc.version;
       const copy = await buildRenderCopyAsync(pkg, ctx.model);
       // An edit applied while the copy was deflating would leave the bytes and the block list a
@@ -270,6 +279,7 @@ export class DocxEditorProvider extends OfficeEditorProviderBase {
     if (!OFFICE_FLAGS.docxEdit || !doc.canEdit) { this.fail(panel, requestId, READ_ONLY.code, READ_ONLY.message); return; }
     const ctx = await this.docxContext(doc);
     if (!ctx) { this.sendState(doc, panel); return; }
+    if (!doc.canEdit) { this.sendState(doc, panel); this.fail(panel, requestId, READ_ONLY.code, READ_ONLY.message); return; }
     const block = ctx.model.block(blockId);
     if (!block) { this.fail(panel, requestId, 'stale', 'This paragraph no longer exists. Try again.'); return; }
     if (block.kind !== 'paragraph') { this.fail(panel, requestId, 'blocked', "This content can't be edited here. It is preserved as is."); return; }
@@ -300,14 +310,16 @@ export class DocxEditorProvider extends OfficeEditorProviderBase {
     const stale = (): void => fail({ code: 'stale', message: 'The document changed. Your edit was not applied.' });
     if (!OFFICE_FLAGS.docxEdit) { fail(READ_ONLY); return; }
     this.applyProtection(doc);
-    const refusal = doc.editRefusal();
+    // Review B1: an edit that arrives while a save is writing waits for the save instead of being
+    // refused (the webview's text would be lost). Still in queue order: the queue waits too.
+    const refusal = await doc.editRefusalAfterSave();
     if (refusal) { fail(refusal); return; }
     if (msg.baseVersion !== doc.version) { stale(); return; }
     const pkg = doc.pkg;
     const ctx = pkg ? await this.docxContext(doc) : null;
     if (!ctx || !pkg) { fail({ code: 'internal', message: "This document can't be edited." }); return; }
-    // The model load awaited: anything may have happened meanwhile.
-    const again = doc.editRefusal();
+    // The model load awaited: anything may have happened meanwhile (a save may have begun, too).
+    const again = await doc.editRefusalAfterSave();
     if (again) { fail(again); return; }
     if (doc.pkg !== pkg || msg.baseVersion !== doc.version) { stale(); return; }
 

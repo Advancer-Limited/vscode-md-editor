@@ -448,3 +448,57 @@ test('a damaged main part: load error or view-only, and edits are refused', asyn
   const e = await edit(h, { op: 'insertParagraphAfter', blockId: 1 });
   assert.strictEqual(e.ok, false);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Review fixes (2026-11-21)
+
+async function withBody(bodyXml, from = 'basic.docx') {
+  const zip = await JSZip.loadAsync(fixture(from));
+  const t = await zip.file('word/document.xml').async('string');
+  const a = t.indexOf('<w:body>');
+  const b = t.lastIndexOf('<w:sectPr');
+  zip.file('word/document.xml', t.slice(0, a + 8) + bodyXml + t.slice(b));
+  return new Uint8Array(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+}
+
+test('review B1: an edit sent while a save is writing waits for the save and is applied (not refused)', async () => {
+  ENABLE();
+  const h = await open('basic.docx');
+  const blocks = h.panel.last('docxRender').blocks;
+  const para = firstPlain(blocks);
+  const m = await blockModel(h, para.id);
+  assert.strictEqual((await edit(h, { op: 'commitParagraph', blockId: para.id, items: textItems(m, ' one') })).ok, true);
+  let during = null;
+  S.fail = (op) => {
+    if (op === 'write' && !during) during = edit(h, { op: 'insertParagraphAfter', blockId: para.id });
+    return undefined;
+  };
+  await h.doc.save(token);
+  const r = await during;
+  assert.strictEqual(r.ok, true, JSON.stringify(r.error));
+  assert.strictEqual(h.events.length, 2, 'both edits are on the undo stack');
+  assert.strictEqual(h.doc.isDirty(), true, 'the late edit is not on disk yet');
+  const paras = (xml) => (xml.match(/<w:p[ >/]/g) || []).length;
+  const original = paras(await mainXml(fixture('basic.docx')));
+  assert.strictEqual(paras(await mainXml(S.read(h.uri))), original, 'the save wrote the state before the insert');
+  assert.match(await mainXml(S.read(h.uri)), / one</, 'with the commit that came before it');
+  assert.strictEqual(paras(await mainXml(h.doc.pkg.serialize())), original + 1, 'the insert landed after the save');
+  assert.strictEqual(r.blocks.length, blocks.length + 1);
+});
+
+test('review S4: a model-level view-only reason (too many blocks) reaches the webview before the render', async () => {
+  ENABLE();
+  const h = await open('big.docx', await withBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'.repeat(20001)));
+  const inits = h.panel.sent.filter((m) => m.type === 'init');
+  const last = inits[inits.length - 1];
+  assert.strictEqual(last.canEdit, false);
+  assert.strictEqual(last.readOnlyReason, 'too-large');
+  assert.strictEqual(last.editMode, false);
+  assert.ok(h.panel.sent.indexOf(last) < h.panel.sent.indexOf(h.panel.last('docxRender')), 'state first, then the render');
+  const r = h.panel.last('docxRender');
+  assert.deepStrictEqual(r.blocks, []);
+  assert.ok(same(r.bytes, h.doc.pkg.originalBytes), 'rendered as the view-only viewer does');
+  const bm = await blockModel(h, 1);
+  assert.strictEqual(bm.error.code, 'read-only');
+  assert.strictEqual((await edit(h, { op: 'insertParagraphAfter', blockId: 1 })).error.code, 'read-only');
+});
