@@ -369,3 +369,5 @@
   - [ ] Gate R4
   - [ ] Gate R-final (Fable)
 - [ ] Post-v1: Excel range → Markdown table; Word → Markdown; Markdown → Word; Office files in wikilinks/graph
+
+- [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)

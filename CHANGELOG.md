@@ -7,6 +7,7 @@ All notable changes to the VS Code MD Editor extension will be documented in thi
 ### Added
 
 - **Word and Excel viewers.** `.docx` and `.xlsx` files now open in a read-only viewer by default instead of VS Code's "cannot display binary file" message. Word documents are drawn as pages (tables, pictures, headers and footers, footnotes, lists) with zoom, Fit width and a link to open in Word. Excel workbooks open in a styled, virtualised grid with sheet tabs, a formula bar, a status bar showing Sum / Average / Count, find across sheets, copy as tab-separated text and hyperlink support, following your VS Code theme (or always light, via the new `vscodeMdEditor.office.sheetAppearance` setting). Content that can't be drawn (tracked changes, comments, charts, pivot tables, macros, and so on) is listed in a notice bar and is never touched. Password-protected, legacy-format, damaged and empty files show a clear explanation with an "Open in Word/Excel" button. Files are never modified and never marked as changed; documents are processed locally with no network requests. To use another editor, use **Open With...** or set `workbench.editorAssociations` (see the README). Editing is planned for a later release.
+- **Choose Editors for Office and PDF Files...** command: pick, per file type, whether this extension's viewer, VS Code's default editor or automatic selection opens the file (a friendly front end to `workbench.editorAssociations`).
 
 ## [1.5.0] - 2026-10-13
 

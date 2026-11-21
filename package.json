@@ -105,6 +105,11 @@
     ],
     "commands": [
       {
+        "command": "vscodeMdEditor.chooseDocumentEditors",
+        "title": "Choose Editors for Office and PDF Files…",
+        "category": "Markdown Editor"
+      },
+      {
         "command": "vscodeMdEditor.openWithEditor",
         "title": "Open with VS Code MD Editor",
         "category": "Markdown Editor"
