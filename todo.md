@@ -357,7 +357,7 @@
   - [ ] WP-32 Island DOM <-> segments
   - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
   - [x] WP-34 Island controller and re-render scheduling (`media/docxEdit.js`; detached render + DocxMap; marker CSS; scripts loaded; Edit stays available for tracked-changes-on; 35 tests)
-  - [ ] WP-35 Word edit toolbar, shortcuts, CSS
+  - [x] WP-35 Word edit toolbar, shortcuts, CSS (38 tests; flag flip left for PR-11 after Gate R3)
   - [ ] Gate R3
 - [ ] Phase 4 — Excel structure (rows/columns/sheets)
   - [ ] WP-36 Reference shifting
@@ -382,7 +382,7 @@
 - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
 - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
 - [x] WP-34 Island controller and re-render scheduling (`media/docxEdit.js`; detached render + DocxMap; marker CSS; scripts loaded; Edit stays available for tracked-changes-on; 35 tests)
-- [ ] WP-35 Word edit toolbar, shortcuts, CSS
+- [x] WP-35 Word edit toolbar, shortcuts, CSS (38 tests; flag flip left for PR-11 after Gate R3)
 - [ ] Gate R3 (needs S3 result and the LibreOffice/Google/German fixtures)
 - [ ] WP-34/35: add `span[id^="__vsmd_"]{display:none}` to `media/docxEditor.css`; load `media/docxMap.js` in the docx webview; WP-33 sends `buildRenderCopyAsync` bytes with block infos
 - [ ] WP-29/33/34: call `model.refresh()` after finishing the builder; use `BuildOptions.omit` for split halves; rebuild the island when `commitParagraph` returns `changed:false, reinsertedAtoms:true`
