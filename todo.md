@@ -441,7 +441,8 @@
 
 ## PDF edit core (feature/pdf-edit-core)
 - [x] PWP-21 verify-pdf-open.mjs + PG6 helpers
-- [x] PWP-14 strict reader`n- [ ] PWP-15 edit state/geometry (done) · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
+- [x] PWP-14 strict reader
+- [ ] PWP-15 edit state/geometry (done) · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
 - [x] hybrid-xref.pdf fixed (generator bug)
 - [x] Hybrid-xref files (Word 'Save as PDF') editable (user decision; reader + spec updated)
 - [ ] PWP-13 (BinaryDocumentBase) waits for Office Gate R2
@@ -456,3 +457,11 @@
 - [x] Edit-core independent review: B1 (PV5 bypass) + S1–S5 + nits N1–N10 fixed (`feature/pdf-core-fixes`)
 - [ ] Review residuals: user text containing object-boundary words refuses the save; widget appearance text not compared with /V
 - [ ] Remaining PDF editing (PWP-13 → 20, 22–26, 29, 30) blocked on Office Gate R2
+
+## v1.6 release integration (feature/v1.6-integration)
+- [x] Merge `feature/office-xlsx-fixes`, `feature/office-docx-model`, `feature/pdf-edit-core` onto the Excel stack tip (conflicts resolved, tests green after each)
+- [x] Switch on `xlsxEdit`, `xlsxStructure`, `docxEdit` (PDF flags stay off); flag-off tests kept through the mutable-flags copy
+- [x] Verify: check-types, compile, production build, npm test, vsce ls / package (4.62 MB), real Excel 177/177, real Word 102/109 (7 known prettyDocx), PDF 121/121
+- [ ] Rewrite README / CHANGELOG for users (all sections kept as merged)
+- [ ] Version bump to 1.6.0, PR to develop, then develop -> master, publish
+- [ ] Decide whether `signatures/cla.json` belongs in the VSIX (add to `.vscodeignore`)
