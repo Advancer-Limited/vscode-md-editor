@@ -409,7 +409,7 @@
 - [x] PWP-21 verify-pdf-open.mjs + PG6 helpers
 - [x] PWP-14 strict reader`n- [ ] PWP-15 edit state/geometry (done) · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
 - [x] hybrid-xref.pdf fixed (generator bug)
-- [ ] Decision: support hybrid-xref files (Word 'Save as PDF') for editing, or keep them view-only (spec §3.3)
+- [x] Hybrid-xref files (Word 'Save as PDF') editable (user decision; reader + spec updated)
 - [ ] PWP-13 (BinaryDocumentBase) waits for Office Gate R2
 
 - [ ] PWP-18/27: decide fields with /AA (pdf.js supersedes the AcroForm with /NeedAppearances) — recommend not fillable

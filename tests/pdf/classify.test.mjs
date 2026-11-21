@@ -22,8 +22,9 @@ const RO = (reason, detail) => ({ reason, detail });
  * The pdf.js cross-check then runs on them automatically (EDITABLE is derived from EXPECT).
  */
 const HYBRID_EXPECT = {
-  'word.pdf': RO('unsupported-structure', 'reader:hybrid'),
-  'hybrid-xref.pdf': RO('unsupported-structure', 'reader:hybrid'),
+  // Hybrid-xref files are editable since the reader accepts /XRefStm sections (user decision 2026-11-21).
+  'word.pdf': { pages: 2, annots: [1, 0], deletable: {}, signed: false, sig: [0, 0], acro: false, terminal: 0 },
+  'hybrid-xref.pdf': { pages: 2, annots: [0, 0], deletable: {}, signed: false, sig: [0, 0], acro: false, terminal: 0 },
 };
 /**
  * Expected classification of every committed fixture: a read-only reason (+ detail), or

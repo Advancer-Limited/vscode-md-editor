@@ -21,7 +21,7 @@
 
 import type { PdfEditInfo, PdfObjRef, PdfReadOnlyReason } from '../protocol.js';
 import { openPdf, openPdfSync, PdfReadError } from './reader.js';
-import type { PdfArray, PdfDict, PdfFile, PdfReadErrorCode, PdfStream, PdfValue, ReaderLimits } from './reader.js';
+import type { PdfArray, PdfDict, PdfFile, PdfReadErrorCode, PdfStream, PdfValue, ReaderLimits, XrefKind } from './reader.js';
 import { normalizeRotation } from './geometry.js';
 import type { PdfBox, PdfPageBoxes } from './geometry.js';
 import { refKey } from './state.js';
@@ -129,7 +129,7 @@ export interface PdfFormFacts {
 }
 
 export interface PdfStructureFacts {
-  xrefKind: 'table' | 'stream';
+  xrefKind: XrefKind;
   revisions: number;
   size: number;
   objectCount: number;
