@@ -811,6 +811,7 @@
         case 'requestFailed':
           if (pendingInput && msg.requestId === pendingInput.id) { pendingInput = null; }
           if (msg.requestId === find.pendingId) { find.pendingId = null; setFindCount('Search failed'); }
+          if (gridApi && gridApi.requestFailed) { gridApi.requestFailed(msg.requestId); }
           break;
         case 'loadError':
           state.sheets = []; state.activeSheetId = null; state.shownSheetId = null; state.pendingSheetId = null;

@@ -170,6 +170,46 @@ test('requests missing blocks once and not again for loaded or pending blocks', 
   assert.ok(t.requests.length > before, 'invalidate re-requests');
 });
 
+test('B1: hidden columns D:ZY at 1200 px never produce a request over the host limit', () => {
+  // ZY is column index 700; with D..ZY hidden the visible window spans ~700 columns.
+  const hiddenCols = [];
+  for (let c = 3; c <= 700; c++) hiddenCols.push(c);
+  const t = setup({ width: 1200, meta: { colCount: 800, hiddenCols } });
+  t.grid.setMeta(t.meta);
+  assert.ok(t.requests.length > 0);
+  for (const q of t.requests) {
+    const area = (q.range[2] - q.range[0] + 1) * (q.range[3] - q.range[1] + 1);
+    assert.ok(area <= 20000, `request ${JSON.stringify(q.range)} is ${area} cells`);
+  }
+  // Answering everything fills the visible cells (no blank sheet).
+  for (let i = 0; i < 20 && t.requests.length; i++) answer(t);
+  assert.ok(cells(t.root).some((e) => e.textContent === '0'), 'A1 shown');
+  assert.ok(cells(t.root).some((e) => e.textContent === String(701)), 'ZZ1 shown');
+});
+
+test('B1: requestFailed frees the in-flight slot and parks the blocks until invalidate', () => {
+  const t = setup({ width: 4000, height: 3000, meta: { rowCount: 100000, colCount: 2000 } });
+  t.grid.setMeta(t.meta);
+  const first = t.requests.splice(0);
+  assert.ok(first.length >= 1);
+  // The host refuses every request: the grid must not wedge with all slots taken...
+  for (const q of first) assert.strictEqual(t.grid.requestFailed(q.id), true);
+  assert.strictEqual(t.grid.requestFailed(first[0].id), false, 'unknown id');
+  // ...and must not loop on the refused blocks either.
+  const again = t.requests.splice(0);
+  const refused = new Set(first.map((q) => JSON.stringify(q.range)));
+  for (const q of again) assert.ok(!refused.has(JSON.stringify(q.range)), 'refused range not re-requested');
+  for (const q of again) t.grid.requestFailed(q.id);
+  t.requests.length = 0;
+  t.scroller.fire('scroll');
+  assert.strictEqual(t.requests.length, 0, 'nothing re-requested on scroll');
+  // An invalidate retries, and an answer then fills the sheet.
+  t.grid.invalidate('cells');
+  assert.ok(t.requests.length > 0, 'invalidate retries');
+  for (let i = 0; i < 20 && t.requests.length; i++) answer(t);
+  assert.ok(cells(t.root).some((e) => e.textContent === '0'));
+});
+
 test('discards a batch for a superseded version, sheet or unknown request', () => {
   const t = setup();
   t.grid.setMeta(t.meta);
