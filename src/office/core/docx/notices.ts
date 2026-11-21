@@ -7,6 +7,10 @@
 import type { OfficePackage } from '../package.js';
 import type { OfficeNotice } from '../types.js';
 import { mainPart, readRelationships } from '../opc.js';
+import type { DocxSegment } from '../../protocol.js';
+import type { Block, DocxModel } from './model.js';
+import { paragraphProps } from './model.js';
+import type { DocxStyles } from './styles.js';
 
 const REL_PREFIX = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/';
 const REL_VBA = 'http://schemas.microsoft.com/office/2006/relationships/vbaProject';
@@ -102,5 +106,29 @@ export function detectDocxNotices(pkg: OfficePackage): OfficeNotice[] {
     });
   }
 
+  return out;
+}
+
+/** The modal for "Edit anyway" on a Track Changes document (spec §8.7); the action is the confirm button. */
+export const EDIT_ANYWAY = Object.freeze({
+  message: 'Track Changes is on in this document.',
+  detail: 'Changes made here are not tracked: they will be saved as ordinary edits, not as revisions.',
+  action: 'Edit anyway (changes will not be tracked)',
+});
+
+/** `docxBlockModel.segments` of a paragraph block: effective b/i/u and direct CSS for text, labels for atoms. */
+export function segmentDtos(model: DocxModel, styles: DocxStyles, block: Block): DocxSegment[] {
+  const pStyleId = paragraphProps(block.el).pStyleId;
+  const out: DocxSegment[] = [];
+  for (const s of model.segments(block)) {
+    if (s.kind === 'text') {
+      const t = styles.effectiveToggles(pStyleId, s.rPr);
+      out.push({ kind: 'text', id: s.id, text: s.text, b: t.b, i: t.i, u: t.u, css: styles.runCss(s.rPr) });
+    } else if (s.kind === 'atom') {
+      out.push({ kind: 'atom', id: s.id, label: s.label, atomType: s.atomType });
+    } else if (s.kind === 'anchor') {
+      out.push({ kind: 'anchor', id: s.id });
+    }   // disposables are never shown or committed
+  }
   return out;
 }

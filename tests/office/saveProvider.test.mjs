@@ -126,6 +126,9 @@ async function open(name, bytes, opts = {}) {
   await provider.resolveCustomEditor(doc, panel, token);
   await panel.send({ type: 'ready' });
   if (editMode && doc.canEdit) await panel.send({ type: 'setEditMode', editMode: true });
+  // WP-33: with the edit flag on the first docxRender is built asynchronously; let it land so it does
+  // not interleave with what a test asserts about later traffic.
+  for (let i = 0; i < 200 && provider.kind === 'docx' && doc.pkg && !doc.loadError && !panel.types().includes('docxRender'); i++) await tick(5);
   return { provider, doc, panel, uri, events };
 }
 
