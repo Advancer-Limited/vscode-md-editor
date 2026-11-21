@@ -923,3 +923,8 @@ Files: `src/office/core/{xml,zip,package,opc,limits}.ts`, `tests/office/{xml,zip
   - Reload: reloading after the file changes on disk keeps the sheet.
   - Notices: the `sheet-unavailable` notice on a damaged sheet.
   - Theme switch: the grid's `refreshTheme` is not called when the VS Code theme changes live. Check this.
+### 2026-11-21 — Word edit review L: external links opened twice (feature/office-word-viewer)
+- **Bug:** `media/docxEditor.js` `onLinkClick` called `preventDefault()` and posted `openLink`, but VS Code's webview host page posts its own `did-click-link` for every `<a href>` click that reaches it, whatever `defaultPrevented` says, so an http/https/mailto link opened twice.
+- **Fix:** the link handler now runs in the capture phase on `#office-content` and also calls `stopPropagation()` for any non-empty href that is not `#…` (dropped schemes too, so the host page cannot open `file:` links either). Internal `#bookmark` links are unchanged.
+- **Test:** `docxViewer.test.js` link test asserts external clicks are stopped, `#` links and non-links are not.
+- The Excel viewer has no `<a href>` elements (cell links go through `handleLink` on Ctrl+click), so it needs no change.
