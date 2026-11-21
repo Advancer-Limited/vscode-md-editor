@@ -102,7 +102,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   /** The generation at which a document was last edited; the stale-formulas banner shows while it matches. */
   private readonly editedAt = new WeakMap<OfficeDocument, number>();
   /** Last meta built per sheet (see `metaFor`). */
-  private readonly metaCache = new WeakMap<Sheet, XlsxSheetMeta>();
+  private metaCache = new WeakMap<Sheet, XlsxSheetMeta>();
   /** Panels showing the sheet-unavailable warning (cleared when a sheet then loads). */
   private readonly unavailableShown = new WeakSet<vscode.WebviewPanel>();
   /** requestId of the newest find per panel; older finds still running stop at their next yield. */
@@ -384,6 +384,20 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const pkg = doc.pkg;
     if (!m || !pkg) { fail({ code: 'internal', message: "This workbook can't be edited." }); return; }
 
+    try {
+      await this.runEditLoop(doc, panel, msg, m, pkg, fail, stale);
+    } finally {
+      // applyXlsxEdit changes the sheet in place across awaits, before the version moves on (or
+      // without it moving, when the edit fails, is cancelled or is not recorded): a meta cached
+      // meanwhile could describe a state that never had its version. Drop the cache.
+      this.metaCache = new WeakMap();
+    }
+  }
+
+  private async runEditLoop(
+    doc: OfficeDocument, panel: vscode.WebviewPanel, msg: EditMsg, m: Model, pkg: OfficePackage,
+    fail: (error: OfficeError) => void, stale: () => void,
+  ): Promise<void> {
     let confirmed = false;
     for (;;) {
       const res = await applyXlsxEdit(m.wb, pkg, msg.edit, { confirmed, styles: m.styles });
