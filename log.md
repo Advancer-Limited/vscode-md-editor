@@ -1513,3 +1513,9 @@ Documents only; nothing implemented. New: `docs/pptx-viewer-spec.md`, `docs/pptx
 
 - `npm version 1.6.0` (package.json, package-lock.json). CHANGELOG already has `[1.6.0] - 2026-11-21`. Marketplace was at 1.5.0.
 
+
+## 2026-11-21 — Published 1.6.0
+
+- Published `advancer-limited.vscode-md-editor` 1.6.0 to the VS Code Marketplace from master (`23d9039`) using the packaged VSIX that passed the full test suite on master (2,397 pass, 0 fail; 339 files, 4.6 MB). Release path: #99 (integration) and #100 (version bump) into develop, #101 develop → master. Listing (README, CHANGELOG, display name, description, keywords, categories) rewritten for users.
+- Switched on: Word, Excel and PDF viewers; Excel editing; Word editing. Off: PDF annotation/forms editing. Minimum VS Code 1.95. Hands-on gates R2/R3/R4/P1 had not been run — the owner chose to ship before them.
+
