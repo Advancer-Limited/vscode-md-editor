@@ -412,3 +412,5 @@
 - [ ] Decision: support hybrid-xref files (Word 'Save as PDF') for editing, or keep them view-only (spec §3.3)
 - [ ] PWP-13 (BinaryDocumentBase) waits for Office Gate R2
 
+- [ ] PWP-18/27: decide fields with /AA (pdf.js supersedes the AcroForm with /NeedAppearances) — recommend not fillable
+- [ ] Tagged PDFs: added annotations get no StructParent (accessibility gap; post-v1 or note in README)
