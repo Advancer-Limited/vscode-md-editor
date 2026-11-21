@@ -386,3 +386,5 @@
 - [ ] Gate R3 (needs S3 result and the LibreOffice/Google/German fixtures)
 - [ ] WP-34/35: add `span[id^="__vsmd_"]{display:none}` to `media/docxEditor.css`; load `media/docxMap.js` in the docx webview; WP-33 sends `buildRenderCopyAsync` bytes with block infos
 - [ ] WP-29/33/34: call `model.refresh()` after finishing the builder; use `BuildOptions.omit` for split halves; rebuild the island when `commitParagraph` returns `changed:false, reinsertedAtoms:true`
+- [ ] Make `prettyDocx()` (tests/office/_roundtrip.mjs) a package Word opens, or stop writing `pretty-edit.docx` to tests/.out for the Word check
+
