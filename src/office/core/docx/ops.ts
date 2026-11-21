@@ -145,6 +145,8 @@ type RemovalPlan =
  * block right after it, or else right before it, is an editable paragraph of the same container.
  * Anchors are never pushed into a locked paragraph or across a table.
  */
+const isTableBlock = (b: Block | null): boolean => !!b && b.isTable;
+
 function removalPlan(model: DocxModel, block: Block, facts: ContainerFacts): RemovalPlan {
   if (block.kind !== 'paragraph') return { ok: false, message: LOCK_MESSAGES.opaque };
   if (!isEditable(block)) return { ok: false, message: LOCK_MESSAGES[block.lockReason ?? 'opaque'] };
@@ -158,6 +160,10 @@ function removalPlan(model: DocxModel, block: Block, facts: ContainerFacts): Rem
   const { prev, next } = model.siblings(block);
   if (inCell && next === null && (prev === null || prev.kind !== 'paragraph')) {
     return { ok: false, message: 'A table cell must end with a paragraph.' };
+  }
+  // Review N2: two w:tbl elements with nothing between them are one table to Word.
+  if (isTableBlock(prev) && isTableBlock(next)) {
+    return { ok: false, message: "This paragraph separates two tables, so it can't be removed here (they would join into one)." };
   }
   const anchors = segs.filter((s): s is AnchorSeg => s.kind === 'anchor');
   let target: { block: Block; where: 'start' | 'end' } | null = null;

@@ -780,6 +780,19 @@ test('remove: the w:p goes, nothing else; refused with atoms, sectPr, the last p
   }
 });
 
+test('review N2: a paragraph between two tables is not removable (the tables would join)', async () => {
+  const tbl = '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p>' + R('c') + '</w:p></w:tc></w:tr></w:tbl>';
+  const ctx = await docWithBody(`<w:p>${R('a')}</w:p>${tbl}<w:p/>${tbl}<w:p>${R('z')}</w:p>`);
+  const body = ctx.model.blocks().filter((b) => b.container.tableBlockId === null);
+  const between = body[2];
+  assert.ok(body[1].isTable && body[3].isTable && between.kind === 'paragraph');
+  assert.strictEqual(info(ctx, between.id).removable, false);
+  refused(ctx, { op: 'removeParagraph', blockId: between.id }, 'blocked', /separates two tables/);
+  // A paragraph with a table on one side only is still removable.
+  assert.strictEqual(info(ctx, body[0].id).removable, true);
+  apply(ctx, { op: 'removeParagraph', blockId: body[4].id }, { affected: [body[4].id] });
+});
+
 test('remove: anchors move to the next sibling paragraph (or previous); refused when they have nowhere to go', async () => {
   const ctx = open('anchors.docx');
   const b = ctx.model.blocks().find((x) => isEditable(x) && textOf(ctx, x).startsWith('A second pa'));
@@ -815,7 +828,7 @@ test('remove: anchors move to the next sibling paragraph (or previous); refused 
   // After a pPr; and nowhere to go (between two tables) is refused.
   const bm = '<w:bookmarkStart w:id="50" w:name="here"/><w:bookmarkEnd w:id="50"/>';
   const tbl = '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>';
-  const syn = await docWithBody(`<w:p>${bm}${R('gone')}</w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${R('stay')}</w:p>${tbl}<w:p>${bm.replace(/50/g, '51').replace('here', 'stuck')}</w:p>${tbl}<w:p/>`);
+  const syn = await docWithBody(`<w:p>${bm}${R('gone')}</w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${R('stay')}</w:p>${tbl}<w:p>${bm.replace(/50/g, '51').replace('here', 'stuck')}</w:p><w:p><w:ins w:id="70" w:author="a" w:date="2024-01-01T00:00:00Z">${R('tracked')}</w:ins></w:p><w:p/>`);
   const [gone, stay] = syn.model.blocks();
   apply(syn, { op: 'removeParagraph', blockId: gone.id }, { affected: [gone.id, stay.id] });
   assert.strictEqual(pXml(syn, stay.id), `<w:p><w:pPr><w:jc w:val="center"/></w:pPr>${bm}${R('stay')}</w:p>`);
