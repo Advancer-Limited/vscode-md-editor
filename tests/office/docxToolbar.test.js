@@ -690,10 +690,15 @@ test('keyboard only: Shift+F10 in an island opens the menu, arrows move, Enter r
   assert.strictEqual(t.of('docxEdit').length, 1, 'activated exactly once');
 });
 
-test('Shift+F10 without an island opens nothing; Tab closes the menu', async () => {
+test('Shift+F10 without an island opens the current block menu (S3), not outside the document; Tab closes the menu', async () => {
   const t = await ready(BODY);
-  assert.strictEqual(t.key('F10', { shiftKey: true }, t.content).defaultPrevented, false);
+  assert.strictEqual(t.key('F10', { shiftKey: true }, t.doc.body).defaultPrevented, false, 'outside the document: left alone');
   assert.strictEqual(menu(t), null);
+  assert.strictEqual(t.key('F10', { shiftKey: true }, t.content).defaultPrevented, true);
+  assert.ok(menu(t), 'the current block (the first editable one) gets the menu');
+  fire(t.doc.activeElement, 'keydown', { key: 'Escape' });
+  assert.strictEqual(menu(t), null);
+  assert.strictEqual(t.doc.activeElement, t.p(1), 'Escape puts the focus on the block');
   const o = await opened(BODY);
   o.key('F10', { shiftKey: true });
   fire(o.doc.activeElement, 'keydown', { key: 'Tab' });

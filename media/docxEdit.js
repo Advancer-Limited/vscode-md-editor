@@ -13,14 +13,28 @@
 // island is `role="textbox"`, `aria-multiline="true"`, labelled "Paragraph N".
 //
 // Commit timing (§8.8): on blur, on moving to another block (click, ArrowUp/Down at the first/last
-// line, Tab between cells), on Ctrl/Cmd+S (capture phase; the key still reaches VS Code, whose save
-// flush then waits for this commit), when Edit is turned off, and after 1.5 s without typing. An idle
-// commit never touches the island DOM (project lesson "wysiwyg-cursor-fix"): the island stays as the
-// paragraph's display until the next docx-preview render.
+// line, Tab between cells), on Ctrl/Cmd+S and Ctrl/Cmd+W wherever the focus is (capture phase; the key
+// still reaches VS Code, whose save flush then waits for this commit), when the window loses focus or
+// is hidden, when Edit is turned off, after 1.5 s without typing, and at most 1 s after the first
+// uncommitted keystroke (review S2: VS Code only knows the document is dirty once a commit landed).
+// A commit never touches the island DOM (project lesson "wysiwyg-cursor-fix"): the island stays as
+// the paragraph's display until the next docx-preview render.
+//
+// A refused commit never loses the typed text (review B1): an island whose commit failed stays open
+// (or is reopened with its DOM when it had just closed), and a commit refused only because a save was
+// writing is retried (the idle timer is re-armed; a closed island nobody can reopen right now is
+// re-sent in the background, and renders wait for it). A flush retries such a commit before answering.
 //
 // Requests go to the host one at a time (like media/xlsxCellEditor.js): every `docxEdit` carries the
 // version the previous reply reported, and `flushPendingEdits` answers once nothing is in flight. A
-// flush never commits an open island (Gate R2 F4: the host flushes for backups and auto-save too).
+// flush never commits an open island (Gate R2 F4: the host flushes for backups and auto-save too),
+// except to retry a commit the host refused for a moment (B1).
+//
+// Keyboard (review S3): in Edit mode the mapped blocks are focusable with a roving tabindex (the last
+// block focused or edited is the tab stop). ArrowUp/Down on a focused block moves between blocks,
+// Enter or F2 opens its island with the caret at the end (Enter on the document itself opens the
+// current block), and Escape in an island closes it and puts the focus back on the block. The
+// viewer opens the block context menu for the focused block on Shift+F10 / ContextMenu.
 //
 // Structure keys (§8.5, §11.3): Enter splits (`splitParagraph`, the DOM is split at once and the new
 // half gets its id from `docxEditResult`), Shift+Enter inserts a line break, Backspace at the start
@@ -52,6 +66,10 @@
   const ELEMENT = 1;
   const TEXT = 3;
   const IDLE_COMMIT_MS = 1500;
+  const MAX_WAIT_MS = 1000;            // S2: an uncommitted keystroke is committed at most this late
+  const RETRY_MS = 1000;               // B1: a commit refused while a save was writing is sent again
+  const MAX_RETRIES = 10;
+  const FOCUS_WATCHDOG_MS = 5000;      // N7: a render that never arrives does not leave the editor busy
   const RENDER_IDLE_MS = 2000;
   const FLUSH_WAIT_MS = 1200;          // below the host's 1500 ms flush timeout (§6.5 step 1)
   const MAX_BUFFERED_KEYS = 2000;
@@ -64,6 +82,10 @@
     opaque: 'Not editable here — preserved as is',
   });
   const NOT_MAPPED_TEXT = "This paragraph can't be edited in this view.";
+  /** The host's refusal while a save is writing (src/office/saveErrors.ts SAVE_BUSY_MESSAGE): worth retrying. */
+  const SAVE_BUSY_TEXT = 'The document is being saved. Try again in a moment.';
+
+  function retryable(e) { return !!e && e.code === 'blocked' && e.message === SAVE_BUSY_TEXT; }
 
   function lockText(info) {
     return (info && info.lockReason && LOCK_TEXT[info.lockReason]) || LOCK_TEXT.opaque;
@@ -109,6 +131,11 @@
     let idleWaiters = [];
     let nextRequestId = 1;
     let lockDescs = null;
+    const orphans = new Set();       // closed islands whose refused commit is being re-sent (B1)
+    let orphanWaiters = [];
+    let kbBlock = null;              // roving tab stop: block id (S3)
+    let kbReturn = null;             // block to focus once the next render is swapped in
+    let focusWatchdog = null;
 
     // ------------------------------------------------------------------------------ small helpers
 
@@ -256,7 +283,7 @@
       if (island || opening) { return; }   // rescheduled when the island closes
       renderTimer = setTimer(() => {
         renderTimer = null;
-        if (island || opening || pendingOp) { return; }
+        if (island || opening || pendingOp || orphans.size) { return; }
         if (hooks.hasHeld && hooks.hasHeld()) { hooks.resume(); return; }
         if (needsRender) { requestRender(); }
       }, RENDER_IDLE_MS);
@@ -265,7 +292,7 @@
     /** Viewer asks before rendering and before swapping: 'go' | 'hold' | 'drop'. */
     function gate(job) {
       if (job && typeof job.version === 'number' && job.version < version) { return 'drop'; }
-      if (island || opening || pendingOp) { return 'hold'; }
+      if (island || opening || pendingOp || orphans.size) { return 'hold'; }   // never render over unsaved typing
       return 'go';
     }
 
@@ -299,6 +326,7 @@
       }
       if (job && typeof job.version === 'number' && job.version >= version) { needsRender = false; }
       const descs = ensureLockDescriptions();
+      applyRoving();
       byId.forEach((ps, id) => {
         const b = info.get(id);
         if (!b) { return; }
@@ -319,12 +347,99 @@
       }
       if (focusAfterRender) {
         const f = focusAfterRender;
-        focusAfterRender = null;
+        setFocusAfterRender(null);
         if (editMode() && shown(f.blockId) && isEditablePara(info.get(f.blockId))) { openIsland(f.blockId, f.at); }
         else { dropKeys(); }
       } else if (!island && !opening) {
         dropKeys();
       }
+      if (kbReturn !== null && !island && !opening) {
+        const id = kbReturn;
+        kbReturn = null;
+        if (editMode() && shown(id)) { focusBlock(id); }
+      }
+    }
+
+    /** focusAfterRender with a watchdog (N7): a render that never comes must not keep the editor busy. */
+    function setFocusAfterRender(f) {
+      focusAfterRender = f;
+      if (focusWatchdog !== null) { clearTimer(focusWatchdog); focusWatchdog = null; }
+      if (!f) { return; }
+      focusWatchdog = setTimer(() => {
+        focusWatchdog = null;
+        if (focusAfterRender !== f) { return; }
+        focusAfterRender = null;
+        dropKeys();
+        changed();
+        afterIslandGone();
+      }, FOCUS_WATCHDOG_MS);
+    }
+
+    // ------------------------------------------------------------------------------ keyboard focus (S3)
+
+    /** First shown <p> of block `id`, or null. */
+    function blockEl(id) {
+      const ps = byId.get(id);
+      if (!ps) { return null; }
+      return ps.find((x) => !x.hidden && x.parentNode) || null;
+    }
+
+    /** Edit mode: every mapped block is focusable; `kbBlock` (else the first editable one) is the tab stop. */
+    function applyRoving() {
+      const on = editMode();
+      if (on && (kbBlock === null || !shown(kbBlock))) {
+        kbBlock = null;
+        for (const b of blocks) { if (isEditablePara(b) && shown(b.id)) { kbBlock = b.id; break; } }
+      }
+      byId.forEach((ps, id) => {
+        ps.forEach((p, k) => {
+          if (!on) { p.removeAttribute('tabindex'); return; }
+          p.setAttribute('tabindex', id === kbBlock && k === 0 ? '0' : '-1');
+        });
+      });
+    }
+
+    function setKbBlock(id) {
+      if (kbBlock === id) { return; }
+      const old = kbBlock !== null ? byId.get(kbBlock) : null;
+      if (old && editMode()) { old.forEach((p) => p.setAttribute('tabindex', '-1')); }
+      kbBlock = id;
+      const p = blockEl(id);
+      if (p && editMode()) { p.setAttribute('tabindex', '0'); }
+    }
+
+    /** Move the keyboard focus to block `id` (not an island). */
+    function focusBlock(id) {
+      const p = blockEl(id);
+      if (!p) { return false; }
+      setKbBlock(id);
+      if (typeof p.focus === 'function') { p.focus(); }
+      return true;
+    }
+
+    /** The block a key on `t` acts on: a focused block <p>, or the current one when the document itself has focus. */
+    function keyboardBlock(t) {
+      if (!t || !editMode()) { return null; }
+      if (t === content) { return kbBlock !== null && shown(kbBlock) ? kbBlock : null; }
+      if (t.nodeType !== ELEMENT || !within(content, t) || t.getAttribute('data-block') === null) { return null; }
+      const id = DMap.blockOf(t);
+      return id !== null && info.has(id) && shown(id) ? id : null;
+    }
+
+    function adjacentShown(id, dir) {
+      const idx = blocks.findIndex((b) => b.id === id);
+      for (let k = idx + dir; idx >= 0 && k >= 0 && k < blocks.length; k += dir) {
+        if (shown(blocks[k].id)) { return blocks[k].id; }
+      }
+      return null;
+    }
+
+    /** Enter / F2 on a focused block: open its island at the end, or say why not. */
+    function openFromKeyboard(id) {
+      const b = info.get(id);
+      if (!b) { return; }
+      if (!isEditablePara(b)) { hint(lockText(b)); return; }
+      openIsland(id, 'end');
     }
 
     // ------------------------------------------------------------------------------ island lifecycle
@@ -342,6 +457,8 @@
         }
         if (node.nodeType !== ELEMENT) { return; }
         if (tagOf(node) === 'BR') { if (node === container) { found = true; return; } n += 1; return; }
+        // A link is one chip in the island (N3): count it as one character, whatever its text.
+        if (tagOf(node) === 'A') { if (within(node, container)) { found = true; return; } n += 1; return; }
         const ks = kids(node);
         for (let i = 0; i < ks.length; i++) {
           if (node === container && i === offset) { found = true; return; }
@@ -369,7 +486,11 @@
           return;
         }
         if (node.nodeType !== ELEMENT) { return; }
-        if (node.getAttribute('data-atom') !== null) { units += 1; return; }
+        if (node.getAttribute('data-atom') !== null) {
+          units += 1;
+          if (node.getAttribute('data-atom-type') === 'hyperlink') { chars += 1; if (chars >= n) { done = true; } }   // see charsBefore
+          return;
+        }
         if (node.getAttribute('data-anchor') !== null) { return; }
         if (tagOf(node) === 'BR') { chars += 1; units += 1; if (chars >= n) { done = true; } return; }
         kids(node).forEach(walk);
@@ -396,7 +517,7 @@
       if (!isEditablePara(b)) { hint(lockText(b)); return false; }
       if (!shown(id)) {
         // Not in the DOM yet (a new paragraph from insert): render, then open.
-        focusAfterRender = { blockId: id, at: at === undefined ? 'start' : at };
+        setFocusAfterRender({ blockId: id, at: at === undefined ? 'start' : at });
         scheduleRender(true);
         return true;
       }
@@ -426,7 +547,7 @@
       const opened = Island.itemsFromSegments(reply.segments);
       island = {
         id: req.id, p, others, segments: reply.segments, opened, committed: opened,
-        commits: 0, idleTimer: null, suspended: false,
+        commits: 0, idleTimer: null, maxTimer: null, suspended: false, sending: 0, closed: false, failed: null,
         saved: { role: p.getAttribute('role'), level: p.getAttribute('aria-level') },
       };
       activate(island);
@@ -445,14 +566,20 @@
       p.setAttribute('data-docx-island', '1');
       p.setAttribute('spellcheck', 'true');
       isl.suspended = false;
+      setKbBlock(isl.id);
       changed();
       if (typeof p.focus === 'function') { p.focus(); }
+    }
+
+    function clearTimers(isl) {
+      if (isl.idleTimer !== null) { clearTimer(isl.idleTimer); isl.idleTimer = null; }
+      if (isl.maxTimer !== null) { clearTimer(isl.maxTimer); isl.maxTimer = null; }
     }
 
     /** Make the island inert (contenteditable off), keeping its DOM as the paragraph's display. */
     function deactivate(isl) {
       const p = isl.p;
-      if (isl.idleTimer !== null) { clearTimer(isl.idleTimer); isl.idleTimer = null; }
+      clearTimers(isl);
       p.removeAttribute('contenteditable');
       p.removeAttribute('aria-multiline');
       p.removeAttribute('aria-label');
@@ -464,7 +591,7 @@
     }
 
     function suspend(isl) {
-      if (isl.idleTimer !== null) { clearTimer(isl.idleTimer); isl.idleTimer = null; }
+      clearTimers(isl);
       isl.suspended = true;
       isl.p.setAttribute('contenteditable', 'false');
       changed();
@@ -479,19 +606,19 @@
 
     /** The island is gone: render later if the DOM shows unrendered content. */
     function afterIslandGone() {
-      if (island || opening || pendingOp) { return; }
+      if (island || opening || pendingOp || orphans.size) { return; }
       if (focusAfterRender) { return; }
       if (needsRender || (hooks.hasHeld && hooks.hasHeld())) { scheduleRender(false); }
     }
 
+    /** Typing happened: commit after 1.5 s without typing, and at most 1 s after the first uncommitted key (S2). */
     function touch() {
       if (!island || island.suspended) { return; }
-      if (island.idleTimer !== null) { clearTimer(island.idleTimer); }
       const isl = island;
-      isl.idleTimer = setTimer(() => {
-        isl.idleTimer = null;
-        if (island === isl && !isl.suspended) { commit(); }
-      }, IDLE_COMMIT_MS);
+      if (isl.idleTimer !== null) { clearTimer(isl.idleTimer); }
+      const fire = () => { if (island === isl && !isl.suspended) { commit(); } };
+      isl.idleTimer = setTimer(() => { isl.idleTimer = null; fire(); }, IDLE_COMMIT_MS);
+      if (isl.maxTimer === null) { isl.maxTimer = setTimer(() => { isl.maxTimer = null; fire(); }, MAX_WAIT_MS); }
     }
 
     /**
@@ -501,26 +628,101 @@
     function commit() {
       if (!island) { return whenIdle(); }
       const isl = island;
-      if (isl.idleTimer !== null) { clearTimer(isl.idleTimer); isl.idleTimer = null; }
+      clearTimers(isl);
       const items = Island.read(isl.p);
       if (Island.sameItems(items, isl.committed)) { return whenIdle(); }
       const previous = isl.committed;
       isl.committed = items;
       isl.commits++;
+      isl.sending++;
       needsRender = true;
       return sendEdit({ op: 'commitParagraph', blockId: isl.id, items }).then((r) => {
+        isl.sending--;
         if (r.abandoned) { return r; }
         if (r.ok) {
+          isl.failed = null;
           setVersion(r.version);
           setBlocks(r.blocks);
           // A commit that only dropped an atom is not written (the writer keeps the atom); the island
           // is out of step, but it is never rebuilt while open: the next render shows the atom.
+          if (isl.closed && isl.sending === 0) { isl.closed = false; if (island !== isl) { Island.release(isl.p); } }
           return r;
         }
         if (isl.committed === items) { isl.committed = previous; }
-        onEditError(r.error, isl);
+        onCommitFailed(r.error, isl, items);
         return r;
       });
+    }
+
+    /**
+     * A commitParagraph was refused (B1). The typed text is never rendered over: the island stays open,
+     * or is reopened with its DOM if it had closed and nothing else is open; a refusal because a save
+     * was writing is retried. Only a closed island that cannot be reopened and will not be retried
+     * falls back to showing the document's state.
+     */
+    function onCommitFailed(error, isl, items) {
+      const e = error || {};
+      if (e.code === 'stale') { onStale(isl); return; }
+      hint(e.message || 'The change could not be applied.');
+      const again = retryable(e);
+      if (island === isl) {
+        if (again) { isl.failed = e; touch(); }
+        return;
+      }
+      if (isl.closed && isl.p.parentNode && editMode() && !island && !opening && !focusAfterRender
+          && (!pendingOp || pendingOp.preCommit)) {
+        if (pendingOp) { pendingOp.cancelled = true; pendingOp = null; }   // applyOp: its op is not sent (N4)
+        isl.closed = false;
+        island = isl;
+        activate(isl);
+        Island.setCaret(isl.p, 'end');
+        if (again) { isl.failed = e; touch(); }
+        return;
+      }
+      if (again && isl.p.parentNode && editMode()) { retryClosed(isl, items, 1); return; }
+      isl.closed = false;
+      scheduleRender(true);   // the closed island shows text the document does not have
+    }
+
+    /** Re-send a closed island's refused commit in the background; renders wait meanwhile (B1). */
+    function retryClosed(isl, items, attempt) {
+      orphans.add(isl);
+      const run = () => {
+        if (isl.retryTimer) { clearTimer(isl.retryTimer); }
+        isl.retryTimer = null;
+        isl.retryNow = null;
+        if (!orphans.has(isl)) { return; }
+        if (!isl.p.parentNode || !editMode()) { dropOrphan(isl); scheduleRender(true); return; }
+        sendEdit({ op: 'commitParagraph', blockId: isl.id, items }).then((r) => {
+          if (!orphans.has(isl)) { return; }
+          if (r.abandoned) { dropOrphan(isl); return; }
+          if (r.ok) {
+            setVersion(r.version);
+            setBlocks(r.blocks);
+            isl.closed = false;
+            if (island !== isl) { Island.release(isl.p); }
+            dropOrphan(isl);
+            afterIslandGone();
+            return;
+          }
+          if (retryable(r.error) && attempt < MAX_RETRIES) { retryClosed(isl, items, attempt + 1); return; }
+          dropOrphan(isl);
+          onEditError(r.error, null);
+        });
+      };
+      isl.retryNow = run;
+      isl.retryTimer = setTimer(run, RETRY_MS);
+    }
+
+    function dropOrphan(isl) {
+      if (isl.retryTimer) { clearTimer(isl.retryTimer); isl.retryTimer = null; }
+      isl.retryNow = null;
+      orphans.delete(isl);
+      if (!orphans.size) { const w = orphanWaiters; orphanWaiters = []; w.forEach((f) => f()); }
+    }
+
+    function whenOrphansDone() {
+      return orphans.size ? new Promise((resolve) => { orphanWaiters.push(resolve); }) : Promise.resolve();
     }
 
     function onEditError(error, isl) {
@@ -551,7 +753,8 @@
       const done = commitFirst ? commit() : Promise.resolve();
       if (!commitFirst && Island.isDirty(isl.p)) { needsRender = true; }
       deactivate(isl);
-      Island.release(isl.p);
+      // A commit still in flight may be refused: keep the island's state so it can be reopened (B1).
+      if (isl.sending > 0) { isl.closed = true; } else { Island.release(isl.p); }
       island = null;
       afterIslandGone();
       return done;
@@ -568,7 +771,8 @@
       }
       opening = null;
       pendingOp = null;
-      focusAfterRender = null;
+      setFocusAfterRender(null);
+      [...orphans].forEach(dropOrphan);
       keyBuffer.length = 0;
       abandonQueue();
       if (renderTimer !== null) { clearTimer(renderTimer); renderTimer = null; }
@@ -649,7 +853,7 @@
 
     function stripIslandAttrs(el) {
       ['contenteditable', 'role', 'aria-multiline', 'aria-label', 'aria-level', 'data-docx-island', 'spellcheck',
-        'data-block', 'data-block-heading', 'id', 'aria-describedby', 'title'].forEach((a) => el.removeAttribute(a));
+        'data-block', 'data-block-heading', 'id', 'aria-describedby', 'title', 'tabindex'].forEach((a) => el.removeAttribute(a));
       el.hidden = false;
     }
 
@@ -671,10 +875,11 @@
         kids(clone).forEach((c) => p.appendChild(c));
         if (clone.parentNode) { clone.parentNode.removeChild(clone); }
       };
-      pendingOp = { kind: 'split', restore };
+      const op = { kind: 'split', restore };
+      pendingOp = op;
       needsRender = true;
       sendEdit({ op: 'splitParagraph', blockId: isl.id, before: halves.before, after: halves.after }).then((r) => {
-        if (r.abandoned) { return; }
+        if (r.abandoned) { abandonedOp(op); return; }
         pendingOp = null;
         if (!r.ok) {
           restore();
@@ -691,7 +896,7 @@
         if (created === undefined) {
           // Enter in an empty list item turned the list off instead (§8.5): render, then focus.
           restore();
-          focusAfterRender = r.focus || { blockId: isl.id, at: 'start' };
+          setFocusAfterRender(r.focus || { blockId: isl.id, at: 'start' });
           scheduleRender(true);
           return;
         }
@@ -727,17 +932,20 @@
         return;
       }
       suspend(isl);
-      pendingOp = { kind: 'merge', restore: () => {} };
+      const op = { kind: 'merge', restore: () => {} };
+      pendingOp = op;
       // Commit this paragraph first, then merge the next one (its content, unchanged) into it.
       commit().then((c) => {
+        if (c && c.abandoned) { abandonedOp(op); return null; }
         if (c && !c.ok) {                       // not applied: do not merge on top of it
-          pendingOp = null;
+          if (pendingOp === op) { pendingOp = null; }
           if (island === isl && isl.suspended) { resumeIsland(isl, 'end'); }
           return null;
         }
-        return pendingOp ? fetchModel(next.id) : null;
+        return pendingOp === op ? fetchModel(next.id) : null;
       }).then((m) => {
-        if (!m || pendingOp === null || m.abandoned) { return; }
+        if (m && m.abandoned) { abandonedOp(op); return; }
+        if (!m || pendingOp !== op) { return; }
         if (!m || !m.ok) {
           pendingOp = null;
           resumeIsland(isl, 'end');
@@ -777,10 +985,11 @@
 
     function runMerge(isl, edit, restore, failAt, survivorId) {
       suspend(isl);
-      pendingOp = { kind: 'merge', restore };
+      const op = { kind: 'merge', restore };
+      pendingOp = op;
       needsRender = true;
       sendEdit(edit).then((r) => {
-        if (r.abandoned) { return; }
+        if (r.abandoned) { abandonedOp(op); return; }
         pendingOp = null;
         if (!r.ok) {
           restore();
@@ -808,23 +1017,53 @@
      */
     function applyOp(edit) {
       const keep = island ? { blockId: island.id, at: Island.offsetOf(island.p, islandRange()) } : null;
-      if (island) { closeIsland(true); }
-      pendingOp = { kind: 'op', restore: () => {} };
-      return sendEdit(edit).then((r) => {
-        if (r.abandoned) { return r; }
-        pendingOp = null;
-        if (!r.ok) {
-          onEditError(r.error, null);
-          if (keep && r.error && r.error.code !== 'stale') { openIsland(keep.blockId, keep.at); }
+      // `preCommit`: while the island's closing commit is in flight a refusal may reopen it (B1); the
+      // operation is then not sent (N4: it would act on a paragraph whose text was not applied).
+      const op = { kind: 'op', restore: () => {}, preCommit: true };
+      pendingOp = op;
+      let pre = null;
+      if (island) {
+        const isl = island;
+        const c = closeIsland(true);
+        if (isl.sending > 0) { pre = c; }   // a commit is in flight: the op waits for its answer
+      }
+      const send = () => {
+        op.preCommit = false;
+        return sendEdit(edit).then((r) => {
+          if (r.abandoned) { abandonedOp(op); return r; }
+          if (pendingOp === op) { pendingOp = null; }
+          if (!r.ok) {
+            onEditError(r.error, null);
+            if (keep && r.error && r.error.code !== 'stale') { openIsland(keep.blockId, keep.at); }
+            return r;
+          }
+          setVersion(r.version);
+          setBlocks(r.blocks);
+          const f = r.focus && info.has(r.focus.blockId) ? r.focus : (keep && info.has(keep.blockId) ? keep : null);
+          setFocusAfterRender(f && isEditablePara(info.get(f.blockId)) ? { blockId: f.blockId, at: f.at } : null);
+          scheduleRender(true);
           return r;
+        });
+      };
+      if (!pre) { return send(); }
+      return pre.then((c) => {
+        if (op.cancelled || (c && (c.abandoned || c.ok === false)) || pendingOp !== op) {
+          if (pendingOp === op) { pendingOp = null; }
+          afterIslandGone();
+          return c && c.ok === false ? c : { ok: false, abandoned: true };
         }
-        setVersion(r.version);
-        setBlocks(r.blocks);
-        const f = r.focus && info.has(r.focus.blockId) ? r.focus : (keep && info.has(keep.blockId) ? keep : null);
-        focusAfterRender = f && isEditablePara(info.get(f.blockId)) ? { blockId: f.blockId, at: f.at } : null;
-        scheduleRender(true);
-        return r;
+        return send();
       });
+    }
+
+    /** A structural request was abandoned (stale, state change): never leave the editor busy (N7). */
+    function abandonedOp(op) {
+      if (pendingOp !== op) { return; }
+      pendingOp = null;
+      try { op.restore(); } catch (_e) { /* the DOM moved on: the render below shows the document */ }
+      needsRender = true;
+      changed();
+      scheduleRender(true);
     }
 
     // ------------------------------------------------------------------------------ navigation
@@ -894,7 +1133,7 @@
     function cancelEdit(close) {
       const isl = island;
       const offset = Island.offsetOf(isl.p, islandRange());
-      if (isl.idleTimer !== null) { clearTimer(isl.idleTimer); isl.idleTimer = null; }
+      clearTimers(isl);
       if (isl.commits === 0) {
         Island.cancel(isl.p);
         announce('Edit cancelled');
@@ -906,7 +1145,7 @@
       Island.release(isl.p);
       island = null;
       announce('Edit cancelled');
-      if (!close) { focusAfterRender = { blockId: isl.id, at: offset }; }
+      if (!close) { setFocusAfterRender({ blockId: isl.id, at: offset }); } else { kbReturn = isl.id; }
       scheduleRender(true);
     }
 
@@ -957,8 +1196,10 @@
       }
       if (k === 'Escape' && !ctrl && !ev.altKey) {
         prevent(ev);
-        if (Island.sameItems(Island.read(p), island.committed)) { closeIsland(false); return true; }
+        const id = island.id;
+        if (Island.sameItems(Island.read(p), island.committed)) { closeIsland(false); focusBlock(id); return true; }
         cancelEdit(true);
+        if (kbReturn !== id) { focusBlock(id); }   // else after the render that shows the document's text
         return true;
       }
       return false;
@@ -968,17 +1209,33 @@
       return !t || t === doc.body || t === doc || t === doc.documentElement || within(content, t);
     }
 
+    /** Commit the open island now (save, close, window blur / hidden). */
+    function commitOpen() { if (island && !island.suspended) { commit(); } }
+
     function onKeyCapture(ev) {
       if (!editMode()) { return; }
+      const lower = String(ev.key).toLowerCase();
+      if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && (lower === 's' || lower === 'w')) {
+        // Save / close the editor, wherever the focus is (S2): not stopped, VS Code gets the key; a
+        // save's flush waits for this reply, and a close finds the document dirty.
+        commitOpen();
+        return;
+      }
       if (island && !island.suspended && within(island.p, ev.target)) {
         const act = Island.undoKeyAction(ev);
         if (act) { onUndoKey(ev, act); return; }
-        if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && String(ev.key).toLowerCase() === 's') {
-          commit();     // not stopped: VS Code saves, and its flush waits for this reply
-          return;
-        }
         handleIslandKey(ev);
         return;
+      }
+      if (!isBusy() && !island && !ev.isComposing) {
+        const id = keyboardBlock(ev.target);
+        const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey;
+        if (id !== null && plain && (ev.key === 'Enter' || ev.key === 'F2')) { prevent(ev); openFromKeyboard(id); return; }
+        if (id !== null && plain && ev.target !== content && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
+          const to = adjacentShown(id, ev.key === 'ArrowUp' ? -1 : 1);
+          if (to !== null) { prevent(ev); focusBlock(to); }
+          return;
+        }
       }
       if (isBusy() && targetInDocument(ev.target)) {
         if (Island.undoKeyAction(ev)) { stop(ev); return; }
@@ -1051,13 +1308,28 @@
 
     function onDrop(ev) { if (island && within(island.p, ev.target)) { prevent(ev); } }
 
+    function onFocusIn(ev) {
+      const t = ev.target;
+      if (!editMode() || !t || t === content || (island && t === island.p)) { return; }
+      if (t.nodeType === ELEMENT && t.getAttribute('data-block') !== null) {
+        const id = DMap.blockOf(t);
+        if (id !== null && info.has(id)) { setKbBlock(id); }
+      }
+    }
+
     content.addEventListener('click', onClick);
+    content.addEventListener('focusin', onFocusIn);
     content.addEventListener('focusout', onFocusOut);
     content.addEventListener('input', onInput);
     content.addEventListener('paste', onPaste);
     content.addEventListener('beforeinput', onBeforeInput);
     content.addEventListener('drop', onDrop);
     win.addEventListener('keydown', onKeyCapture, true);
+    // S2: leaving the window (another VS Code part, another app) or hiding the editor commits the island.
+    win.addEventListener('blur', commitOpen);
+    if (doc.addEventListener) {
+      doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'hidden') { commitOpen(); } });
+    }
 
     // ------------------------------------------------------------------------------ flush / edit mode
 
@@ -1069,14 +1341,26 @@
       });
     }
 
-    /** `flushPendingEdits`: wait for the requests already sent. An open island stays open, uncommitted. */
-    function flush() { return bounded(whenIdle()); }
+    /**
+     * `flushPendingEdits`: wait for the requests already sent. An open island stays open, uncommitted,
+     * unless its last commit was refused for a moment (a save writing): that one is sent again now, as
+     * are closed islands waiting to retry, and the flush waits for them (B1).
+     */
+    function flush() {
+      return bounded(whenIdle().then(() => {
+        const work = [];
+        if (island && island.failed && !island.suspended) { work.push(commit()); }
+        [...orphans].forEach((o) => { if (o.retryNow) { o.retryNow(); } });
+        work.push(whenOrphansDone());
+        return Promise.all(work);
+      }).then(() => whenIdle()));
+    }
 
     /** Turning Edit off (§6.4): commit and close the island, then wait for the reply. */
     function commitAndClose() { return bounded(closeIsland(true).then(() => whenIdle())); }
     if (OC && OC.setBeforeEditModeOff) { OC.setBeforeEditModeOff(commitAndClose); }
 
-    function setEditAttr() { content.setAttribute('data-docx-edit', editMode() ? '1' : '0'); }
+    function setEditAttr() { content.setAttribute('data-docx-edit', editMode() ? '1' : '0'); applyRoving(); }
 
     // ------------------------------------------------------------------------------ host messages
 
@@ -1120,7 +1404,7 @@
 
     return {
       onMessage, gate, onRendered, onDropped, flush, commitAndClose,
-      commit, applyOp, touch, whenIdle,
+      commit, applyOp, touch, whenIdle, keyboardBlock, focusBlock,
       closeIsland: (commitFirst) => closeIsland(commitFirst !== false),
       /** The open island's <p>, or null (WP-35: toolbar B/I/U act on it). */
       islandElement() { return island && !island.suspended ? island.p : null; },
@@ -1131,12 +1415,13 @@
           version, open: island ? island.id : null, opening: opening ? opening.id : null,
           busy: isBusy(), pendingOp: pendingOp ? pendingOp.kind : null, needsRender,
           queued: queue.length, inflight: !!inflight, bufferedKeys: keyBuffer.length,
+          retrying: orphans.size, focusBlock: kbBlock,
         };
       },
     };
   }
 
-  const api = { create, LOCK_TEXT, IDLE_COMMIT_MS, RENDER_IDLE_MS, FLUSH_WAIT_MS, DISCARDED };
+  const api = { create, LOCK_TEXT, IDLE_COMMIT_MS, MAX_WAIT_MS, RETRY_MS, RENDER_IDLE_MS, FLUSH_WAIT_MS, DISCARDED, SAVE_BUSY_TEXT };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;

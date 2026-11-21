@@ -105,6 +105,9 @@ span[id^="__vsmd_"] { display: none; }
   outline: 1px solid var(--vscode-focusBorder, #0078d4);
   outline-offset: 2px;
   cursor: text;
+  /* Typed spaces and tabs (text outside the seg spans, docx-preview's spans set this themselves) stay
+     visible instead of collapsing (review S6). */
+  white-space: pre-wrap;
 }
 .docx-host p[data-docx-island]:focus { outline-width: 2px; }
 .docx-lock-descriptions { display: none; }
@@ -119,6 +122,12 @@ span[id^="__vsmd_"] { display: none; }
   outline: 1px dotted var(--vscode-editorWarning-foreground, #b89500);
   outline-offset: 2px;
   cursor: not-allowed;
+}
+
+/* Keyboard focus on a block (roving tabindex in Edit mode, review S3). */
+.docx-backdrop[data-docx-edit="1"] .docx-host p[data-block]:not([data-docx-island]):focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: 2px;
 }
 
 /* Focus ring on the table cell that holds the open island (in addition to the island's own outline). */
@@ -234,6 +243,7 @@ body.vscode-high-contrast-light .docx-hover-actions {
   .docx-backdrop[data-docx-edit="1"] .docx-host p[data-docx-editable]:not([data-docx-island]):hover { outline: 1px dashed Highlight; }
   .docx-backdrop[data-docx-edit="1"] .docx-host p[data-docx-locked]:hover { outline: 1px dotted GrayText; }
   .docx-host p[data-docx-island], .docx-host td:focus-within { outline-color: Highlight; }
+  .docx-backdrop[data-docx-edit="1"] .docx-host p[data-block]:not([data-docx-island]):focus-visible { outline-color: Highlight; }
   .docx-chip { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
   .docx-hover-actions, .docx-menu { background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none; }
   .docx-menu-item:hover, .docx-menu-item:focus { background: Highlight; color: HighlightText; }

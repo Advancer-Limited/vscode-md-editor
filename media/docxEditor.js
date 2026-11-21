@@ -566,7 +566,8 @@
       openMenu({ label: 'Paragraph style', items, x: r.left, y: r.bottom, opener: btn, needsIsland: true, restore: () => btn.focus() });
     }
 
-    function openBlockMenu(blockId, x, y, restoreIsland) {
+    /** `restoreIsland`: Escape returns focus to the island; otherwise to the block itself (keyboard path, S3). */
+    function openBlockMenu(blockId, x, y, restoreIsland, restoreBlock) {
       const b = edit.blockInfo(blockId);
       if (!b || !editing()) { return; }
       const items = [{ label: 'Insert paragraph after', run: () => insertAfter(blockId) }];
@@ -576,7 +577,11 @@
       items.push({ label: 'Remove paragraph', disabled: !b.removable, run: () => removeBlock(blockId) });
       openMenu({
         label: 'Paragraph actions', items, x, y,
-        restore: () => { const p = restoreIsland ? edit.islandElement() : null; if (p && typeof p.focus === 'function') { p.focus(); } },
+        restore: () => {
+          if (restoreBlock) { edit.focusBlock(blockId); return; }
+          const p = restoreIsland ? edit.islandElement() : null;
+          if (p && typeof p.focus === 'function') { p.focus(); }
+        },
       });
     }
 
@@ -671,7 +676,20 @@
     function onEditKey(ev) {
       if (!editing() || ev.isComposing) { return; }
       const c = caret();
-      if (!c) { return; }
+      if (!c) {
+        // No island: Shift+F10 / ContextMenu on a focused block (or the document) opens that block's menu
+        // (review S3), locked and opaque blocks included ("Insert paragraph after").
+        if ((ev.key === 'F10' && ev.shiftKey) || ev.key === 'ContextMenu') {
+          const id = edit.keyboardBlock(ev.target);
+          if (id === null || !opIdle()) { return; }
+          if (ev.preventDefault) { ev.preventDefault(); }
+          if (ev.stopPropagation) { ev.stopPropagation(); }
+          const ps = mapping && mapping.byId ? mapping.byId.get(id) : null;
+          const r = rectOf(ps && ps.length ? ps[0] : ev.target);
+          openBlockMenu(id, r.left, r.bottom, false, true);
+        }
+        return;
+      }
       const t = ev.target;
       if (!(within(c.p, t) || within(toolbarEl, t))) { return; }
       const stopKey = () => { if (ev.preventDefault) { ev.preventDefault(); } if (ev.stopPropagation) { ev.stopPropagation(); } };

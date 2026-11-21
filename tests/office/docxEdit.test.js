@@ -338,16 +338,16 @@ test('locked paragraph refuses: lock hint, no request; View mode clicks open not
   assert.strictEqual(t.of('docxRequestBlockModel').length, 0);
 });
 
-test('idle commit after 1.5 s without rebuilding the island (node identity), island stays open', async () => {
+test('typing commits at most 1 s after the first uncommitted key (S2), without rebuilding the island (node identity)', async () => {
   const t = await ready(BODY, { texts: { 1: 'abc' } });
   await t.open(1, 3);
   const p = t.island();
   t.type('d');
   const nodes = all(p, () => true);
-  t.clock.advance(1499);
-  assert.strictEqual(t.of('docxEdit').length, 0, 'not before 1.5 s');
-  t.type('e');                     // typing restarts the timer
-  t.clock.advance(1499);
+  t.clock.advance(600);
+  assert.strictEqual(t.of('docxEdit').length, 0, 'not at once');
+  t.type('e');                     // more typing does not push the first key's deadline back
+  t.clock.advance(399);
   assert.strictEqual(t.of('docxEdit').length, 0);
   t.clock.advance(1);
   const e = t.last('docxEdit');
@@ -856,4 +856,216 @@ test('Delete at end: a refused commit stops the merge and the island resumes', a
   assert.strictEqual(t.island(), t.p(1));
   assert.strictEqual(t.hintText(), 'No.');
   assert.ok(!t.edit.state().busy);
+});
+
+// ------------------------------------------------------------------------------------- review fixes (2026-11-21)
+
+const SAVING = { code: 'blocked', message: 'The document is being saved. Try again in a moment.' };
+
+test('review B1: a blur commit refused while saving reopens the island with the typed text and retries it', async () => {
+  const t = await ready(BODY, { texts: { 1: 'abc' } });
+  await t.open(1, 3);
+  t.type('d');
+  const p = t.island();
+  fire(p, 'focusout', { relatedTarget: null });
+  assert.strictEqual(t.island(), null, 'closed on blur');
+  deq(t.last('docxEdit').edit.items, [{ kind: 'text', text: 'abcd', b: false, i: false, u: false, src: 100 }]);
+  await t.failEdit(SAVING);
+  assert.strictEqual(t.island(), p, 'reopened with its DOM');
+  assert.strictEqual(p.textContent, 'abcd', 'the typed text is still there');
+  assert.strictEqual(t.hintText(), SAVING.message);
+  assert.strictEqual(t.of('docxRequestRender').length, 0, 'no render over the typed text');
+  await t.render(0);                          // a render arriving now waits
+  assert.strictEqual(t.p(1).textContent, 'abcd');
+  assert.strictEqual(t.renders, 1);
+  t.clock.advance(1000);                      // re-armed: sent again
+  assert.strictEqual(t.of('docxEdit').length, 2);
+  deq(t.last('docxEdit').edit.items, [{ kind: 'text', text: 'abcd', b: false, i: false, u: false, src: 100 }]);
+  await t.answerEdit(1);
+  assert.ok(t.island(), 'still open after the retry');
+});
+
+test('review B1: a refused idle commit is retried; a flush sends it again before answering', async () => {
+  const t = await ready(BODY, { texts: { 1: 'abc' } });
+  await t.open(1, 3);
+  t.type('d');
+  t.clock.advance(1000);
+  assert.strictEqual(t.of('docxEdit').length, 1);
+  await t.failEdit(SAVING);
+  assert.ok(t.island());
+  t.send({ type: 'flushPendingEdits', flushId: 9 });
+  await tick();
+  assert.strictEqual(t.of('docxEdit').length, 2, 'the flush retried the refused commit');
+  assert.strictEqual(t.of('flushed').length, 0, 'and waits for it');
+  await t.answerEdit(1);
+  await tick();
+  deq(t.of('flushed'), [{ type: 'flushed', flushId: 9 }]);
+  // Without a flush the idle timer retries it too.
+  t.type('e');
+  t.clock.advance(1000);
+  await t.failEdit(SAVING);
+  t.clock.advance(60000);
+  assert.strictEqual(t.of('docxEdit').length, 4, 'retried once by the re-armed timer');
+  await t.answerEdit(2);
+  t.clock.advance(60000);
+  assert.strictEqual(t.of('docxEdit').length, 4, 'nothing more once it landed');
+});
+
+test('review B1: a closed island that cannot be reopened (another one is opening) is re-sent in the background', async () => {
+  const t = await ready(BODY, { texts: { 1: 'abc', 2: 'xyz' } });
+  await t.open(1, 3);
+  t.type('d');
+  t.click(2, 1);                               // closes 1 (commit in flight), opening 2 waits for it
+  fire(t.p(1), 'focusout', { relatedTarget: null });
+  await tick();
+  await t.failEdit(SAVING);
+  await t.answerModel(0);
+  assert.strictEqual(t.island(), t.p(2), 'the other island opened');
+  assert.strictEqual(t.p(1).textContent, 'abcd', 'the closed one still shows the typing');
+  assert.strictEqual(t.edit.state().retrying, 1);
+  fire(t.island(), 'focusout', { relatedTarget: null });   // 2 closes clean: a render would be due
+  t.clock.advance(999);
+  assert.strictEqual(t.of('docxRequestRender').length, 0, 'renders wait while a commit is being retried');
+  t.clock.advance(1);
+  deq(t.last('docxEdit').edit, { op: 'commitParagraph', blockId: 1, items: [{ kind: 'text', text: 'abcd', b: false, i: false, u: false, src: 100 }] });
+  await t.answerEdit(1);
+  assert.strictEqual(t.edit.state().retrying, 0);
+  t.clock.advance(2000);
+  assert.strictEqual(t.of('docxRequestRender').length, 1, 'the render follows once it landed');
+});
+
+test('review B1: a genuine refusal of a blur commit keeps the text (island reopened), without retrying', async () => {
+  const t = await ready(BODY, { texts: { 1: 'abc' } });
+  await t.open(1, 3);
+  t.type('d');
+  fire(t.island(), 'focusout', { relatedTarget: null });
+  await t.failEdit({ code: 'blocked', message: 'This paragraph cannot be edited here (x).' });
+  assert.strictEqual(t.island().textContent, 'abcd');
+  t.clock.advance(60000);
+  assert.strictEqual(t.of('docxEdit').length, 1, 'not retried');
+});
+
+test('review S2: steady typing commits about once a second; Ctrl+S / Ctrl+W anywhere and leaving the window commit', async () => {
+  const t = await ready(BODY, { texts: { 1: 'abc' } });
+  await t.open(1, 3);
+  for (let s = 0; s < 10; s++) {
+    t.type('x');
+    t.clock.advance(1000);
+    if (t.of('docxEdit').length > s) { await t.answerEdit(s + 1); }
+  }
+  assert.ok(t.of('docxEdit').length >= 9, 'commits while typing one key a second: ' + t.of('docxEdit').length);
+  const n = t.of('docxEdit').length;
+  t.type('w');
+  const ev = t.key('w', { ctrlKey: true }, t.island());
+  assert.strictEqual(ev.defaultPrevented, false, 'Ctrl+W still reaches VS Code');
+  assert.strictEqual(t.of('docxEdit').length, n + 1);
+  await t.answerEdit(50);
+  const btn = t.doc.createElement('button');
+  t.toolbar.appendChild(btn);
+  t.type('s');
+  assert.strictEqual(t.key('s', { ctrlKey: true }, btn).defaultPrevented, false);
+  assert.strictEqual(t.of('docxEdit').length, n + 2, 'Ctrl+S with the focus on a toolbar button');
+  await t.answerEdit(51);
+  t.type('b');
+  for (const l of (t.win.listeners.blur || [])) { l.f({ type: 'blur' }); }
+  assert.strictEqual(t.of('docxEdit').length, n + 3, 'window blur');
+  assert.ok(t.island(), 'the island stays open');
+});
+
+test('review S3: keyboard only: blocks are focusable (roving tabindex), Enter/F2 open at the end, arrows move, Escape returns to the block', async () => {
+  const t = await ready([P(1), P(2, { editable: false, lockReason: 'tracked-changes' }), P(3)], { texts: { 1: 'abc', 3: 'xyz' } });
+  assert.strictEqual(t.p(1).getAttribute('tabindex'), '0', 'the first editable block is the tab stop');
+  assert.strictEqual(t.p(2).getAttribute('tabindex'), '-1');
+  assert.strictEqual(t.p(3).getAttribute('tabindex'), '-1');
+  // Enter on the document itself opens the current block.
+  assert.ok(t.key('Enter', {}, t.content).defaultPrevented);
+  assert.strictEqual(t.last('docxRequestBlockModel').blockId, 1);
+  await t.answerModel(0);
+  assert.strictEqual(t.island(), t.p(1));
+  assert.strictEqual(t.I.offsetOf(t.island(), t.doc.selection), 3, 'caret at the end');
+  // Escape: closed, focus on the block.
+  t.key('Escape');
+  assert.strictEqual(t.island(), null);
+  assert.strictEqual(t.doc.activeElement, t.p(1));
+  // ArrowDown moves between blocks, locked ones included; Enter on a locked one says why.
+  t.key('ArrowDown');
+  assert.strictEqual(t.doc.activeElement, t.p(2));
+  assert.strictEqual(t.p(2).getAttribute('tabindex'), '0', 'the focused block becomes the tab stop');
+  assert.strictEqual(t.p(1).getAttribute('tabindex'), '-1');
+  t.key('Enter');
+  assert.match(t.hintText(), /tracked changes/);
+  assert.strictEqual(t.of('docxRequestBlockModel').length, 1);
+  t.key('ArrowDown');
+  t.key('F2');
+  assert.strictEqual(t.last('docxRequestBlockModel').blockId, 3);
+  await t.answerModel(0);
+  assert.strictEqual(t.island(), t.p(3));
+  // View mode: no tab stops on blocks.
+  t.key('Escape');
+  t.send({ type: 'editModeChanged', editMode: false });
+  assert.strictEqual(t.p(1).getAttribute('tabindex'), null);
+});
+
+test('review S3: Shift+F10 on a focused locked block opens its menu with "Insert paragraph after"', async () => {
+  const t = await ready([P(1), P(2, { editable: false, lockReason: 'unknown-content' })]);
+  t.p(2).focus();
+  assert.ok(t.key('F10', { shiftKey: true }).defaultPrevented);
+  const m = all(t.doc.body, (e) => e.nodeType === 1 && e.className === 'docx-menu')[0];
+  assert.ok(m);
+  assert.ok(m.textContent.includes('Insert paragraph after'));
+  fire(t.doc.activeElement, 'keydown', { key: 'Escape' });
+  assert.strictEqual(t.doc.activeElement, t.p(2), 'focus back on the block');
+});
+
+test('review N4: a block operation is not sent when the commit before it was refused', async () => {
+  const t = await ready(BODY, { texts: { 2: 'Title' } });
+  await t.open(2, 3);
+  t.type('!');
+  const done = t.edit.applyOp({ op: 'setStyle', blockIds: [2], style: { heading: 1 } });
+  assert.strictEqual(t.last('docxEdit').edit.op, 'commitParagraph');
+  await t.failEdit({ code: 'blocked', message: 'No.' });
+  const r = await done;
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(t.of('docxEdit').length, 1, 'setStyle never posted');
+  assert.strictEqual(t.island(), t.p(2), 'the paragraph is open again with its text');
+  assert.strictEqual(t.island().textContent, 'Tit!le');
+  assert.ok(!t.edit.state().busy);
+});
+
+test('review N7: an abandoned split leaves nothing busy; a render that never comes does not keep the focus request forever', async () => {
+  const t = await ready(BODY, { texts: { 2: 'Hello world' } });
+  await t.open(2, 6);
+  t.type('!');
+  t.clock.advance(1000);                       // commit in flight
+  t.key('Enter');                              // split queued behind it
+  assert.strictEqual(t.edit.state().pendingOp, 'split');
+  await t.failEdit({ code: 'stale', message: 'The document changed. Your edit was not applied.' });
+  assert.strictEqual(t.last('docxEdit').edit.op, 'splitParagraph', 'the split went out before the stale reply was handled');
+  await t.failEdit({ code: 'stale', message: 'The document changed. Your edit was not applied.' });   // its reply: abandoned
+  assert.strictEqual(t.edit.state().pendingOp, null, 'the abandoned split is not pending any more');
+  await t.answerModel(3, [T(200, 'Hello! world')]);   // the stale path reopens the island
+  assert.ok(t.island());
+  assert.ok(!t.edit.state().busy);
+  // insertParagraphAfter focuses the new block after a render; that render never arrives.
+  t.edit.applyOp({ op: 'insertParagraphAfter', blockId: 1 });
+  t.blocks = [P(1), P(60), P(2), P(3)];
+  await t.answerEdit(6, { blocks: t.blocks, changedBlockIds: [60], focus: { blockId: 60, at: 'start' } });
+  assert.strictEqual(t.last('docxEdit').edit.op, 'insertParagraphAfter');
+  assert.ok(t.edit.state().busy, 'waiting for the render');
+  t.clock.advance(5000);
+  assert.ok(!t.edit.state().busy, 'the watchdog gave up');
+});
+
+test('review N3: a click after a link places the caret counting the link as one chip', async () => {
+  const t = await ready(BODY, { texts: { 1: 'ab' } });
+  // The rendered paragraph: "ab" + <a>link</a> + "cd"; click between c and d.
+  const p = t.p(1);
+  const a = t.doc.createElement('a'); a.setAttribute('href', 'https://x'); a.appendChild(t.doc.createTextNode('link'));
+  const tail = t.doc.createTextNode('cd');
+  p.insertBefore(a, p.lastChild); p.insertBefore(tail, p.lastChild);
+  t.doc.selection = { startContainer: tail, startOffset: 1, endContainer: tail, endOffset: 1 };
+  fire(tail, 'click', {});
+  await tick();
+  await t.answerModel(0, [T(100, 'ab'), { kind: 'atom', id: 101, atomType: 'hyperlink', label: 'link' }, T(102, 'cd')]);
+  assert.strictEqual(t.I.offsetOf(t.island(), t.doc.selection), 4, 'a, b, chip, c');
 });
