@@ -305,3 +305,17 @@
 - [x] PR #80 fix/bump-1.5.0 → develop (version 1.5.0 + CHANGELOG), merge
 - [x] PR #81 develop → master (Release 1.5.0), merge
 - [x] Publish 1.5.0 from master to VS Code Marketplace
+
+## 2026-11-21 PowerPoint viewer — spec and plan (feature/pptx-viewer-docs)
+
+View only, sequenced last (after the Office and PDF stacks). Spec: `docs/pptx-viewer-spec.md`; plan: `docs/pptx-viewer-plan.md`.
+
+- [x] Evaluate JS pptx renderers against an in-house renderer (scratch installs outside the repo; headless Edge runs under a strict CSP)
+- [x] Write `docs/pptx-viewer-spec.md`
+- [x] Write `docs/pptx-viewer-plan.md` (XWP-01…19, PR-X0…X5, Gates X0–X2)
+- [x] `.vscodeignore`: `docs/**`, `spike/**`
+- [ ] User: answer open questions Q1–Q4 (spec §15.2)
+- [ ] PR-X0 feature/pptx-viewer-docs → develop
+- [ ] Build (not before Office Gate R-final and PDF Gate P-final): Phase 0 XWP-01…03 → Gate X0
+- [ ] Phase 1 host core XWP-04…10 → Gate X1 (Fable independent review)
+- [ ] Phase 2 viewer XWP-11…19 → Gate X2 (human) → release

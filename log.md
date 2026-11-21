@@ -755,3 +755,17 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 - PR #81: develop → master release merge.
 - Published `advancer-limited.vscode-md-editor` v1.5.0 from master (vsce reported DONE; Marketplace listing lags a few minutes).
 - Dev-host testing tip: the default profile's other markdown extensions claim `.md`; launch with an isolated `--user-data-dir`/`--extensions-dir` and a `workbench.editorAssociations` setting for `vscodeMdEditor.editor`.
+
+## 2026-11-21 — PowerPoint viewer: spec and plan (feature/pptx-viewer-docs)
+
+Documents only; nothing implemented. New: `docs/pptx-viewer-spec.md`, `docs/pptx-viewer-plan.md`. Changed: `.vscodeignore` (`docs/**`, `spike/**` after `scripts/**`, the same two lines the Office and PDF branches add), `todo.md`, `log.md`.
+
+**User decisions carried in:** view only (no editing, no save path); sequenced last, after the Word/Excel/PDF viewers and their basic editing.
+
+**Recommendation.** An existing renderer in the webview behind a single adapter file, on top of the Office core: `@aiden0z/pptx-renderer` 1.4.0 (Apache-2.0), runner-up `@meshesha/pptxjs` 2.0.0 (MIT), the pick re-confirmed by a bake-off on real PowerPoint decks in the first spike. The host keeps its own model (slide list, text in reading order, notes, alt text, feature census) so find, outline, notes and accessibility do not depend on the library, and sends the webview a render copy with media, fonts, macros and OLE payloads emptied.
+
+**Checked today** (scratch directory outside the repo, `--ignore-scripts`; headless Edge 157, nonce-only scripts from `file://`): npm metadata, licences and distributed files of seven candidates; both finalists render a `pptxgenjs` test deck under `default-src 'none'; script-src 'nonce-…'; style-src 'unsafe-inline'; img-src blob: data:` with 0 CSP violations and 0 requests; our esbuild IIFE of the primary is 1,468 KB minified (renderer 738, ECharts + zrender 629, JSZip 98); document text is not turned into markup by either; `pptx-preview` is closed source and assigns run text with `innerHTML`; PptxViewJS draws to canvas. Reuse points read in the `VSMarkdownEditor-refs` worktree (`OfficePackage.open`, `sniff`, `loadErrors`, `officeDocument` DOCTYPE guard, provider base read-only behaviour, `officeCommon`).
+
+**Not verified** (spike items): fidelity on decks made by PowerPoint, LibreOffice and Google Slides; behaviour inside a real VS Code webview; the render copy with zero-length entries; DOM order versus shape-tree order; performance (the headless run's timings were not usable — the windowed list never completed under virtual time).
+
+**Issue encountered:** the knowledge that PPTXjs is a jQuery plugin is out of date — a TypeScript rewrite was published to npm as `@meshesha/pptxjs` 2.0.0 on 2026-11-20; it was evaluated as the runner-up. A network outage interrupted the session before the first file was written; nothing was lost.
