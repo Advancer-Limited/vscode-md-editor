@@ -1,6 +1,11 @@
 // Word viewer webview (spec §7.1, §11, §12). Renders the original package bytes with docx-preview,
 // adds zoom / section count / Open in Word to the toolbar, and intercepts links.
 //
+// Rendering (spec §8.2, §8.8): each render goes into a detached container, is mapped to block ids
+// with media/docxMap.js and is swapped in, keeping the block nearest the viewport top where it was.
+// When media/docxEdit.js is loaded (Word editing), its controller sees every host message first and
+// gates rendering: no render runs or swaps while a paragraph island is open.
+//
 // Loaded as a classic script (globals `docx`, `OfficeCommon`) and via `vm` by the unit tests.
 // Security rule (plan §1.8): document-derived strings are only assigned through textContent /
 // setAttribute. docx-preview renders into its own container; that output is contained by the CSP.
@@ -31,6 +36,9 @@
 
   function create(deps) {
     const { document, vscode, OfficeCommon, docxLib, window } = deps;
+    const DocxMapLib = deps.DocxMap || global.DocxMap || null;
+    const DocxEditLib = deps.DocxEdit || global.DocxEdit || null;
+    let edit = null;          // WP-34 edit controller (null in a build without docxEdit.js)
     const content = document.getElementById('office-content');
     const toolbarEl = document.getElementById('office-toolbar');
     const brandEl = document.getElementById('office-brand');
@@ -54,8 +62,9 @@
 
     // ---------- content skeleton ----------
 
-    const styles = mk('div', 'docx-styles');
-    const host = mk('div', 'docx-host');
+    let styles = mk('div', 'docx-styles');
+    let host = mk('div', 'docx-host');
+    let mapping = null;      // DocxMap.mapBlocks result for the DOM shown
     content.setAttribute('tabindex', '0');
     content.setAttribute('role', 'document');
     content.setAttribute('aria-label', 'Word document');
@@ -180,27 +189,67 @@
       throw new Error('The document data did not arrive in a readable form.');
     }
 
-    async function doRender(bytes) {
-      const scrollTop = content.scrollTop;
+    /** Block nearest the top of the viewport and its offset from it, or null. */
+    function captureAnchor() {
+      if (!mapping || !mapping.byId || typeof content.getBoundingClientRect !== 'function') { return null; }
+      const top = content.getBoundingClientRect().top;
+      for (const [id, ps] of mapping.byId) {
+        const p = ps.find((x) => !x.hidden && x.parentNode && typeof x.getBoundingClientRect === 'function');
+        if (!p) { continue; }
+        const r = p.getBoundingClientRect();
+        if (r && r.bottom > top) { return { id, delta: r.top - top }; }
+      }
+      return null;
+    }
+
+    function restoreAnchor(anchor, scrollTop) {
+      const ps = anchor && mapping && mapping.byId ? mapping.byId.get(anchor.id) : null;
+      if (!ps || !ps.length || typeof ps[0].getBoundingClientRect !== 'function') { content.scrollTop = scrollTop; return; }
+      const top = content.getBoundingClientRect().top;
+      content.scrollTop = scrollTop + (ps[0].getBoundingClientRect().top - top - anchor.delta);
+    }
+
+    function gateFor(job) { return edit ? edit.gate(job) : 'go'; }
+
+    /** Renders one job into a detached container, then swaps it in. 'held' when the gate closed meanwhile. */
+    async function doRender(job) {
+      const nextHost = mk('div', 'docx-host');
+      const nextStyles = mk('div', 'docx-styles');
       try {
         if (!docxLib || typeof docxLib.renderAsync !== 'function') {
           throw new Error('The Word renderer did not load.');
         }
-        await docxLib.renderAsync(toBytes(bytes), host, styles, RENDER_OPTIONS);
+        await docxLib.renderAsync(toBytes(job.bytes), nextHost, nextStyles, RENDER_OPTIONS);
       } catch (e) {
         showRenderFailure(e);
-        return;
+        return 'done';
       }
+      const g = gateFor(job);
+      if (g === 'hold') { return 'held'; }
+      if (g === 'drop') { if (edit) { edit.onDropped(job); } return 'done'; }
+      const nextMapping = DocxMapLib ? DocxMapLib.mapBlocks(nextHost, job.blocks) : { byId: new Map(), missing: [] };
+      const scrollTop = content.scrollTop;
+      const anchor = captureAnchor();
+      content.insertBefore(nextStyles, styles);
+      content.removeChild(styles);
+      content.insertBefore(nextHost, host);
+      content.removeChild(host);
+      styles = nextStyles;
+      host = nextHost;
+      mapping = nextMapping;
       renderFailed = false;
       sectionCount = countSections();
       applyZoom();
-      content.scrollTop = scrollTop;
+      restoreAnchor(anchor, scrollTop);
+      if (edit) { edit.onRendered(mapping, job); }
+      return 'done';
     }
 
     function showRenderFailure(e) {
       renderFailed = true;
       clear(host);
       clear(styles);
+      mapping = null;
       sectionCount = 0;
       syncToolbar();
       OfficeCommon.showError({
@@ -210,17 +259,26 @@
       });
     }
 
-    /** Renders `bytes`; a render requested while one runs replaces any older queued one. */
-    function render(bytes) {
-      queued = { bytes };
-      if (rendering) { return; }
+    /**
+     * Renders `bytes`; a render requested while one runs replaces any older queued one. While the
+     * edit controller's gate says 'hold' the newest job waits until `resume()`.
+     */
+    function render(bytes, blocks, version) {
+      queued = { bytes, blocks: Array.isArray(blocks) ? blocks : [], version };
+      pump();
+    }
+
+    function pump() {
+      if (rendering || !queued || gateFor(queued) === 'hold') { return; }
       rendering = true;
       (async () => {
         try {
-          while (queued) {
+          while (queued && gateFor(queued) !== 'hold') {
             const job = queued;
             queued = null;
-            await doRender(job.bytes);
+            if (gateFor(job) === 'drop') { if (edit) { edit.onDropped(job); } continue; }
+            const r = await doRender(job);
+            if (r === 'held' && !queued) { queued = job; }
           }
         } finally {
           rendering = false;
@@ -293,11 +351,18 @@
     }
 
     function onMessage(msg) {
+      if (edit) { edit.onMessage(msg); }   // the edit controller sees every message first
       switch (msg.type) {
-        case 'docxRender': render(msg.bytes); break;
+        case 'docxRender': render(msg.bytes, msg.blocks, msg.version); break;
         case 'docxStateChanged': post({ type: 'docxRequestRender' }); break;
-        case 'flushPendingEdits': post({ type: 'flushed', flushId: msg.flushId }); break;   // view mode: nothing pending
+        case 'flushPendingEdits': {
+          // Answered once the edits already sent are answered (nothing pending in View mode).
+          const done = () => post({ type: 'flushed', flushId: msg.flushId });
+          if (edit) { edit.flush().then(done, done); } else { done(); }
+          break;
+        }
         case 'loadError':
+          queued = null; mapping = null;
           clear(host); clear(styles); sectionCount = 0; syncToolbar(); break;
         default: break;
       }
@@ -312,12 +377,17 @@
       content.addEventListener('wheel', onWheel, { passive: false });
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('resize', () => { if (fit) { applyZoom(); } });
+      edit = DocxEditLib ? DocxEditLib.create({ content, toolbar: toolbarEl, post, resume: pump, hasHeld: () => !!queued }, { document, window, OfficeCommon, DocxMap: DocxMapLib, DocxIsland: deps.DocxIsland || global.DocxIsland, setTimeout: deps.setTimeout, clearTimeout: deps.clearTimeout }) : null;   // WP-34
       OfficeCommon.init({ vscode, onEditModeToggle: () => {}, onMessage });
     }
 
     return {
       start, whenIdle,
       state: () => ({ zoom, fit, sectionCount, renderFailed }),
+      /** The Word edit controller (null without docxEdit.js). */
+      editor: () => edit,
+      /** The current block mapping (DocxMap.mapBlocks result) or null. */
+      mapping: () => mapping,
     };
   }
 

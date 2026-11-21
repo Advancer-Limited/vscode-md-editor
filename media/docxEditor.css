@@ -90,3 +90,16 @@ body.vscode-high-contrast-light .docx-host .docx-wrapper > section.docx {
 @media (prefers-reduced-motion: reduce) {
   .docx-backdrop { scroll-behavior: auto; }
 }
+
+/* Word editing (spec §8.2, §8.8; WP-34). The render copy's marker bookmarks must not shift layout
+   (visible empty spans moved text by ~0.55 px); hidden ones are still found by id. */
+span[id^="__vsmd_"] { display: none; }
+
+/* The open paragraph island. Hover outline, lock styling and chips: WP-35. */
+.docx-host p[data-docx-island] {
+  outline: 1px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: 2px;
+  cursor: text;
+}
+.docx-host p[data-docx-island]:focus { outline-width: 2px; }
+.docx-lock-descriptions { display: none; }
