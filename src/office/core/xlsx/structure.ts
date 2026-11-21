@@ -892,7 +892,51 @@ function planTables(op: Op, b: EditBuilder, wb: Workbook, sheet: Sheet, writes: 
     } else if (af) planAutoFilter(op, b, part, af, tns, writes, false);
     const ss = child(troot, tns, 'sortState');
     if (ss) planSortState(op, b, part, ss, tns, writes, false);
+    planTableFormulas(op, b, part, troot, op.name, true, writes);
   }
+}
+
+/** Table column elements whose text is a formula (as sheetsOps rewrites them on rename/delete). */
+const TABLE_FORMULA_LOCALS = ['calculatedColumnFormula', 'totalsRowFormula'];
+
+/**
+ * A table's calculated-column and totals-row formulas, shifted like the cell formulas of the sheet the
+ * table is on (`home`): every reference on the edited sheet, or (another sheet) only qualified ones.
+ */
+function planTableFormulas(op: Op, b: EditBuilder, part: string, troot: XmlElement, home: string, edited: boolean, writes: Write[]): void {
+  const tns = troot.ns;
+  const cols = child(troot, tns, 'tableColumns');
+  if (!cols) return;
+  const tname = attr(troot, '', 'displayName') ?? attr(troot, '', 'name') ?? part;
+  for (const col of childrenOf(cols, tns, 'tableColumn')) {
+    for (const local of TABLE_FORMULA_LOCALS) {
+      const fe = child(col, tns, local);
+      if (!fe) continue;
+      const t = textContent(fe);
+      if (t === '' || (!edited && !t.includes('!'))) continue;
+      const s = shiftText(op, t, home, `of column "${attr(col, '', 'name') ?? ''}" in table "${tname}"`);
+      if (s !== t) replaceW(writes, b, part, fe, withText(fe, s));
+    }
+  }
+}
+
+/** The table parts of `sheet` (resolved through its tableParts relationships); unresolvable ones are refused. */
+function tablePartsOf(wb: Workbook, sheet: Sheet): string[] {
+  const root = sheet.doc.root;
+  const tp = child(root, root.ns, 'tableParts');
+  if (!tp) return [];
+  const rels = readRelationships(wb.pkg, sheet.part);
+  const out: string[] = [];
+  for (const el of childrenOf(tp, root.ns, 'tablePart')) {
+    const id = NS_R.map((u) => attr(el, u, 'id')).find((v) => v !== undefined);
+    const rel = id !== undefined ? rels.find((x) => x.id === id) : undefined;
+    let name: string | undefined;
+    try { name = rel && !rel.external ? partNameFromTarget(sheet.part, rel.target) : undefined; } catch { name = undefined; }
+    const part = name !== undefined ? wb.pkg.partNames().find((p) => p.toLowerCase() === name!.toLowerCase()) : undefined;
+    if (!part) refuse(`A table on sheet "${sheet.part}" can't be found, so its formulas can't be updated.`);
+    out.push(part);
+  }
+  return out;
 }
 
 /** Tier B for tables (§9.6): what Tier A cannot update. */
@@ -964,7 +1008,7 @@ function planEditedSheet(op: Op, b: EditBuilder, sheet: Sheet, writes: Write[]):
 }
 
 /** Plan another worksheet: formulas (cells, conditional formats, validations) qualified with the edited sheet. */
-function planOtherSheet(op: Op, b: EditBuilder, e: SheetEntry, sheet: Sheet, writes: Write[]): boolean {
+function planOtherSheet(op: Op, b: EditBuilder, wb: Workbook, e: SheetEntry, sheet: Sheet, writes: Write[]): boolean {
   const root = sheet.doc.root;
   const ns = root.ns;
   const part = sheet.part;
@@ -975,6 +1019,11 @@ function planOtherSheet(op: Op, b: EditBuilder, e: SheetEntry, sheet: Sheet, wri
   for (const el of elements(root, ns)) {
     if (el.local === 'conditionalFormatting') planConditionalFormatting(op, b, part, el, ns, e.name, false, local);
     else if (el.local === 'dataValidations') planDataValidations(op, b, part, el, ns, e.name, false, local);
+  }
+  for (const tpart of tablePartsOf(wb, sheet)) {
+    let troot: XmlElement;
+    try { troot = wb.pkg.xml(tpart).root; } catch { return refuse(`A table on sheet "${e.name}" can't be read, so its formulas can't be updated.`); }
+    planTableFormulas(op, b, tpart, troot, e.name, false, local);
   }
   if (local.length === 0) return false;
   if (sheet.readOnlyReason || sheet.truncatedAtRow !== null) {
@@ -1040,7 +1089,7 @@ export async function insertOrDelete(b: EditBuilder, wb: Workbook, sheet: Sheet,
   const writes: Write[] = [];
   const touched: Sheet[] = [sheet];
   planEditedSheet(op, b, sheet, writes);
-  for (const { e, s } of others) if (planOtherSheet(op, b, e, s, writes)) touched.push(s);
+  for (const { e, s } of others) if (planOtherSheet(op, b, wb, e, s, writes)) touched.push(s);
   planTables(op, b, wb, sheet, writes);
   planDefinedNames(op, b, wb, writes);
   if (writes.length === 0) return;

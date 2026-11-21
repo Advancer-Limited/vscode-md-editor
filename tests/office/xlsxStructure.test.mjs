@@ -664,6 +664,44 @@ test('tables: column ops left of a table move it; intersecting / header / totals
   assert.match(partText(b2, 'xl/tables/table2.xml'), /ref="B10:C13"/);
 });
 
+test('S2: table calculatedColumnFormula / totalsRowFormula shift on the edited sheet and on other sheets', async () => {
+  const T1 = 'xl/tables/table1.xml';
+  const T2 = 'xl/tables/table2.xml';
+  // SalesTable: Total's calculated column and a custom Units total refer to $H$1 on the same sheet.
+  const bytes = await patched('tables.xlsx', {
+    [T1]: (s) => s.replace('[[#This Row],[Price]]</calculatedColumnFormula>', '[[#This Row],[Price]]*$H$1</calculatedColumnFormula>')
+      .replace('name="Units" totalsRowFunction="sum"/>', 'name="Units" totalsRowFunction="custom"><totalsRowFormula>SUBTOTAL(109,SalesTable[Units])+$H$1</totalsRowFormula></tableColumn>'),
+  });
+  const fx = load('tables.xlsx', bytes);
+  const { bytes: b1 } = await check(fx, 1, insR(1), [S1, T1, T2], 'tables-calc-col-insert-row');
+  const t1 = partText(b1, T1);
+  assert.match(t1, /<calculatedColumnFormula>SalesTable\[\[#This Row\],\[Units\]\]\*SalesTable\[\[#This Row\],\[Price\]\]\*\$H\$2<\/calculatedColumnFormula>/);
+  assert.match(t1, /<totalsRowFormula>SUBTOTAL\(109,SalesTable\[Units\]\)\+\$H\$2<\/totalsRowFormula>/);
+  const fx2 = load('tables.xlsx', bytes);
+  const { bytes: b2 } = await check(fx2, 1, insC('G'), [T1], 'tables-calc-col-insert-col');
+  assert.match(partText(b2, T1), /\*\$I\$1<\/calculatedColumnFormula>/);
+  assert.match(partText(b2, T1), /\+\$I\$1<\/totalsRowFormula>/);
+
+  // A table on another sheet whose calculated column refers to the edited sheet (qualified).
+  const base = load('tables.xlsx');
+  const add = await applyXlsxEdit(base.wb, base.pkg, { op: 'addSheet', name: 'Rates' }, { confirmed: true });
+  assert.ok(add.ok && add.edit, 'added a sheet');
+  const withRates = await (async () => {
+    const zip = await JSZip.loadAsync(save(base.pkg));
+    const f = zip.file(T1);
+    zip.file(T1, (await f.async('string')).replace('[[#This Row],[Price]]</calculatedColumnFormula>', '[[#This Row],[Price]]*Rates!$A$1</calculatedColumnFormula>'));
+    return new Uint8Array(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+  })();
+  const fx3 = load('tables.xlsx', withRates);
+  const rates = fx3.wb.sheets.find((e) => e.name === 'Rates').id;
+  const { bytes: b3 } = await check(fx3, rates, insR(1), [T1], 'tables-calc-col-other-sheet');
+  assert.match(partText(b3, T1), /\*Rates!\$A\$2<\/calculatedColumnFormula>/);
+  // Deleting the row it refers to makes it #REF! (as Excel does for a cell formula).
+  const fx4 = load('tables.xlsx', withRates);
+  const { bytes: b4 } = await check(fx4, rates, delR(1), [T1], 'tables-calc-col-other-sheet-delete');
+  assert.match(partText(b4, T1), /\*#REF!<\/calculatedColumnFormula>/);
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Insert then delete restores the original (every fixture)
 
