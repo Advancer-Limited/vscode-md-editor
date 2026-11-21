@@ -1046,12 +1046,12 @@ test('the main-thread worker fallback and a failed page each post a pdfLog (the 
   deq(pages, [{ type: 'pdfLog', level: 'warn', code: 'page-render-failed', detail: 'page 2: Error' }]);
 });
 
-test('handled keys are stopped in the capture phase (VS Code does not also zoom, Go to Line, Quick Open); others reach it', async () => {
+test('handled keys are stopped in the capture phase (VS Code does not also zoom or Go to Line); others reach it', async () => {
   const t = await setup().open({ pdf: makePdf(3) });
   const forwarded = [];
   t.win.addEventListener('keydown', (e) => forwarded.push(((e.ctrlKey || e.metaKey) ? 'Ctrl+' : '') + e.key));   // VS Code's listener
   for (const [k, mods] of [['=', { ctrlKey: true }], ['+', { metaKey: true }], ['-', { ctrlKey: true }], ['0', { ctrlKey: true }],
-    ['g', { ctrlKey: true }], ['e', { ctrlKey: true }], ['r', {}], ['End', {}]]) {
+    ['g', { ctrlKey: true }], ['r', {}], ['End', {}]]) {
     const e = t.key(k, mods);
     assert.ok(e.prevented && e.stopped, `${JSON.stringify(mods)} ${k}`);
   }

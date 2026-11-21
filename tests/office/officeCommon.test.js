@@ -242,16 +242,18 @@ test('Ctrl+E when read-only posts nothing and shows the reason hint', () => {
   const t = setup();
   t.OC.setInit(initMsg({ canEdit: false, readOnlyReason: 'too-large' }));
   const n = t.posted.length;
-  t.win.dispatch('keydown', { key: 'e', ctrlKey: true, preventDefault() {} });
+  const e = t.win.dispatch('keydown', { key: 'e', ctrlKey: true });
+  assert.ok(e.prevented && e.stopped, 'the hint answers it');
   assert.strictEqual(t.posted.length, n);
   assert.strictEqual(t.q((e) => e.className === 'office-hint')[0].textContent, t.OC.READ_ONLY_TEXT['too-large']);
 });
 
-test('Ctrl+E in the viewers-only build (no edit, no reason) shows no "Press Edit" hint', () => {
+test('Ctrl+E in the viewers-only build (no edit, no reason) shows no "Press Edit" hint and is left to VS Code', () => {
   const t = setup();
   t.OC.setInit(initMsg({ canEdit: false, readOnlyReason: null }));
   const n = t.posted.length;
-  t.win.dispatch('keydown', { key: 'e', ctrlKey: true, preventDefault() {} });
+  const e = t.win.dispatch('keydown', { key: 'e', ctrlKey: true });
+  assert.ok(!e.prevented && !e.stopped, 'nothing to toggle: VS Code gets Ctrl+E (Quick Open)');
   assert.strictEqual(t.posted.length, n);
   const hintEl = t.q((e) => e.className === 'office-hint')[0];
   assert.strictEqual(hintEl.hidden, true);
