@@ -231,7 +231,11 @@ test('forms.pdf checkbox and radio rules: on-states, whole groups, at most one o
     { key: S.refKey(r.forms.fields.find((f) => f.type === 'radio').ref), members: [red, green, blue], exactlyOne: false });
   const p = accepts(ctx, [red, false, true], [green, true, false], [blue, false, false]);
   assert.deepStrictEqual(p.delta.map((e) => [e.key, e.after]), [[red, false], [green, true]], 'blue unchanged: no entry');
-  accepts(ctx, [red, false], [green, false], [blue, false]); // no NoToggleToOff: all off is allowed
+  // Clearing a group is refused (PWP-28: pdf.js writes /V only when a button turns on, so it would keep naming the
+  // old one); restating a group that was loaded all off changes nothing and is accepted.
+  assert.match(refuses(ctx, 'bad-value', [red, false], [green, false], [blue, false]), /cannot be cleared/);
+  assert.match(refuses(ctx, 'bad-value', [red, false, true], [green, false, false], [blue, false, false]), /cannot be cleared/);
+  assert.deepStrictEqual(accepts(ctx, [red, false, false], [green, false, false], [blue, false, false]).delta, []);
   assert.match(refuses(ctx, 'bad-value', [green, true]), /as a whole/);
   assert.match(refuses(ctx, 'bad-value', [red, false], [green, true]), /as a whole/);
   assert.match(refuses(ctx, 'bad-value', [red, true], [green, true], [blue, false]), /Only one/);
@@ -421,7 +425,15 @@ test('synthetic choice fields: options, editable combo, multi-select order, lock
   assert.strictEqual(verdict(ch('')), 'no-options');
   assert.strictEqual(verdict(ch('/Opt [(a) (a)]')), 'duplicate-options');
   assert.strictEqual(verdict(ch('/Opt [(a) [(a) (A)]]')), 'duplicate-options');
-  assert.strictEqual(verdict(ch('/Opt [(a) (b)] /I [0]')), 'indices');
+  // /I (PWP-28): fillable on a merged field/widget that carries it (pdf.js rewrites it, the verifier checks it);
+  // locked on a separate field node, an ancestor or a widget, where pdf.js leaves it stale.
+  assert.strictEqual(verdict(ch('/Opt [(a) (b)] /I [0]')), 'fillable');
+  assert.strictEqual(verdict(formDoc({ 10: `<< /T (l) /FT /Ch /Opt [(a) (b)] /I [0] /Kids [11 0 R] >>`, 11: `<< ${W} /Parent 10 0 R >>` },
+    { annots: '11 0 R' })), 'indices', 'separate field node');
+  assert.strictEqual(verdict(formDoc({ 10: `<< /T (l) /FT /Ch /Opt [(a) (b)] /Kids [11 0 R] >>`, 11: `<< ${W} /Parent 10 0 R /I [0] >>` },
+    { annots: '11 0 R' })), 'indices', 'on the widget');
+  assert.strictEqual(verdict(formDoc({ 10: `<< /T (p) /I [0] /Kids [11 0 R] >>`, 11: `<< ${W} /T (c) /FT /Ch /Opt [(a) (b)] /Parent 10 0 R >>` },
+    { annots: '11 0 R' })), 'indices', 'on an ancestor');
   assert.strictEqual(verdict(ch('/Opt [(a) /b]')), 'structure');
   assert.strictEqual(verdict(ch('/Opt [(a) [(b)]]')), 'structure');
   assert.strictEqual(verdict(ch('/Opt 5')), 'structure');

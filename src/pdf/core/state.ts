@@ -63,6 +63,13 @@ export interface PdfFieldRule {
    * field has NoToggleToOff. Members are widget keys, the field's own `key` included when it is merged.
    */
   group?: { readonly key: string; readonly members: readonly string[]; readonly exactlyOne: boolean };
+  /**
+   * What the verifier checks the written value against (spec §6.5 PV4 field rows, PWP-28): the field spec and the
+   * key of the terminal field node that holds /V (the widget's own key for a merged field/widget). Classification
+   * always sets both; a rule without them cannot be verified, so a save that sets such a field is refused.
+   */
+  spec?: Readonly<PdfFieldSpec>;
+  field?: string;
 }
 
 /**
@@ -99,7 +106,7 @@ export type PdfFieldLockReason =
   | 'ambiguous-on-state' // ... more than one on-state, or radio widgets sharing one
   | 'no-options'         // a non-editable choice field without options
   | 'duplicate-options'  // two options with the same export value
-  | 'indices'            // a choice field with /I (pdf.js rewrites it; not in the verifier's allow-list)
+  | 'indices'            // /I on a separate field node, an ancestor or a widget (pdf.js leaves it stale; PWP-28)
   | 'bad-max-len'        // /MaxLen not a positive integer, or Comb without one
   | 'bad-flags'          // /Ff not a non-negative integer, or a contradictory flag combination
   | 'unknown-type'       // /FT missing or not Tx/Btn/Ch
@@ -135,12 +142,25 @@ export const FIELD_LOCK_MESSAGES: Readonly<Record<PdfFieldLockReason, string>> =
   'not-a-field': UNSUPPORTED,
 });
 
-/** The rule for one widget of a fillable field. Pure; `spec` arrays are copied and frozen. */
-export function fieldRule(spec: PdfFieldSpec): PdfFieldRule {
+function freezeFieldSpec(spec: PdfFieldSpec): Readonly<PdfFieldSpec> {
+  switch (spec.kind) {
+    case 'radio': return Object.freeze({ ...spec, members: Object.freeze(spec.members.slice()) });
+    case 'choice': return Object.freeze({ ...spec, options: Object.freeze(spec.options.slice()) });
+    default: return Object.freeze({ ...spec });
+  }
+}
+
+/**
+ * The rule for one widget of a fillable field. Pure; `spec` arrays are copied and frozen. `field` is the key of the
+ * terminal field node holding /V (the widget's own key when field and widget are merged).
+ */
+export function fieldRule(spec: PdfFieldSpec, field?: string): PdfFieldRule {
+  const frozen = freezeFieldSpec(spec);
+  const facts = field === undefined ? { spec: frozen } : { spec: frozen, field };
   switch (spec.kind) {
     case 'text': {
       const { maxLen, multiline } = spec;
-      return Object.freeze({ kind: 'text', check: (v: PdfFieldValue): string | null => {
+      return Object.freeze({ kind: 'text', ...facts, check: (v: PdfFieldValue): string | null => {
         if (typeof v !== 'string') return 'The value does not fit the field.';
         // UTF-16 code units, as the browser's `maxLength` counts them: never more than the input allows.
         if (maxLen !== null && v.length > maxLen) return `This field takes at most ${maxLen} characters.`;
@@ -149,15 +169,15 @@ export function fieldRule(spec: PdfFieldSpec): PdfFieldRule {
       } });
     }
     case 'checkbox':
-      return Object.freeze({ kind: 'button' });
+      return Object.freeze({ kind: 'button', ...facts });
     case 'radio':
-      return Object.freeze({ kind: 'button',
+      return Object.freeze({ kind: 'button', ...facts,
         group: Object.freeze({ key: spec.group, members: Object.freeze(spec.members.slice()), exactlyOne: spec.noToggleToOff }) });
     case 'choice': {
       const options = Object.freeze(spec.options.slice());
       const index = new Map(options.map((o, i) => [o, i]));
       const { editable, multiSelect } = spec;
-      return Object.freeze({ kind: 'choice', check: (v: PdfFieldValue): string | null => {
+      return Object.freeze({ kind: 'choice', ...facts, check: (v: PdfFieldValue): string | null => {
         if (multiSelect) {
           if (!Array.isArray(v)) return 'The value does not fit the field.';
           // Distinct options in /Opt order: pdf.js derives /I from the values in that order.
@@ -452,8 +472,14 @@ function valueFitsKind(rule: PdfFieldRule, v: PdfFieldValue): boolean {
   }
 }
 
-/** Radio groups touched by a `setFields` op must be stated whole, with at most (or exactly) one on. */
-function checkGroups(values: ReadonlyArray<{ ref: PdfObjRef; value: PdfFieldValue }>, ctx: PdfEditContext): string | null {
+/**
+ * Radio groups touched by a `setFields` op must be stated whole, with at most (or exactly) one on — and a CHANGE that
+ * leaves a group with none on is refused (PWP-28): pdf.js writes the field's /V only when a button is turned on, so
+ * turning the last one off leaves /V naming it while every widget shows Off, which readers disagree about (the
+ * verifier refuses such output). Restating an all-off group that was loaded all off changes nothing and passes.
+ */
+function checkGroups(values: ReadonlyArray<{ ref: PdfObjRef; value: PdfFieldValue }>, ctx: PdfEditContext,
+  changed: ReadonlySet<string>): string | null {
   const given = new Map<string, PdfFieldValue>();
   for (const { ref, value } of values) given.set(refKey(ref), value);
   const done = new Set<string>();
@@ -468,6 +494,7 @@ function checkGroups(values: ReadonlyArray<{ ref: PdfObjRef; value: PdfFieldValu
     }
     if (on > 1) return 'Only one radio button of a group can be on.';
     if (g.exactlyOne && on !== 1) return 'One radio button of this group must stay on.';
+    if (on === 0 && g.members.some((m) => changed.has(m))) return 'A group of radio buttons cannot be cleared here.';
   }
   return null;
 }
@@ -539,7 +566,7 @@ export function planEdit(s: PdfEditState, op: PdfEditOp, ctx: PdfEditContext, en
         if (fieldValuesEqual(before, after)) continue;
         delta.push({ slot: 'fields', key, before, after });
       }
-      const groupMsg = checkGroups(op.values, ctx);
+      const groupMsg = checkGroups(op.values, ctx, new Set(delta.map((e) => String(e.key))));
       if (groupMsg) return refuse('bad-value', groupMsg);
       return { ok: true, label: 'Fill Form Field', delta };
     }

@@ -69,11 +69,11 @@ const ink = (page, pages, comment = '') => {
 };
 
 /** Classify, apply ops through the real state API, run the real writer. */
-async function scenario(fx, build, { fields } = {}) {
+async function scenario(fx, build, { forms = false } = {}) {
   const base = fixture(fx);
-  const cls = C.classifySync(base);
+  const cls = C.classifySync(base, { forms });
   assert.ok(cls.editable, `${fx}: not editable (${cls.detail})`);
-  const ctx = fields ? { ...cls.context, fields } : cls.context;
+  const ctx = cls.context;
   const state = S.emptyState();
   let t = 0;
   const env = { now: () => new Date(DATE0 + 1000 * t++).toISOString(), baseline: new Map() };
@@ -234,12 +234,12 @@ if (!skipWriter) {
   SC.hybrid = await scenario('hybrid-xref.pdf', (c) => [hl(0, c.context.pages, 0)]);
   const fw = await widgets(fixture('forms.pdf'));
   const text = fw.find((w) => w.kind === 'text'), box = fw.find((w) => w.checkBox);
-  const fieldsCtx = new Map([[S.refKey(SA.parsePdfjsId(text.id)), { kind: 'text' }], [S.refKey(SA.parsePdfjsId(box.id)), { kind: 'button' }]]);
-  SC.forms = await scenario('forms.pdf', () => [{ op: 'setFields', values: [{ ref: SA.parsePdfjsId(text.id), value: 'Verified value' }, { ref: SA.parsePdfjsId(box.id), value: true }] }], { fields: fieldsCtx });
+  SC.forms = await scenario('forms.pdf', () => [{ op: 'setFields', values: [{ ref: SA.parsePdfjsId(text.id), value: 'Verified value' }, { ref: SA.parsePdfjsId(box.id), value: true }] }], { forms: true });
   SC.formsText = SA.parsePdfjsId(text.id);
-  const jw = (await widgets(fixture('forms-js.pdf'))).filter((w) => w.kind === 'text');
-  SC.formsJs = await scenario('forms-js.pdf', () => [{ op: 'setFields', values: [{ ref: SA.parsePdfjsId(jw[1].id), value: 'Line one\nLine two\nLine three' }] }],
-    { fields: new Map([[S.refKey(SA.parsePdfjsId(jw[1].id)), { kind: 'text' }]]) });
+  SC.formsBox = SA.parsePdfjsId(box.id);
+  // A value the field's font (Helvetica, WinAnsi) cannot encode: pdf.js drops the widget /AP and adds /NeedAppearances
+  // true to the (indirect) AcroForm (spec §8.5, PWP-28).
+  SC.formsGlyph = await scenario('forms.pdf', () => [{ op: 'setFields', values: [{ ref: SA.parsePdfjsId(text.id), value: '日本語' }] }], { forms: true });
 }
 const W = { skip: skipWriter };
 
@@ -269,7 +269,7 @@ test('rebuild() reproduces an accepted revision (the negative cases change one t
   for (const k of ['basic', 'stream', 'annotated', 'forms', 'word', 'tagged', 'signed']) passes(SC[k], rebuild(SC[k].base, split(SC[k])));
 });
 
-test('policy tables: hybrid bases get a classic table; the AcroForm row is refused until PWP-27', () => {
+test('policy tables: hybrid bases get a classic table; the AcroForm row stays refused (decided, PWP-28)', () => {
   assert.deepStrictEqual(V.allowedAppendedKinds('table'), ['table']);
   assert.deepStrictEqual(V.allowedAppendedKinds('stream'), ['stream']);
   assert.deepStrictEqual(V.allowedAppendedKinds('hybrid'), ['table']);
@@ -414,13 +414,19 @@ test('PV4: the catalog may not be superseded (with /OpenAction: also PV5)', W, (
   refused(sc, rebuild(sc.base, q), 'PV4', 'catalog-superseded');
 });
 
-test('PV4: AcroForm supersession is refused (pdf.js /NeedAppearances on a field with /AA; plain copy)', W, () => {
-  refused(SC.formsJs, SC.formsJs.out, 'PV4', 'acroform-superseded');
+test('PV4: AcroForm supersession is refused (pdf.js /NeedAppearances for a value it cannot draw; plain copy)', W, () => {
+  const g = refused(SC.formsGlyph, SC.formsGlyph.out, 'PV4', 'need-appearances');
+  assert.ok(g.findings.some((f) => f.code === 'appearance-missing' && f.obj === SC.formsText.num), show(g));
+  assert.equal(V.verifyFailureMessage(g), V.FIELD_APPEARANCE_MESSAGE);
   const sc = SC.forms;
   const cat = sc.baseFile.resolve(sc.baseFile.trailer.entries.get('Root').num).value;
   const af = cat.entries.get('AcroForm').num;
   const p = split(sc); p.objects.push({ num: af, gen: 0, body: baseBody(sc, af) });
-  refused(sc, rebuild(sc.base, p), 'PV4', 'acroform-superseded');
+  const r = refused(sc, rebuild(sc.base, p), 'PV4', 'acroform-superseded');
+  assert.equal(V.verifyFailureMessage(r), V.SAVE_REFUSED_MESSAGE);
+  // /NeedAppearances together with any other change is the plain refusal
+  const q = split(sc); q.objects.push({ num: af, gen: 0, body: withKey(withKey(baseBody(sc, af), 'NeedAppearances', 'true'), 'DA', '(/Helv 0 Tf)') });
+  refused(sc, rebuild(sc.base, q), 'PV4', 'acroform-superseded');
 });
 
 test('PV4: content streams, the structure tree, /Info, the page tree node are never superseded', W, () => {
@@ -543,6 +549,80 @@ test('PV4: widget and field rows: unrequested field, /MK, other keys, /AP target
   u.objects.push({ num: ghost, gen: 0, body: '<< /Type /Annot /Subtype /Popup /Rect [0 0 1 1] >>' });
   setBody(u, w.num, (b) => b.replace(/\/AP\s*<<\s*\/N\s*\d+ 0 R\s*>>/, `/AP << /N ${ghost} 0 R >>`));
   refused(sc, rebuild(sc.base, u), 'PV4', 'ap-target');
+});
+
+test('PV4 field rows (PWP-28): the written value must be the requested one, whatever the read-back says', W, () => {
+  const sc = SC.forms;
+  const textKey = S.refKey(SC.formsText), boxKey = S.refKey(SC.formsBox);
+  const textField = sc.cls.context.fields.get(textKey).field.split(' ')[0] * 1;
+  const boxField = sc.cls.context.fields.get(boxKey).field.split(' ')[0] * 1;
+  assert.notEqual(textField, SC.formsText.num, 'forms.pdf fields have separate widgets');
+  // the honest observed (what was requested) cannot rescue a tampered value
+  refused(sc, rebuild(sc.base, setBody(split(sc), textField, (b) => b.replace(/\/V\s*(\((?:\\.|[^\\)])*\)|<[^>]*>)/, '/V (Tampered value)'))), 'PV4', 'value-mismatch');
+  refused(sc, rebuild(sc.base, setBody(split(sc), textField, (b) => b.replace(/\/V\s*(\((?:\\.|[^\\)])*\)|<[^>]*>)/, '/V [(Verified value)]'))), 'PV4', 'value-mismatch');
+  refused(sc, rebuild(sc.base, setBody(split(sc), boxField, (b) => b.replace(/\/V\s*\/\w+/, '/V /Off'))), 'PV4', 'value-mismatch');
+  refused(sc, rebuild(sc.base, setBody(split(sc), SC.formsBox.num, (b) => b.replace(/\/AS\s*\/\w+/, '/AS /Off'))), 'PV4', 'value-mismatch');
+  // the checkbox field not rewritten at all: /V stays Off while the widget shows Yes
+  const q = split(sc); q.objects = q.objects.filter((o) => o.num !== boxField);
+  refused(sc, rebuild(sc.base, q), 'PV4', 'value-mismatch');
+  // a separate widget may not take the value itself, nor a non-string /M
+  refused(sc, rebuild(sc.base, setBody(split(sc), SC.formsText.num, (b) => withKey(b, 'V', '(Verified value)'))), 'PV4', 'superseded-key');
+  refused(sc, rebuild(sc.base, setBody(split(sc), SC.formsText.num, (b) => b.replace(/\/M\s*\([^)]*\)/, '/M 5'))), 'PV4', 'superseded-key');
+  // the field node may change /V only
+  refused(sc, rebuild(sc.base, setBody(split(sc), textField, (b) => b.replace(/\/Ff\s*0/, '/Ff 1'))), 'PV4', 'superseded-key');
+});
+
+test('PV4 field rows (PWP-28): appearances — fresh, own, and never borrowed from another field', W, () => {
+  const sc = SC.forms;
+  const w = SC.formsText.num;
+  const apRe = /\/AP\s*<<\s*\/N\s*(\d+) 0 R\s*>>/;
+  const ownForm = Number(apRe.exec(obj(split(sc), w).body)[1]);
+  assert.ok(ownForm >= sc.baseFile.size, 'the text widget got a new appearance');
+  // the widget's /AP dropped (what pdf.js does when it cannot draw the value; here the AcroForm is not touched)
+  const p = split(sc); setBody(p, w, (b) => b.replace(apRe, '')); p.objects = p.objects.filter((o) => o.num !== ownForm);
+  const r = refused(sc, rebuild(sc.base, p), 'PV4', 'appearance-missing');
+  assert.equal(V.verifyFailureMessage(r), V.FIELD_APPEARANCE_MESSAGE);
+  // pointing at the appearance stream of another field in the base (the 'code' field's widget)
+  const codeWidget = sc.cls.forms.fields.find((f) => f.type === 'text' && f.maxLen === 6).widgets[0].ref.num;
+  const otherAp = Number(apRe.exec(baseBody(sc, codeWidget))[1]);
+  const q = split(sc); setBody(q, w, (b) => b.replace(apRe, `/AP << /N ${otherAp} 0 R >>`)); q.objects = q.objects.filter((o) => o.num !== ownForm);
+  refused(sc, rebuild(sc.base, q), 'PV4', 'appearance-missing');
+  // the new appearance also given to another (unrequested) widget: shared, and that widget is unexpected
+  const s = split(sc);
+  s.objects.push({ num: codeWidget, gen: 0, body: baseBody(sc, codeWidget).replace(apRe, `/AP << /N ${ownForm} 0 R >>`) });
+  const res = refused(sc, rebuild(sc.base, s), 'PV4', 'ap-target');
+  assert.ok(res.findings.some((f) => f.code === 'field-unexpected' && f.obj === codeWidget), show(res));
+  // a checkbox may not change its appearance dictionary at all (pdf.js only switches /AS)
+  // (its on-appearance swapped for a radio button's from the base)
+  const radioWidget = sc.cls.forms.fields.find((f) => f.type === 'radio').widgets[0].ref.num;
+  const radioOn = Number(/\/N\s*<<\s*\/\w+\s+(\d+) 0 R/.exec(baseBody(sc, radioWidget))[1]);
+  const t = split(sc); setBody(t, SC.formsBox.num, (b) => b.replace(/(\/N\s*<<\s*\/Yes\s+)\d+/, `$1${radioOn}`));
+  assert.ok(obj(t, SC.formsBox.num).body.includes(`/Yes ${radioOn} 0 R`));
+  refused(sc, rebuild(sc.base, t), 'PV4', 'superseded-key');
+});
+
+test('PV4 field rows (PWP-28): extra fields rewritten; requests outside the fillable set', W, () => {
+  const sc = SC.forms;
+  // another field and its widget rewritten, unchanged or with a value
+  const code = sc.cls.forms.fields.find((f) => f.type === 'text' && f.maxLen === 6);
+  const p = split(sc); p.objects.push({ num: code.ref.num, gen: 0, body: baseBody(sc, code.ref.num) });
+  refused(sc, rebuild(sc.base, p), 'PV4', 'field-unexpected');
+  const q = split(sc); q.objects.push({ num: code.ref.num, gen: 0, body: baseBody(sc, code.ref.num).replace(/\/V\s*<[^>]*>/, '/V (XYZ)') });
+  refused(sc, rebuild(sc.base, q), 'PV4', 'field-unexpected');
+  // the radio group's field node, not part of the request
+  const radio = sc.cls.forms.fields.find((f) => f.type === 'radio');
+  const r = split(sc); r.objects.push({ num: radio.ref.num, gen: 0, body: baseBody(sc, radio.ref.num).replace(/\/V\s*\/\w+/, '/V /2') });
+  refused(sc, rebuild(sc.base, r), 'PV4', 'field-unexpected');
+  // a request that sets a locked field, or a forms-off classification: invalid, never saved
+  const locked = sc.cls.forms.fields.find((f) => f.locked === 'read-only').widgets[0].ref;
+  const bad = S.cloneState(sc.state); bad.fields.set(S.refKey(locked), 'changed');
+  refused(sc, sc.out, 'PV6', 'request-invalid', { state: bad, observed: V.expectedObserved(sc.cls, sc.state) });
+  const off = C.classifySync(sc.base);
+  const r2 = V.verifySaveSync({ base: sc.base, out: sc.out, classification: off, state: sc.state, author: AUTHOR, observed: V.expectedObserved(sc.cls, sc.state) });
+  assert.deepStrictEqual(r2.findings, [{ check: 'PV6', code: 'request-invalid' }]);
+  // a value the field's rule refuses (over MaxLen) is invalid as well
+  const long = S.cloneState(sc.state); long.fields.set(S.refKey(code.widgets[0].ref), 'ABCDEFG');
+  refused(sc, sc.out, 'PV6', 'request-invalid', { state: long });
 });
 
 // ================================================================ PV4 — new objects

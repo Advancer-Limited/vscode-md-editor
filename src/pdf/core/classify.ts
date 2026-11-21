@@ -301,6 +301,8 @@ function key(r: { num: number; gen: number }): string { return refKey({ num: r.n
 interface FieldInherited {
   ft: Val; ff: Val; v: Val; maxLen: Val; opt: Val;
   rich: boolean; scripts: boolean; calculated: boolean; indices: boolean; barcode: boolean;
+  /** An ancestor (not the node itself) carries /I. */
+  indicesUp: boolean;
   /** A /Parent link in the chain disagrees with the Kids walk. */
   bad: boolean;
 }
@@ -558,7 +560,7 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
     const seen = new Set<string>();
     type W = { v: PdfValue; parent: string | null; inh: FieldInherited; depth: number };
     const rootInh: FieldInherited = { ft: undefined, ff: undefined, v: undefined, maxLen: undefined, opt: undefined,
-      rich: false, scripts: false, calculated: false, indices: false, barcode: false, bad: false };
+      rich: false, scripts: false, calculated: false, indices: false, indicesUp: false, barcode: false, bad: false };
     const work: W[] = [];
     for (let i = roots.items.length - 1; i >= 0; i--) work.push({ v: roots.items[i], parent: null, inh: rootInh, depth: 0 });
     while (work.length) {
@@ -583,6 +585,7 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
         scripts: up.scripts || present(e.get('AA')),
         calculated: up.calculated || calcOrder.has(k),
         indices: up.indices || present(e.get('I')),
+        indicesUp: up.indices,
         barcode: up.barcode || present(e.get('PMD')),
         bad: up.bad || (parent === null ? par !== undefined && par.kind !== 'null' : !(par && par.kind === 'ref' && key(par) === parent)),
       };
@@ -664,7 +667,11 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
     // none of the value-defining entries (pdf.js reads them from the widget first, so they would override).
     let structure = inh.bad;
     let scripts = inh.scripts;
-    let indices = inh.indices;
+    // /I (choice indices) is fillable only on a merged field/widget that carries it itself (PWP-28): pdf.js
+    // rewrites /I there from the new value and /Opt order (the verifier checks it), but leaves an /I on a separate
+    // field node or an ancestor stale next to the new /V.
+    const merged = t.kids === null && ws.length === 1 && ws[0].key === t.key;
+    let indices = inh.indicesUp || (present(t.dict.entries.get('I')) && !merged);
     let barcode = inh.barcode;
     let placement = false;
     const widgets: PdfFieldFact['widgets'] = [];
@@ -758,10 +765,10 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
       return fact;
     }
     const members = ws.map((w) => w.key);
-    const rule = type === 'text' ? fieldRule({ kind: 'text', maxLen, multiline, comb: fact.comb })
-      : type === 'checkbox' ? fieldRule({ kind: 'checkbox' })
-      : type === 'radio' ? fieldRule({ kind: 'radio', group: t.key, members, noToggleToOff: bit(14) })
-      : fieldRule({ kind: 'choice', options, editable, multiSelect });
+    const rule = type === 'text' ? fieldRule({ kind: 'text', maxLen, multiline, comb: fact.comb }, t.key)
+      : type === 'checkbox' ? fieldRule({ kind: 'checkbox' }, t.key)
+      : type === 'radio' ? fieldRule({ kind: 'radio', group: t.key, members, noToggleToOff: bit(14) }, t.key)
+      : fieldRule({ kind: 'choice', options, editable, multiSelect }, t.key);
     for (const k of members) fieldRules.set(k, rule);
     return fact;
   }

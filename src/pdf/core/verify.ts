@@ -13,8 +13,10 @@
 //        object 0 and exactly the annotations (and Popups) the request removes.
 //   PV4  object allow-list: new objects are Highlight/Ink/Popup annotations, their appearance form XObjects
 //        and the cross-reference stream, with listed keys and value shapes; superseded objects are pages
-//        (/Annots only, and exactly as expected), and requested fields/widgets (/V /AS /AP /M /MK) — compared
-//        by DECODED value. Anything else (catalog, AcroForm, structure tree, streams ...) is refused.
+//        (/Annots only, and exactly as expected), and the objects of requested fields by role (`FIELD_SUPERSEDE_KEYS`:
+//        /V /I /AS /AP /M /MK) — compared by DECODED value; the written /V, /AS and /I must state the requested
+//        value and a rewritten text/choice widget must have a fresh appearance of its own (PWP-28). Anything else
+//        (catalog, AcroForm, structure tree, streams, other fields ...) is refused.
 //   PV5  inert: no new object and no changed key of a superseded object carries an action, script or file.
 //   PV6  expectations: the writer's read-back (`observed`) has the base's page count, the expected annotation
 //        count per page and the requested field values; the appended size is within budget.
@@ -27,11 +29,11 @@
 // No `vscode` import, no npm package (core rule 1).
 
 import { timingSafeEqual } from 'node:crypto';
-import type { PdfObserved } from '../protocol.js';
+import type { PdfFieldValue, PdfObserved } from '../protocol.js';
 import { openPdf, openPdfSync, PdfReadError } from './reader.js';
 import type { PdfDict, PdfFile, PdfIndirectObject, PdfRevision, PdfStream, PdfValue, ReaderLimits, XrefKind } from './reader.js';
 import type { PdfEditableClassification } from './classify.js';
-import type { PdfEditState } from './state.js';
+import type { PdfEditState, PdfFieldSpec } from './state.js';
 import { canonicalFields, fieldValuesEqual, refKey } from './state.js';
 import type { PdfHighlightEntry, PdfInkEntry, PdfStorageContext, PdfStorageEntry } from './storageAdapter.js';
 import { expectedAnnotDelta, expectedFreed, isEditorKey, serialisedSize, toStorageEntries } from './storageAdapter.js';
@@ -96,6 +98,9 @@ export const VERIFY_CODES = {
     'mk-changed',            // a widget's /MK changed beyond removing /R 0
     'kind-changed',          // a superseded object changed between dictionary and stream
     'field-unexpected',      // a field or widget the request does not set was rewritten
+    'value-mismatch',        // a requested field's written /V, /AS or /I does not state the requested value
+    'appearance-missing',    // a rewritten text/choice widget has no fresh /AP /N of its own (pdf.js could not draw the value)
+    'need-appearances',      // the AcroForm was superseded only to add /NeedAppearances true (same cause; §8.5)
     'catalog-superseded', 'acroform-superseded', 'struct-superseded', 'info-superseded', 'pages-superseded',
     'annot-superseded', 'stream-superseded', 'other-superseded',
   ],
@@ -236,22 +241,20 @@ export interface SupersedeRule {
 }
 
 /**
- * PV4, the AcroForm row — ISOLATED so that PWP-27 can extend it. Spec §6.5: the AcroForm dictionary is never
- * superseded, so in v1 (forms off until PWP-27) the rule is "refused".
- *
- * Known pdf.js behaviour (PWP-17 finding, `forms-js.pdf`): setting a text field that has /AA format or keystroke
- * scripts makes pdf.js re-write the AcroForm adding `/NeedAppearances true` and drop that widget's /AP. Such a
- * save is refused here (`acroform-superseded`). RECOMMENDATION for PWP-27: classify fields carrying /AA as NOT
- * fillable (scripts never run here, so the formatted value would be wrong anyway) rather than relaxing this rule;
- * if the rule is relaxed instead, the entry would be `{ keys: new Set(['NeedAppearances']) }` plus a value check
- * that the new value is `true`, and PV6 would have to accept a widget without /AP.
+ * PV4, the AcroForm row: the AcroForm dictionary is never superseded. DECIDED (PWP-27/PWP-28, 2026-11-21): this
+ * stays `null`. pdf.js supersedes it only to add `/NeedAppearances true`, which it does when it could not draw a
+ * value — a text field with /AA format scripts (such fields are not fillable, classification `scripts`) or a value
+ * the field's font cannot encode (it then also drops the widget's /AP). Relying on readers to redraw is what spec
+ * §8.5 rules out, so such an output is refused; when the only change is that flag the finding is the specific
+ * `need-appearances` (with `appearance-missing` on the widget) and `verifyFailureMessage` explains it to the user.
  */
 export const ACROFORM_SUPERSEDE_RULE: SupersedeRule | null = null;
 
 /** PV4: what a superseded object of each kind may change. `null` = never superseded (`<kind>-superseded`). */
 export const SUPERSEDE_RULES: Readonly<Record<SupersededKind, SupersedeRule | null>> = Object.freeze({
   page: { keys: new Set(['Annots']) },
-  widget: { keys: new Set(['V', 'AS', 'AP', 'M', 'MK']) },   // a widget, or a merged field/widget
+  // A widget, or a merged field/widget: the outer bound; what a given widget may change is `FIELD_SUPERSEDE_KEYS`.
+  widget: { keys: new Set(['V', 'I', 'AS', 'AP', 'M', 'MK']) },
   field: { keys: new Set(['V']) },
   acroform: ACROFORM_SUPERSEDE_RULE,
   catalog: null,
@@ -261,6 +264,26 @@ export const SUPERSEDE_RULES: Readonly<Record<SupersededKind, SupersedeRule | nu
   annot: null,
   stream: null,
   other: null,
+});
+
+/**
+ * The role of a superseded object of a requested field (PWP-28): `merged` = a field/widget in one object (the request
+ * key itself); `widget` = a separate widget (the request key, whose /Parent holds the value); `field` = that terminal
+ * field node. Anything else of the field tree may not be rewritten (`field-unexpected`).
+ */
+export type FieldRole = 'merged' | 'widget' | 'field';
+
+const keys = (...k: string[]): ReadonlySet<string> => new Set(k);
+/**
+ * PV4 field rows, per role and field kind: the keys pdf.js 6.5.438 changes (measured, PWP-28 on `forms.pdf` and
+ * synthetic merged/separate fields). Text and choice widgets get a new appearance (/AP /N to a new form XObject);
+ * buttons only switch /AS (their /AP is never rewritten); the value (/V, and /I of a merged choice field that has
+ * one) lives on the merged object or the field node; /M is the rewrite time; /MK may only lose `/R 0`.
+ */
+export const FIELD_SUPERSEDE_KEYS: Readonly<Record<FieldRole, Readonly<Record<PdfFieldSpec['kind'], ReadonlySet<string>>>>> = Object.freeze({
+  merged: { text: keys('V', 'AP', 'M', 'MK'), choice: keys('V', 'I', 'AP', 'M', 'MK'), checkbox: keys('V', 'AS', 'M', 'MK'), radio: keys('V', 'AS', 'M', 'MK') },
+  widget: { text: keys('AP', 'M', 'MK'), choice: keys('AP', 'M', 'MK'), checkbox: keys('AS', 'M', 'MK'), radio: keys('AS', 'M', 'MK') },
+  field: { text: keys('V'), choice: keys('V'), checkbox: keys('V'), radio: keys('V') },
 });
 
 const SUPERSEDED_CODE: Readonly<Record<SupersededKind, PdfVerifyCode<'PV4'>>> = Object.freeze({
@@ -325,6 +348,23 @@ export function verifySaveSync(input: PdfVerifyInput, options: PdfVerifyOptions 
     v.internal(e);
   }
   return v.result();
+}
+
+/** The message of a refused save (spec §6.5 step 4). */
+export const SAVE_REFUSED_MESSAGE = 'Save failed an internal consistency check — your file on disk was not changed.';
+/**
+ * The message when a form value could not be drawn (spec §8.5, PWP-28): pdf.js cannot encode some character of a
+ * text or choice value in the field's font, so it writes the value without an appearance (and asks readers to redraw
+ * with /NeedAppearances when the AcroForm is an indirect object). Neither is accepted, so the save is refused with
+ * this sentence instead of the generic one. The `appearance-missing` findings carry the widget's object number.
+ */
+export const FIELD_APPEARANCE_MESSAGE = 'Couldn\'t save: a form field contains characters its font can\'t display '
+  + '(for example letters from another script, or emoji). Remove those characters and save again. Your file on disk was not changed.';
+
+/** The user-facing sentence for a failed verification. */
+export function verifyFailureMessage(result: PdfVerifyResult): string {
+  return result.findings.some((f) => f.code === 'appearance-missing' || f.code === 'need-appearances')
+    ? FIELD_APPEARANCE_MESSAGE : SAVE_REFUSED_MESSAGE;
 }
 
 /** One line per finding ("PV4 new-key obj 12"), for the "Save a copy of diagnostics" file. No document content. */
@@ -519,6 +559,10 @@ class Verifier {
   private readonly max: number;
   private entries: PdfStorageEntry[] = [];
   private budgetBytes = 0;
+  /** Field objects the request may rewrite ("num gen" -> role and the field's spec). */
+  private readonly roles = new Map<string, { role: FieldRole; spec: Readonly<PdfFieldSpec> }>();
+  /** How often each new appearance stream is referenced from an /AP (each may be used once). */
+  private readonly apUses = new Map<number, number>();
 
   constructor(readonly input: PdfVerifyInput, readonly options: PdfVerifyOptions) {
     this.max = options.maxFindings ?? 100;
@@ -557,6 +601,35 @@ class Verifier {
     } catch {
       this.add('PV6', 'request-invalid');
       return false;
+    }
+    if (!this.fieldRoles()) {
+      this.add('PV6', 'request-invalid');
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * The field objects the request may rewrite, by role (`FIELD_SUPERSEDE_KEYS`). Every requested field must be a
+   * fillable widget of THIS classification (classified with forms on), with a value its rule accepts; otherwise the
+   * request is invalid (a host bug: the state should never have accepted it).
+   */
+  private fieldRoles(): boolean {
+    const rules = this.input.classification.context.fields;
+    for (const [k, value] of this.input.state.fields) {
+      const rule = rules.get(k);
+      if (!rule || !rule.spec || rule.field === undefined || (rule.check && rule.check(value) !== null)) return false;
+      if (rule.spec.kind === 'text' ? typeof value !== 'string' : rule.spec.kind === 'choice'
+        ? !(typeof value === 'string' || Array.isArray(value)) : typeof value !== 'boolean') return false;
+      const merged = rule.field === k;
+      const prev = this.roles.get(k);
+      if (prev && prev.role !== (merged ? 'merged' : 'widget')) return false;
+      this.roles.set(k, { role: merged ? 'merged' : 'widget', spec: rule.spec });
+      if (!merged) {
+        const f = this.roles.get(rule.field);
+        if (f && (f.role !== 'field' || f.spec.kind !== rule.spec.kind)) return false;
+        this.roles.set(rule.field, { role: 'field', spec: rule.spec });
+      }
     }
     return true;
   }
@@ -733,11 +806,14 @@ class Verifier {
     }
 
     // Superseded objects.
-    const fieldFamily = this.fieldFamily(bf);
     const links = new Map<number, number>(); // new annotation num -> page listing it
     const rewrittenPages = new Set<number>();
-    const ctx = { bf, news, formRefs, links, rewrittenPages, pageIndex, fieldFamily };
+    const ctx = { bf, news, formRefs, links, rewrittenPages, pageIndex };
     for (const o of superseded) this.supersede(o, ctx);
+
+    // Requested field values as written (trusted bytes, not the read-back), and their appearances.
+    this.fieldValues(bf, of, news, new Set(superseded.map((o) => o.num)));
+    for (const [num, uses] of this.apUses) if (uses > 1) this.add('PV4', 'ap-target', num);
 
     // Pages the request touches must have been rewritten.
     const expectedPages = this.expectedPages();
@@ -794,7 +870,7 @@ class Verifier {
           const nv = v.entries.get('N');
           const target = nv && nv.kind === 'ref' && nv.gen === 0 ? news.get(nv.num) : undefined;
           if (!target || target.kind !== 'form') this.add('PV4', 'ap-target', n.num);
-          else formRefs.add(target.num);
+          else { formRefs.add(target.num); this.useAp(target.num); }
           break;
         }
         case 'Popup': {
@@ -839,22 +915,68 @@ class Verifier {
     }
   }
 
-  /** Field and widget objects a request may rewrite: the requested refs and their /Parent ancestors. */
-  private fieldFamily(bf: PdfFile): Set<string> {
-    const fam = new Set<string>();
-    for (const key of this.input.state.fields.keys()) {
-      fam.add(key);
-      let d = dictOf(safeResolve(bf, key)?.value);
-      for (let i = 0; d && i < MAX_FIELD_DEPTH; i++) {
-        const p = d.entries.get('Parent');
-        if (!p || p.kind !== 'ref') break;
-        const pk = refKey(p);
-        if (fam.has(pk)) break;
-        fam.add(pk);
-        d = dictOf(safeResolve(bf, pk)?.value);
+  private useAp(num: number): void {
+    this.apUses.set(num, (this.apUses.get(num) ?? 0) + 1);
+  }
+
+  /**
+   * PV4 field rows, values (PWP-28): each requested field's value as the OUTPUT states it — /V on the terminal field
+   * (inherited for buttons), /AS of the widget, /I of a merged choice field — must be the requested one, decided from
+   * the bytes rather than from the untrusted read-back; a rewritten text or choice widget must carry its own fresh
+   * appearance (`/AP << /N new-form >>`), otherwise pdf.js could not draw the value (`appearance-missing`).
+   */
+  private fieldValues(bf: PdfFile, of: PdfFile, news: Map<number, NewObject>, rewritten: Set<number>): void {
+    const rules = this.input.classification.context.fields;
+    for (const [k, value] of this.input.state.fields) {
+      const rule = rules.get(k)!;
+      const spec = rule.spec!;
+      const fieldKey = rule.field!;
+      const wNum = Number(k.slice(0, k.indexOf(' ')));
+      const fNum = Number(fieldKey.slice(0, fieldKey.indexOf(' ')));
+      const wOut = dictOf(safeResolve(of, k)?.value);
+      const fOut = fieldKey === k ? wOut : dictOf(safeResolve(of, fieldKey)?.value);
+      if (!wOut || !fOut) { this.add('PV4', 'value-mismatch', wNum); continue; }
+      const mismatch = () => this.add('PV4', 'value-mismatch', wNum);
+      const own = (name: string): PdfValue | undefined => {
+        const raw = fOut.entries.get(name);
+        return raw ? safeDerefValue(of, raw) ?? undefined : undefined;
+      };
+      switch (spec.kind) {
+        case 'text': {
+          const v = own('V');
+          if (!v || v.kind !== 'string' || decodeTextString(v.bytes) !== value) mismatch();
+          break;
+        }
+        case 'choice': {
+          const want = Array.isArray(value) ? value : [value as string];
+          const got = choiceValues(own('V'));
+          if (!got || got.length !== want.length || got.some((s, i) => s !== want[i])) mismatch();
+          const idx = own('I');
+          if (idx !== undefined && idx.kind !== 'null') {
+            const expected = want.map((s) => spec.options.indexOf(s)).filter((i) => i >= 0).sort((a, b) => a - b);
+            const written = nums(idx);
+            if (!written || written.length !== expected.length || written.some((n, i) => n !== expected[i])) mismatch();
+          }
+          break;
+        }
+        case 'checkbox': case 'radio': {
+          const on = onStateOf(bf, dictOf(safeResolve(bf, k)?.value));
+          if (!on) { mismatch(); break; }
+          const as = wOut.entries.has('AS') ? nameOf(wOut.entries.get('AS')) : 'Off';
+          const v = inheritedV(of, fieldKey);
+          const vName = v === undefined ? 'Off' : nameOf(v);
+          if (value === true ? as !== on || vName !== on : as !== 'Off' || vName === on) mismatch();
+          break;
+        }
+      }
+      if (spec.kind === 'text' || spec.kind === 'choice') {
+        if (!rewritten.has(wNum) && !rewritten.has(fNum)) continue; // not written: the base value is the value
+        const ap = rewritten.has(wNum) ? wOut.entries.get('AP') : undefined;
+        const n = ap && isDict(ap) && ap.entries.size === 1 ? ap.entries.get('N') : undefined;
+        const target = n && n.kind === 'ref' && n.gen === 0 && n.num >= bf.size ? news.get(n.num) : undefined;
+        if (!target || target.kind !== 'form') this.add('PV4', 'appearance-missing', wNum);
       }
     }
-    return fam;
   }
 
   private supersededKind(bf: PdfFile, o: PdfIndirectObject, pageIndex: Map<string, number>): SupersededKind {
@@ -885,7 +1007,7 @@ class Verifier {
 
   private supersede(o: PdfIndirectObject, c: {
     bf: PdfFile; news: Map<number, NewObject>; formRefs: Set<number>; links: Map<number, number>;
-    rewrittenPages: Set<number>; pageIndex: Map<string, number>; fieldFamily: Set<string>;
+    rewrittenPages: Set<number>; pageIndex: Map<string, number>;
   }): void {
     const before = safeResolve(c.bf, refKey(o));
     if (!before) { this.add('PV3', 'superseded-missing', o.num); return; }
@@ -895,9 +1017,20 @@ class Verifier {
     const changed = bd && od ? dictDiff(bd, od) : [];
     // PV5 on changed keys (an unchanged /A or /AA carried over by a rewrite is not a finding).
     if (od) for (const k of changed) if (INERT_NAMES.has(k) || hasInertName(od.entries.get(k))) { this.add('PV5', 'action-introduced', o.num); break; }
-    if (!rule) { this.add('PV4', SUPERSEDED_CODE[kind], o.num); return; }
+    if (!rule) {
+      // pdf.js asking readers to redraw a value it could not draw (spec §8.5): named, so the user is told why.
+      const na = od?.entries.get('NeedAppearances');
+      const onlyNeedAppearances = kind === 'acroform' && changed.length === 1 && changed[0] === 'NeedAppearances'
+        && !!na && na.kind === 'bool' && na.value;
+      this.add('PV4', onlyNeedAppearances ? 'need-appearances' : SUPERSEDED_CODE[kind], o.num);
+      return;
+    }
     if (before.value.kind === 'stream' || o.value.kind === 'stream' || !bd || !od) { this.add('PV4', 'kind-changed', o.num); return; }
-    for (const k of changed) if (!rule.keys.has(k)) this.add('PV4', 'superseded-key', o.num);
+    // A requested field's objects change only what their role allows; other field objects are unexpected.
+    const role = kind === 'widget' || kind === 'field' ? this.roles.get(refKey(o)) : undefined;
+    const allowed = role ? FIELD_SUPERSEDE_KEYS[role.role][role.spec.kind] : rule.keys;
+    for (const k of changed) if (!allowed.has(k)) this.add('PV4', 'superseded-key', o.num);
+    if (changed.includes('M') && !isStr(od.entries.get('M'))) this.add('PV4', 'superseded-key', o.num);
 
     if (kind === 'page') {
       const p = c.pageIndex.get(refKey(o))!;
@@ -906,7 +1039,7 @@ class Verifier {
       return;
     }
     // widget / field
-    if (!c.fieldFamily.has(refKey(o))) this.add('PV4', 'field-unexpected', o.num);
+    if (!role) this.add('PV4', 'field-unexpected', o.num);
     if (changed.includes('MK')) {
       const a = bd.entries.get('MK'), b = od.entries.get('MK');
       const r = isDict(a) ? a.entries.get('R') : undefined;
@@ -925,6 +1058,7 @@ class Verifier {
         const t = news.get(v.num);
         if (!t || t.kind !== 'form' || v.gen !== 0) return false;
         formRefs.add(t.num);
+        this.useAp(t.num);
         return true;
       }
       const e = bf.entry(v.num);
@@ -1051,6 +1185,40 @@ function annotMatches(n: NewObject, e: AddedEntry): boolean {
   const text = contents && contents.kind === 'string' ? decodeTextString(contents.bytes) : '';
   if (text !== (e.popup?.contents ?? '')) return false;
   return d.entries.has('Popup') === !!e.popup;
+}
+
+/** A choice field's /V as a list of texts (a string, or an array of strings), or null for anything else. */
+function choiceValues(v: PdfValue | undefined): string[] | null {
+  if (!v) return null;
+  if (v.kind === 'string') return [decodeTextString(v.bytes)];
+  if (v.kind !== 'array') return null;
+  const out: string[] = [];
+  for (const it of v.items) { if (it.kind !== 'string') return null; out.push(decodeTextString(it.bytes)); }
+  return out;
+}
+
+/** A button widget's single on-state (its /AP /N names other than Off), as classification requires; else null. */
+function onStateOf(f: PdfFile, w: PdfDict | null): string | null {
+  const ref = (v: PdfValue | undefined) => (v ? safeDeref(f, v) : null);
+  const ap = ref(w?.entries.get('AP'));
+  const n = ap && isDict(ap) ? ref(ap.entries.get('N')) : null;
+  if (!n || !isDict(n)) return null;
+  const on = [...n.entries.keys()].filter((k) => k !== 'Off');
+  return on.length === 1 ? on[0] : null;
+}
+
+/** /V of a field node in `f`, inherited up /Parent as readers resolve it; undefined when no node has one. */
+function inheritedV(f: PdfFile, key: string): PdfValue | undefined {
+  let d = dictOf(safeResolve(f, key)?.value);
+  for (let i = 0; d && i < MAX_FIELD_DEPTH; i++) {
+    const raw = d.entries.get('V');
+    const v = raw ? safeDerefValue(f, raw) ?? undefined : undefined;
+    if (v !== undefined && v.kind !== 'null') return v;
+    const p = d.entries.get('Parent');
+    if (!p || p.kind !== 'ref') return undefined;
+    d = dictOf(safeResolve(f, refKey(p))?.value);
+  }
+  return undefined;
 }
 
 /** End of an appended object (after `endobj`), or -1 when `endobj` does not follow its value. */

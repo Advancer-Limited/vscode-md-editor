@@ -84,7 +84,7 @@ const inkOp = (pages, page) => {
   return { op: 'addAnnotation', spec: { kind: 'ink', localId: 900 + page, page, color: 'red', width: 2, comment: 'ink ✓', paths: [[b.x0 + 80, b.y0 + 300, b.x0 + 120, b.y0 + 340, b.x0 + 160, b.y0 + 300]] } };
 };
 function build(base, ops, extraCtx) {
-  const cls = C.classifySync(base);
+  const cls = C.classifySync(base, { forms: true });
   assert.ok(cls.editable, cls.detail);
   const ctx = extraCtx ? { ...cls.context, ...extraCtx } : cls.context;
   const state = S.emptyState();
@@ -131,7 +131,6 @@ T('mixed edits: ink, removals of existing annotations, field values (text, check
   const refOf = (i) => SA.parsePdfjsId(i);
   const tx = wb.filter((a) => a.fieldType === 'Tx'), cb = wb.filter((a) => a.checkBox), radios = wb.filter((a) => a.radioButton);
   const combo = wb.filter((a) => a.fieldType === 'Ch' && a.combo), list = wb.filter((a) => a.fieldType === 'Ch' && !a.combo);
-  const kinds = new Map(wb.map((a) => [S.refKey(refOf(a.id)), { kind: a.fieldType === 'Tx' ? 'text' : a.fieldType === 'Btn' ? 'button' : 'choice' }]));
   const values = [];
   if (tx[0]) values.push({ ref: refOf(tx[0].id), value: 'Writer value äöü' });
   if (tx[1]) values.push({ ref: refOf(tx[1].id), value: 'Line one\nLine two' });
@@ -142,7 +141,7 @@ T('mixed edits: ink, removals of existing annotations, field values (text, check
   assert.ok(values.length >= 4, 'forms.pdf has fields');
   const cases = [
     ['annotated.pdf', (cls) => [hl(cls.context.pages, 0, 3, 'x'), inkOp(cls.context.pages, 0), ...[...cls.context.deletable.keys()].map((k) => ({ op: 'removeAnnotation', target: { ref: S.parseRefKey(k) } }))], undefined],
-    ['forms.pdf', () => [{ op: 'setFields', values }], { fields: kinds }],
+    ['forms.pdf', () => [{ op: 'setFields', values }], undefined],
   ];
   for (const [fx, ops, extra] of cases) {
     const base = fixture(fx);

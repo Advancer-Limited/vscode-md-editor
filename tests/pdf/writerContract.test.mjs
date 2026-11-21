@@ -97,31 +97,13 @@ async function pdfjsWrite(base, storage) {
   } finally { await task.destroy(); }
 }
 
-const DELETABLE = new Set(['Highlight', 'Underline', 'StrikeOut', 'Squiggly', 'Text', 'Ink', 'FreeText']);
-
-/** The classification facts the state and adapter need, derived from pdf.js (PWP-16's classify is not there yet). */
-function contextFrom(inv) {
-  const pages = [];
-  const deletable = new Map();
-  const popups = new Map();
-  const fields = new Map();
-  for (let i = 0; i < inv.numPages; i++) {
-    const p = inv.pages.get(i);
-    const v = p ? p.view : [0, 0, 595, 842];
-    pages.push({ mediaBox: { x0: v[0], y0: v[1], x1: v[2], y1: v[3] }, rotate: p?.rotate ?? 0 });
-    for (const a of p?.annots ?? []) {
-      if (!refOf(a.id)) continue;
-      if (DELETABLE.has(a.subtype)) {
-        deletable.set(keyOf(a.id), a.popupRef ? { page: i, popup: keyOf(a.popupRef) } : { page: i });
-        if (a.popupRef) popups.set(keyOf(a.popupRef), keyOf(a.id));
-      }
-      if (a.subtype === 'Widget' && !a.readOnly && a.fieldType !== 'Sig') {
-        fields.set(keyOf(a.id), { kind: a.fieldType === 'Tx' ? 'text' : a.fieldType === 'Btn' ? 'button' : 'choice' });
-      }
-    }
-  }
-  return { pages, deletable, popups, fields };
+/** The classification the state, adapter and verifier work from: `classify(base, { forms: true })` (PWP-28). */
+function classified(base) {
+  const cls = C.classifySync(base, { forms: true });
+  assert.ok(cls.editable, `classification refuses the base (${cls.detail})`);
+  return cls;
 }
+const contextFrom = (base) => classified(base).context;
 
 // ---------------------------------------------------------------- cases (ops built through the real state API)
 
@@ -174,32 +156,29 @@ const REMOVE_CASES = {
     : null),
 };
 
-/** Fillable widgets of a kind, from the inventory. */
-function widgets(inv, pred) {
+/** Widgets of a kind that the classification found fillable, from the inventory. */
+function widgets(inv, ctx, pred) {
   const out = [];
-  for (const p of inv.pages.values()) for (const a of p.annots) if (a.subtype === 'Widget' && !a.readOnly && pred(a)) out.push(a);
+  for (const p of inv.pages.values()) for (const a of p.annots) if (a.subtype === 'Widget' && ctx.fields.has(keyOf(a.id)) && pred(a)) out.push(a);
   return out;
 }
 const setF = (...vals) => ({ op: 'setFields', values: vals.map(([id, value]) => ({ ref: refOf(id), value })) });
 const FIELD_CASES = {
-  'field-text': (inv) => { const t = widgets(inv, (a) => a.fieldType === 'Tx'); return t[0] ? [setF([t[0].id, 'Contract value äöü'])] : null; },
-  'field-multiline': (inv) => { const t = widgets(inv, (a) => a.fieldType === 'Tx'); return t[1] ? [setF([t[1].id, 'Line one\nLine two\nLine three'])] : null; },
-  'field-checkbox': (inv) => { const c = widgets(inv, (a) => a.checkBox); return c[0] ? [setF([c[0].id, true])] : null; },
-  'field-radio': (inv) => {
-    const r = widgets(inv, (a) => a.radioButton);
+  'field-text': (inv, ctx) => { const t = widgets(inv, ctx, (a) => a.fieldType === 'Tx'); return t[0] ? [setF([t[0].id, 'Contract value äöü'])] : null; },
+  'field-multiline': (inv, ctx) => { const t = widgets(inv, ctx, (a) => a.fieldType === 'Tx'); return t[1] ? [setF([t[1].id, 'Line one\nLine two\nLine three'])] : null; },
+  'field-checkbox': (inv, ctx) => { const c = widgets(inv, ctx, (a) => a.checkBox); return c[0] ? [setF([c[0].id, true])] : null; },
+  'field-radio': (inv, ctx) => {
+    const r = widgets(inv, ctx, (a) => a.radioButton);
     return r.length > 1 ? [setF(...r.map((w, i) => [w.id, i === 1]))] : null;
   },
-  'field-combo': (inv) => { const c = widgets(inv, (a) => a.fieldType === 'Ch' && a.combo); return c[0] ? [setF([c[0].id, c[0].options.at(-1)])] : null; },
-  'field-list': (inv) => { const c = widgets(inv, (a) => a.fieldType === 'Ch' && !a.combo); return c[0] ? [setF([c[0].id, c[0].options[Math.min(2, c[0].options.length - 1)]])] : null; },
-  'fields-and-highlight': (inv) => {
-    const t = widgets(inv, (a) => a.fieldType === 'Tx');
-    const c = widgets(inv, (a) => a.checkBox);
+  'field-combo': (inv, ctx) => { const c = widgets(inv, ctx, (a) => a.fieldType === 'Ch' && a.combo); return c[0] ? [setF([c[0].id, c[0].options.at(-1)])] : null; },
+  'field-list': (inv, ctx) => { const c = widgets(inv, ctx, (a) => a.fieldType === 'Ch' && !a.combo); return c[0] ? [setF([c[0].id, c[0].options[Math.min(2, c[0].options.length - 1)]])] : null; },
+  'fields-and-highlight': (inv, ctx) => {
+    const t = widgets(inv, ctx, (a) => a.fieldType === 'Tx');
+    const c = widgets(inv, ctx, (a) => a.checkBox);
     return t[0] && c[0] ? [setF([t[0].id, 'With a highlight'], [c[0].id, true]), hl(0, inv.pages.get(0).view, 20, 'yellow', 'Next to a form')] : null;
   },
 };
-
-/** Cases where pdf.js supersedes the AcroForm with /NeedAppearances true: forms-js "price" has /AA format scripts. */
-const NEEDS_APPEARANCES = new Set(['forms-js.pdf/field-multiline']);
 
 /** fixture -> case groups. Editable fixtures only (no encryption, no /XRefStm, intact cross-reference). */
 const MATRIX = {
@@ -635,10 +614,11 @@ function findAnnot(list, want, tol = 0.02) {
   return list.find((a) => a.subtype === want.subtype && near(a.rect, want.rect, tol));
 }
 
-async function contract(fx, name, ops, { inv: givenInv, needAppearances = false } = {}) {
+async function contract(fx, name, ops, { inv: givenInv } = {}) {
   const base = fixture(fx);
   const inv = givenInv ?? await inventory(base);
-  const ctx = contextFrom(inv);
+  const cls = classified(base);
+  const ctx = cls.context;
   const s = S.emptyState();
   const env = makeEnv();
   for (const op of typeof ops === 'function' ? ops(inv, ctx) : ops) {
@@ -655,7 +635,7 @@ async function contract(fx, name, ops, { inv: givenInv, needAppearances = false 
   const added = expectedAdded(storage);
   const freed = SA.expectedFreed(s, actx).map((r) => r.num);
   const addedCounts = { Highlight: added.filter((a) => a.subtype === 'Highlight').length, Ink: added.filter((a) => a.subtype === 'Ink').length, Popup: added.filter((a) => a.contents).length };
-  const A = await analyse(base, out, { freed, added: addedCounts, needAppearances });
+  const A = await analyse(base, out, { freed, added: addedCounts, needAppearances: false });
   assert.deepStrictEqual(A.problems, [], `${fx}/${name}: revision problems`);
 
   // Touched pages: edited annotations, and the pages of the fields.
@@ -692,8 +672,6 @@ async function contract(fx, name, ops, { inv: givenInv, needAppearances = false 
   // PWP-18: the host verifier (spec §6.5 PV1-PV6) accepts every real pdf.js output, with `observed` as the writer
   // service reports it: pdf.js's count for each touched page (untouched pages: the classified count, which the PG6
   // check below proves unchanged) and the read-back of each requested field.
-  const cls = C.classifySync(base);
-  assert.ok(cls.editable, `${fx}: classification refuses the base (${cls.detail})`);
   const observed = {
     pageCount: after.numPages,
     annotsPerPage: cls.pages.map((pg, i) => (after.pages.has(i) ? after.pages.get(i).annots.length : pg.annots.length)),
@@ -705,14 +683,8 @@ async function contract(fx, name, ops, { inv: givenInv, needAppearances = false 
     }),
   };
   const verdict = V.verifySaveSync({ base, out, classification: cls, state: s, author: 'Contract Tester', observed });
-  if (needAppearances) {
-    // Decision (PWP-18): PV4 keeps the AcroForm row strict (`ACROFORM_SUPERSEDE_RULE` = null) until PWP-27.
-    assert.ok(verdict.findings.some((f) => f.check === 'PV4' && f.code === 'acroform-superseded'), `${fx}/${name}: expected acroform-superseded
+  assert.ok(verdict.ok, `${fx}/${name}: verifier refused a real pdf.js output
 ${V.formatFindings(verdict)}`);
-  } else {
-    assert.ok(verdict.ok, `${fx}/${name}: verifier refused a real pdf.js output
-${V.formatFindings(verdict)}`);
-  }
 
   // PDFium and pdf-lib: the same counts and annotations.
   const [fBase, fOut] = [await pdfiumAnnots(base, touched), await pdfiumAnnots(out, touched)];
@@ -886,19 +858,31 @@ if (!skipWriter) {
   // Cases are chosen per fixture from its pdf.js inventory, so only applicable ones are registered.
   for (const [fx, groups] of Object.entries(MATRIX)) {
     const inv = await inventory(fixture(fx));
-    const ctx = contextFrom(inv);
+    const ctx = contextFrom(fixture(fx));
     for (const group of groups) {
       for (const [name, build] of Object.entries(group)) {
         const ops = build(inv, ctx);
         if (!ops) continue;
         test(`contract ${fx} / ${name}`, async () => {
-          const r = await contract(fx, name, ops, { inv, needAppearances: NEEDS_APPEARANCES.has(`${fx}/${name}`) });
+          const r = await contract(fx, name, ops, { inv });
           recordSummary({ fixture: fx, case: name, appended: r.analysis.appended, newKinds: r.analysis.newKinds, superseded: r.analysis.superseded, freed: r.analysis.freed });
         });
       }
     }
   }
 }
+
+test('forms-js.pdf: no field case applies — every field carries scripts, so the state refuses them (PWP-27 decision)', { skip: skipWriter }, async () => {
+  const base = fixture('forms-js.pdf');
+  const inv = await inventory(base);
+  const ctx = contextFrom(base);
+  assert.equal(ctx.fields.size, 0);
+  for (const build of Object.values(FIELD_CASES)) assert.equal(build(inv, ctx), null);
+  const text = [...inv.pages.get(0).annots].find((a) => a.fieldType === 'Tx');
+  const plan = S.planEdit(S.emptyState(), setF([text.id, 'x']), ctx, makeEnv());
+  assert.equal(plan.ok, false);
+  assert.equal(plan.error.reason, 'not-fillable');
+});
 
 test('contract large.pdf (2,000 pages) / highlight on the last page', { skip: skipWriter }, async () => {
   const base = fixture('large.pdf');
@@ -920,7 +904,7 @@ test('add + delete + undo sequences that return to empty write nothing (PG2 by c
   const fx = 'annotated.pdf';
   const base = fixture(fx);
   const inv = await inventory(base);
-  const ctx = contextFrom(inv);
+  const ctx = contextFrom(base);
   const s = S.emptyState();
   const env = makeEnv();
   const deltas = [];
@@ -940,7 +924,7 @@ test('a removal really shortens /Annots; the same removal keyed by the annotatio
   const fx = 'annotated.pdf';
   const base = fixture(fx);
   const inv = await inventory(base);
-  const ctx = contextFrom(inv);
+  const ctx = contextFrom(base);
   const first = deletables(ctx)[0];
   const s = S.emptyState();
   assert.ok(S.applyEdit(s, rm(first), ctx, makeEnv()).ok);
@@ -965,7 +949,7 @@ test('NaN control points (pdf.js editor format) do not survive JSON; the adapter
   assert.deepStrictEqual(jsonRoundTrip(withNaN).paths.lines[0].slice(0, 4), [null, null, null, null]);
   const base = fixture('basic.pdf');
   const inv = await inventory(base);
-  const ctx = contextFrom(inv);
+  const ctx = contextFrom(base);
   const s = S.emptyState();
   assert.ok(S.applyEdit(s, ink(0, inv.pages.get(0).view), ctx, makeEnv()).ok);
   const entries = SA.toStorageEntries(s, ctx);
@@ -982,7 +966,7 @@ test('state-determined output (PG4): equal states write identical bytes on a fil
   for (const fx of ['basic.pdf', 'xref-stream.pdf', 'word.pdf']) {
     const base = fixture(fx);
     const inv = await inventory(base);
-    const ctx = contextFrom(inv);
+    const ctx = contextFrom(base);
     const ops = [hl(0, inv.pages.get(0).view, 0, 'yellow', 'same'), ink(0, inv.pages.get(0).view)];
     const outs = [];
     for (let run = 0; run < 2; run++) {
