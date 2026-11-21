@@ -58,14 +58,19 @@ before(async () => {
   host.OfficeDocument.backupDelayMs = 0;
 });
 
+/**
+ * Every test starts from all flags off and switches on what it needs, so the flag-off behaviour stays
+ * covered now that 1.6 ships with editing on (`shipped` holds the real values).
+ */
+const FLAGS_OFF = Object.freeze({ xlsxEdit: false, docxEdit: false, xlsxStructure: false });
 let shipped;
 beforeEach(() => {
   S.reset();
   shipped ??= { ...host.OFFICE_FLAGS };
-  Object.assign(host.OFFICE_FLAGS, shipped);
+  Object.assign(host.OFFICE_FLAGS, FLAGS_OFF);
   host.OfficeDocument.saveHooks = undefined;
 });
-afterEach(() => { Object.assign(host.OFFICE_FLAGS, shipped); host.OfficeDocument.saveHooks = undefined; });
+afterEach(() => { Object.assign(host.OFFICE_FLAGS, FLAGS_OFF); host.OfficeDocument.saveHooks = undefined; });
 
 const ctx = {
   extensionUri: vscode.Uri.file('/ext'),
@@ -154,7 +159,7 @@ const textItems = (model, suffix) => model.segments.map((s) => (s.kind === 'text
 
 // ---------------------------------------------------------------------------------------------
 
-test('flag off (as shipped): exactly the view-only viewer', async () => {
+test('flag off: exactly the view-only viewer', async () => {
   const bytes = fixture('basic.docx');
   const h = await open('basic.docx', bytes);
   assert.strictEqual(h.provider.onDidChangeCustomDocument, undefined);

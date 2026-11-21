@@ -3,8 +3,8 @@
 // xlsxEdit -> applyXlsxEdit -> VS Code undo stack -> xlsxEditResult, the Tier C confirm flow (Continue /
 // dismiss / stale), `confirmStructuralEdits: false`, the always-asked delete-sheet modal, the flag-off
 // refusal, new-sheet selection, undo/redo byte-identical, and save + reopen of structurally edited
-// workbooks (written to tests/.out/xlsxStructureUi/ for scripts/verify-office-open.ps1). The shipped
-// OFFICE_FLAGS stay false; the bundle carries a copy whose object is mutable. The real modal, undo
+// workbooks (written to tests/.out/xlsxStructureUi/ for scripts/verify-office-open.ps1). The bundle
+// carries a copy of OFFICE_FLAGS whose object is mutable; each test starts with every flag off. The real modal, undo
 // stack and rendering need the Extension Development Host (Gate R4).
 import { test, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
@@ -59,15 +59,20 @@ before(async () => {
   host.OfficeDocument.diskCheckDelayMs = 0;
 });
 
+/**
+ * Every test starts from all flags off and switches on what it needs, so the flag-off behaviour stays
+ * covered now that 1.6 ships with editing on (`shipped` holds the real values).
+ */
+const FLAGS_OFF = Object.freeze({ xlsxEdit: false, docxEdit: false, xlsxStructure: false });
 let shipped;
 beforeEach(() => {
   S.reset();
   shipped ??= { ...host.OFFICE_FLAGS };
-  Object.assign(host.OFFICE_FLAGS, shipped);
+  Object.assign(host.OFFICE_FLAGS, FLAGS_OFF);
   host.OfficeDocument.saveHooks = undefined;
   host.OfficeDocument.flushTimeoutMs = 1500;
 });
-afterEach(() => { Object.assign(host.OFFICE_FLAGS, shipped); host.OfficeDocument.saveHooks = undefined; });
+afterEach(() => { Object.assign(host.OFFICE_FLAGS, FLAGS_OFF); host.OfficeDocument.saveHooks = undefined; });
 
 const ctx = {
   extensionUri: vscode.Uri.file('/ext'),
@@ -155,7 +160,7 @@ const names = (m) => m.sheets.map((s) => s.name);
 
 // ---------------------------------------------------------------------------------------------
 
-test('flag off (as shipped): the webview is told so and every structural op is refused as blocked', async () => {
+test('flag off: the webview is told so and every structural op is refused as blocked', async () => {
   host.OFFICE_FLAGS.xlsxEdit = true;
   const h = await open('basic.xlsx');
   assert.match(h.panel.webview.html, /data-structure="off"/);

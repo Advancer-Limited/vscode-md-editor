@@ -3,6 +3,7 @@
 // `vscode` stub, like tests/office/hostShell.test.mjs. Spec §5.2, §7.2, §9.2, §10.3.
 import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -265,20 +266,33 @@ before(async () => {
   const outfile = path.join(root, 'tests', '.build', 'office-host-xlsx.cjs');
   await esbuild.build({
     stdin: {
-      contents: "export * from './src/office/xlsxEditorProvider.ts';\nexport * from './src/office/officeDocument.ts';",
+      contents: "export * from './src/office/xlsxEditorProvider.ts';\nexport * from './src/office/officeDocument.ts';\nexport * from './src/office/featureFlags.ts';",
       resolveDir: root, sourcefile: 'office-host-xlsx-entry.ts', loader: 'ts',
     },
     bundle: true, platform: 'node', format: 'cjs', outfile, logLevel: 'silent',
     plugins: [{
       name: 'vscode-stub',
       setup(b) { b.onResolve({ filter: /^vscode$/ }, () => ({ path: stubPath, external: true })); },
+    }, {
+      // Test-only: the flags module with a mutable object, so these viewer tests run with every flag
+      // off (1.6 ships with editing on; the flag-on paths are in docxEditWiring / xlsxEditWiring).
+      name: 'mutable-flags',
+      setup(b) {
+        b.onLoad({ filter: /featureFlags\.ts$/ }, (args) => {
+          const src = fs.readFileSync(args.path, 'utf8');
+          assert.ok(src.includes('Object.freeze('), 'featureFlags.ts freezes OFFICE_FLAGS');
+          return { contents: src.replace('Object.freeze(', '('), loader: 'ts' };
+        });
+      },
     }],
   });
   host = require(outfile);
   host.OfficeDocument.diskCheckDelayMs = 0;
 });
 
-beforeEach(() => S.reset());
+/** The viewer tests below describe the flag-off (view-only) behaviour. */
+const FLAGS_OFF = Object.freeze({ xlsxEdit: false, docxEdit: false, xlsxStructure: false });
+beforeEach(() => { S.reset(); Object.assign(host.OFFICE_FLAGS, FLAGS_OFF); });
 
 const ctx = {
   extensionUri: vscode.Uri.file('/ext'),

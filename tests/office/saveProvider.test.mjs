@@ -1,8 +1,8 @@
 // WP-19: the full CustomEditorProvider (save, save as, revert, backup/hot exit, undo/redo through
 // VS Code's stack, Edit mode) driven against the in-memory `vscode` stub, like hostShell.test.mjs.
-// Spec §6.1–6.5, §10.3, §13.2 (G0, G3, G5). The edit flags stay false in featureFlags.ts; this file
-// bundles the host with a copy of featureFlags.ts whose object is not frozen, so each test can
-// switch a flag on for itself. What needs a real Extension Development Host (VS Code's own undo
+// Spec §6.1–6.5, §10.3, §13.2 (G0, G3, G5). 1.6 ships with the edit flags on; this file bundles
+// the host with a copy of featureFlags.ts whose object is not frozen, starts every test with all
+// flags off and lets each test switch a flag on for itself. What needs a real Extension Development Host (VS Code's own undo
 // stack and dirty dot, hot exit across a window kill, the real modal) is on the Gate R2 checklist.
 import { test, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
@@ -47,7 +47,7 @@ before(async () => {
         setup(b) { b.onResolve({ filter: /^vscode$/ }, () => ({ path: stubPath, external: true })); },
       },
       {
-        // Test-only: the same flags module with a mutable object (the shipped one is frozen and false).
+        // Test-only: the same flags module with a mutable object (the shipped one is frozen).
         name: 'mutable-flags',
         setup(b) {
           b.onLoad({ filter: /featureFlags\.ts$/ }, (args) => {
@@ -63,17 +63,18 @@ before(async () => {
   host.OfficeDocument.diskCheckDelayMs = 0;
 });
 
-/** The shipped flag values, to prove they are all off and restore them after every test. */
+/** The shipped flag values (checked below); every test starts with all flags off. */
+const FLAGS_OFF = Object.freeze({ xlsxEdit: false, docxEdit: false, xlsxStructure: false });
 let shipped;
 beforeEach(() => {
   S.reset();
   shipped ??= { ...host.OFFICE_FLAGS };
-  Object.assign(host.OFFICE_FLAGS, shipped);
+  Object.assign(host.OFFICE_FLAGS, FLAGS_OFF);
   host.OfficeDocument.saveHooks = undefined;
   host.OfficeDocument.flushTimeoutMs = 1500;
   host.OfficeDocument.backupDelayMs = 0;
 });
-afterEach(() => { Object.assign(host.OFFICE_FLAGS, shipped); host.OfficeDocument.saveHooks = undefined; });
+afterEach(() => { Object.assign(host.OFFICE_FLAGS, FLAGS_OFF); host.OfficeDocument.saveHooks = undefined; });
 
 const ctx = {
   extensionUri: vscode.Uri.file('/ext'),
@@ -174,10 +175,21 @@ function changedEntries(a, b) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Flags off: nothing changes for real users
+// As shipped (1.6): Excel and Word editing on
 
-test('flags off (as shipped): all false, providers register read-only, nothing can be edited', async () => {
-  assert.deepStrictEqual(shipped, { xlsxEdit: false, docxEdit: false, xlsxStructure: false });
+test('as shipped: every flag on, both providers register editable', () => {
+  assert.deepStrictEqual(shipped, { xlsxEdit: true, docxEdit: true, xlsxStructure: true });
+  Object.assign(host.OFFICE_FLAGS, shipped);
+  host.DocxEditorProvider.register(ctx);
+  host.XlsxEditorProvider.register(ctx);
+  assert.deepStrictEqual(S.registered.map((r) => [r.viewType, isEditable(r.provider)]),
+    [['vscodeMdEditor.docx', true], ['vscodeMdEditor.xlsx', true]]);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Flags off: exactly the read-only viewer
+
+test('flags off: providers register read-only, nothing can be edited', async () => {
   host.DocxEditorProvider.register(ctx);
   host.XlsxEditorProvider.register(ctx);
   assert.deepStrictEqual(S.registered.map((r) => [r.viewType, isEditable(r.provider)]),

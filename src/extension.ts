@@ -75,11 +75,13 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // 2d. Register the Word document viewer (read-only; docs/office-viewers-spec.md §4.1). Independent of
+  // 2d. Register the Word document viewer/editor (docs/office-viewers-spec.md §4.1; editing per
+  // OFFICE_FLAGS.docxEdit, on since 1.6). Independent of
   // the editors above, and cheap here: nothing is read until a .docx is opened.
   context.subscriptions.push(DocxEditorProvider.register(context));
 
-  // 2e. Register the Excel workbook viewer (read-only; docs/office-viewers-spec.md §4.1). Same rules as 2d.
+  // 2e. Register the Excel workbook viewer/editor (docs/office-viewers-spec.md §4.1; editing per
+  // OFFICE_FLAGS.xlsxEdit / xlsxStructure, on since 1.6). Same rules as 2d.
   context.subscriptions.push(XlsxEditorProvider.register(context));
 
   // 2f. Register the PDF viewer (read-only for now; docs/pdf-viewer-spec.md §4.1) as the default editor

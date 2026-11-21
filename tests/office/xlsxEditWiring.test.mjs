@@ -83,15 +83,20 @@ before(async () => {
   host.OfficeDocument.diskCheckDelayMs = 0;
 });
 
+/**
+ * Every test starts from all flags off and switches on what it needs, so the flag-off behaviour stays
+ * covered now that 1.6 ships with editing on (`shipped` holds the real values).
+ */
+const FLAGS_OFF = Object.freeze({ xlsxEdit: false, docxEdit: false, xlsxStructure: false });
 let shipped;
 beforeEach(() => {
   S.reset();
   shipped ??= { ...host.OFFICE_FLAGS };
-  Object.assign(host.OFFICE_FLAGS, shipped);
+  Object.assign(host.OFFICE_FLAGS, FLAGS_OFF);
   host.OfficeDocument.saveHooks = undefined;
   host.OfficeDocument.flushTimeoutMs = 1500;
 });
-afterEach(() => { Object.assign(host.OFFICE_FLAGS, shipped); host.OfficeDocument.saveHooks = undefined; });
+afterEach(() => { Object.assign(host.OFFICE_FLAGS, FLAGS_OFF); host.OfficeDocument.saveHooks = undefined; });
 
 const ctx = {
   extensionUri: vscode.Uri.file('/ext'),
@@ -176,7 +181,7 @@ const ENABLE = () => { host.OFFICE_FLAGS.xlsxEdit = true; };
 
 // ---------------------------------------------------------------------------------------------
 
-test('flag off (as shipped): xlsxEdit is refused as read-only and nothing is recorded', async () => {
+test('flag off: xlsxEdit is refused as read-only and nothing is recorded', async () => {
   const h = await open('basic.xlsx');
   assert.strictEqual(h.doc.canEdit, false);
   const r = await edit(h, setOp(1, [[1, 1, '7']]));

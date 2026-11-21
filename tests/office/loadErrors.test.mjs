@@ -78,9 +78,9 @@ test('doctype detail names the part', () => {
   assert.match(LE.unreadablePartDetail('word/a.xml', 'bad-crc'), /"word\/a\.xml".*bad-crc/);
 });
 
-test('OFFICE_FLAGS are all off (Phase 1) and frozen', () => {
-  assert.deepStrictEqual({ ...FF.OFFICE_FLAGS }, { xlsxEdit: false, docxEdit: false, xlsxStructure: false });
+test('OFFICE_FLAGS: 1.6 ships Excel cell and structure editing and Word editing on, frozen', () => {
+  assert.deepStrictEqual({ ...FF.OFFICE_FLAGS }, { xlsxEdit: true, docxEdit: true, xlsxStructure: true });
   assert.ok(Object.isFrozen(FF.OFFICE_FLAGS));
-  assert.strictEqual(FF.editFlagFor('docx'), false);
-  assert.strictEqual(FF.editFlagFor('xlsx'), false);
+  assert.strictEqual(FF.editFlagFor('docx'), true);
+  assert.strictEqual(FF.editFlagFor('xlsx'), true);
 });
