@@ -6,12 +6,14 @@
 
 export type { ReadOnlyReason, OfficeNotice, OfficeError } from './core/types.js';
 import type { ReadOnlyReason, OfficeNotice, OfficeError } from './core/types.js';
+// Type-only (erased at build): the PDF viewer reuses the common chrome, so `init` accepts its reasons.
+import type { PdfReadOnlyReason } from '../pdf/protocol.js';
 
 // ---------- shared ----------
 
 export type OfficeCommonToWebview =
-  | { type: 'init'; kind: 'docx' | 'xlsx'; fileName: string; version: number;
-      canEdit: boolean; readOnlyReason: ReadOnlyReason | null; editMode: boolean;
+  | { type: 'init'; kind: 'docx' | 'xlsx' | 'pdf'; fileName: string; version: number;
+      canEdit: boolean; readOnlyReason: ReadOnlyReason | PdfReadOnlyReason | null; editMode: boolean;
       notices: OfficeNotice[] }
   | { type: 'loadError'; title: string; detail: string; actions: Array<'openExternally' | 'retry'> }
   | { type: 'editModeChanged'; editMode: boolean }

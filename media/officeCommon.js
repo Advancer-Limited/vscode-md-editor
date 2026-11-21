@@ -18,6 +18,16 @@
     'tracked-changes-on': 'Read-only: Track Changes is on in this document. Turn it off in Word to edit it here.',
   };
 
+  // PDF-only reasons (spec §5, §6.2, §9.1, §10.4). The shared reasons above are reused as is.
+  const PDF_READ_ONLY_TEXT = {
+    'view-mode': 'Editing is turned off. Press Edit (Ctrl+E) to annotate this PDF.',
+    'non-writable-scheme': 'Read-only: this file cannot be written to (for example a Git revision or a read-only file system).',
+    'too-large': 'Read-only: this PDF is too large to edit safely.',
+    'encrypted': 'Read-only: this PDF is password protected. Editing protected PDFs is not supported.',
+    'unsupported-structure': 'Read-only: this PDF has a structure this editor cannot edit safely. Open it in a PDF reader to change it.',
+    'engine-too-old': 'Read-only: this version of VS Code is too old to edit PDFs. Update VS Code to enable editing.',
+  };
+
   const EDIT_HINT = 'Press Edit (Ctrl+E) to make changes';
   const HINT_MS = 4000;
 
@@ -40,7 +50,17 @@
     while (node.firstChild) { node.removeChild(node.firstChild); }
   }
 
+  function readOnlyText(reason) {
+    const table = state.kind === 'pdf' ? PDF_READ_ONLY_TEXT : READ_ONLY_TEXT;
+    return table[reason] || READ_ONLY_TEXT[reason] || 'Read-only.';
+  }
+
+  function openExternallyLabel() {
+    return state.kind === 'pdf' ? 'Open externally' : 'Open in ' + appName();
+  }
+
   function appName() {
+    if (state.kind === 'pdf') { return 'a PDF reader'; }
     return state.kind === 'docx' ? 'Word' : state.kind === 'xlsx' ? 'Excel' : 'Word or Excel';
   }
 
@@ -176,7 +196,7 @@
     if (!state.canEdit) {
       // With a reason, say why editing is unavailable. Without one, this build has no editing at
       // all (no Edit button), so there is nothing to tell the user to press.
-      if (state.readOnlyReason) { hint(READ_ONLY_TEXT[state.readOnlyReason] || 'Read-only.'); }
+      if (state.readOnlyReason) { hint(readOnlyText(state.readOnlyReason)); }
       syncEditButton();
       return;
     }
@@ -197,7 +217,7 @@
     state.editMode = !!msg.editMode && state.canEdit;
     syncEditButton();
     if (!state.canEdit && state.readOnlyReason) {
-      state.reasonEl.textContent = READ_ONLY_TEXT[state.readOnlyReason] || 'Read-only.';
+      state.reasonEl.textContent = readOnlyText(state.readOnlyReason);
       state.reasonEl.hidden = false;
     } else {
       state.reasonEl.textContent = '';
@@ -235,7 +255,7 @@
     const actions = el('div', 'office-error-actions');
     (msg.actions || []).forEach((a) => {
       if (a === 'openExternally') {
-        const b = el('button', 'office-btn office-btn-primary', 'Open in ' + appName());
+        const b = el('button', 'office-btn office-btn-primary', openExternallyLabel());
         b.setAttribute('type', 'button');
         b.setAttribute('data-action', 'openExternally');
         b.addEventListener('click', () => post({ type: 'openExternally' }));
@@ -320,7 +340,7 @@
 
   const api = {
     init, toolbar, setInit, showNotices, showError, hint, announce,
-    READ_ONLY_TEXT, EDIT_HINT,
+    READ_ONLY_TEXT, PDF_READ_ONLY_TEXT, EDIT_HINT, openExternallyLabel, appName,
     isEditMode() { return state.editMode; },
     canEdit() { return state.canEdit; },
   };

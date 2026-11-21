@@ -262,3 +262,37 @@ test('no innerHTML and theme tokens only; reduced-motion and forced-colors block
   // No bare hex / rgb colours outside var() usage.
   assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')));
 });
+
+test('pdf kind: PDF read-only sentences cover every PdfReadOnlyReason and Office text is unchanged', () => {
+  const t = setup();
+  const reasons = ['view-mode', 'non-writable-scheme', 'too-large', 'encrypted', 'unsupported-structure', 'engine-too-old'];
+  for (const r of reasons) {
+    t.OC.setInit(initMsg({ kind: 'pdf', canEdit: false, readOnlyReason: r }));
+    const reason = t.q((e) => e.className === 'office-reason')[0];
+    assert.strictEqual(reason.hidden, false, r);
+    assert.strictEqual(reason.textContent, t.OC.PDF_READ_ONLY_TEXT[r], r);
+    assert.ok(reason.textContent.length > 20 && !/Word|Excel/.test(reason.textContent), r);
+  }
+  // Same reason under an Office kind still uses the Office sentence.
+  t.OC.setInit(initMsg({ kind: 'docx', canEdit: false, readOnlyReason: 'view-mode' }));
+  assert.strictEqual(t.q((e) => e.className === 'office-reason')[0].textContent, t.OC.READ_ONLY_TEXT['view-mode']);
+});
+
+test('pdf kind: error view says "Open externally", names no Office app, stays textContent-only', () => {
+  const t = setup();
+  t.OC.setInit(initMsg({ kind: 'pdf', fileName: 'a.pdf' }));
+  assert.strictEqual(t.OC.appName(), 'a PDF reader');
+  t.win.dispatch('message', { data: { type: 'loadError', title: '<b>Bad</b>', detail: 'x', actions: ['openExternally', 'retry'] } });
+  const btns = t.q((e) => e.tagName === 'BUTTON' && e.getAttribute('data-action'));
+  assert.strictEqual(btns[0].textContent, 'Open externally');
+  btns[0].click();
+  deq(t.posted.slice(-1), [{ type: 'openExternally' }]);
+  assert.strictEqual(t.q((e) => e.tagName === 'B').length, 0);
+});
+
+test('pdf kind: Ctrl+E without edit rights hints with the PDF sentence', () => {
+  const t = setup();
+  t.OC.setInit(initMsg({ kind: 'pdf', canEdit: false, readOnlyReason: 'encrypted' }));
+  t.win.dispatch('keydown', { key: 'e', ctrlKey: true, preventDefault() {} });
+  assert.strictEqual(t.q((e) => e.className === 'office-hint')[0].textContent, t.OC.PDF_READ_ONLY_TEXT.encrypted);
+});
