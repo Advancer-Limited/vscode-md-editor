@@ -598,3 +598,26 @@ test('review B1: an edit sent while a save is writing waits for the save and is 
   assert.strictEqual((await cells(saved, [0, 0, 3, 3])).get('1,1').v, 100, 'the save wrote the state before the late edit');
   assert.strictEqual((await cells(h, [0, 0, 3, 3])).get('1,1').v, 200);
 });
+
+test('F1: re-posted notices (edit, undo/redo, Edit off/on) keep the sheet-unavailable warning of the panel', async () => {
+  ENABLE();
+  const h = await open('basic.xlsx');
+  const last = () => h.panel.sent.filter((m) => m.type === 'notices' || m.type === 'init').pop();
+  const codes = () => (last()?.notices || []).map((n) => n.code);
+  await h.panel.send({ type: 'xlsxRequestSheetMeta', sheetId: 99 });   // no such sheet
+  await waitFor(() => codes().includes('sheet-unavailable'), 'sheet-unavailable shown');
+  const r = await edit(h, setOp(1, [[1, 1, '7']]));
+  assert.strictEqual(r.ok, true);
+  await waitFor(() => h.panel.sent.lastIndexOf(last()) > h.panel.sent.indexOf(r), 'notices re-posted after the edit');
+  assert.deepStrictEqual(codes().filter((c) => c === 'sheet-unavailable'), ['sheet-unavailable'], 'after an edit (once)');
+  await h.events[0].undo();
+  assert.ok(codes().includes('sheet-unavailable'), 'after undo');
+  await h.events[0].redo();
+  assert.ok(codes().includes('sheet-unavailable'), 'after redo');
+  await h.panel.send({ type: 'setEditMode', editMode: false });
+  await h.panel.send({ type: 'setEditMode', editMode: true });
+  assert.ok(codes().includes('sheet-unavailable'), 'after Edit off/on');
+  // A sheet that loads drops it.
+  await h.panel.send({ type: 'xlsxRequestSheetMeta', sheetId: 1 });
+  await waitFor(() => !codes().includes('sheet-unavailable'), 'cleared by a sheet that loads');
+});

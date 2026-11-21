@@ -243,7 +243,7 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
         this.facts.set(doc, { generation: doc.generation, notices: factsNotices(msg.facts) });
         // The page-count half of the view-only rule (§9.3) is only known to the webview; it can only tighten.
         if (msg.facts.pageCount > PDF_LIMITS.maxEditPages && doc.readOnlyReason === null) doc.readOnlyReason = 'too-large';
-        this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+        this.postNotices(doc, panel);
         return;
       case 'pdfLog':
         this.appendLog(doc, msg.level, msg.code, msg.detail);   // never a toast (spec §12)

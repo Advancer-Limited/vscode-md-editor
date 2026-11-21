@@ -311,6 +311,20 @@ implements vscode.CustomEditorProvider<D> {
     return loaded ? [...doc.notices, ...this.kindNotices(doc)] : [...doc.notices];
   }
 
+  /**
+   * Every notice for this panel: the document's (`allNotices`), the panel's own (`panelNotices`, e.g. a
+   * sheet that could not be displayed) and `extra`. A `notices` message replaces what the webview shows,
+   * so every re-post goes through here; posting `allNotices` alone used to wipe the panel's warning.
+   */
+  protected noticesFor(doc: D, panel: vscode.WebviewPanel, extra: readonly OfficeNotice[] = []): OfficeNotice[] {
+    return [...this.allNotices(doc), ...this.panelNotices(panel), ...extra];
+  }
+
+  /** Post `noticesFor(doc, panel, extra)`. */
+  protected postNotices(doc: D, panel: vscode.WebviewPanel, extra: readonly OfficeNotice[] = []): void {
+    this.post(panel, { type: 'notices', notices: this.noticesFor(doc, panel, extra) });
+  }
+
   /** `loadError` when the document failed to load, else `init`. */
   protected sendState(doc: D, panel: vscode.WebviewPanel): void {
     const state = this.panelStates.get(panel);
@@ -338,7 +352,7 @@ implements vscode.CustomEditorProvider<D> {
       canEdit: doc.canEdit,
       readOnlyReason: doc.readOnlyReason,
       editMode,
-      notices: this.allNotices(doc),
+      notices: this.noticesFor(doc, panel),
     });
   }
 
@@ -411,7 +425,7 @@ implements vscode.CustomEditorProvider<D> {
     const state = this.panelStates.get(panel);
     const url = allowedExternalLink(href);
     if (!url) {
-      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), ...this.panelNotices(panel), LINK_BLOCKED_NOTICE] });
+      this.postNotices(doc, panel, [LINK_BLOCKED_NOTICE]);
       // The warning is about one click: drop it after a while (or on the next link that opens).
       if (state) {
         if (state.linkBlockedTimer) clearTimeout(state.linkBlockedTimer);
@@ -431,7 +445,7 @@ implements vscode.CustomEditorProvider<D> {
     if (!state?.linkBlockedTimer) return;
     clearTimeout(state.linkBlockedTimer);
     state.linkBlockedTimer = undefined;
-    if (!doc.loadError) this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), ...this.panelNotices(panel)] });
+    if (!doc.loadError) this.postNotices(doc, panel);
   }
 
   private async openExternally(doc: D): Promise<void> {
@@ -453,7 +467,7 @@ implements vscode.CustomEditorProvider<D> {
 
   private onDocumentState(doc: D, panel: vscode.WebviewPanel, e: OfficeDocumentStateChange): void {
     if (e.kind === 'notices') {
-      if (!doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+      if (!doc.loadError) this.postNotices(doc, panel);
       return;
     }
     if (e.kind === 'edited') {

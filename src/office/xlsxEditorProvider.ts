@@ -231,7 +231,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
    */
   private sendStaleBanner(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
     if (this.editedAt.get(doc) === doc.generation) return;   // already in the notices sent with init
-    if (this.resultsMayBeStale(doc)) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+    if (this.resultsMayBeStale(doc)) this.postNotices(doc, panel);
   }
 
   /**
@@ -251,7 +251,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       }
     }
     this.editedAt.set(doc, doc.generation);
-    this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+    this.postNotices(doc, panel);
     this.onReloaded(doc, panel);
   }
 
@@ -331,12 +331,12 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       // `xlsxRequestSheetMeta` has no requestId: report through the notices bar.
       const notice: OfficeNotice = { severity: 'warning', code: 'sheet-unavailable', message: r.error.message };
       this.unavailableShown.set(panel, notice);
-      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), notice] });
+      this.postNotices(doc, panel);   // panelNotices carries it
       return;
     }
     this.post(panel, { type: 'xlsxSheetMeta', meta: this.metaFor(m, r.sheet, sheetId, version) });
     // A sheet that loads replaces the one that could not: drop its warning.
-    if (this.unavailableShown.delete(panel) && !doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+    if (this.unavailableShown.delete(panel) && !doc.loadError) this.postNotices(doc, panel);
     this.sendWorkbook(doc, panel, false);   // the sheet's own read-only reason is known now
   }
 
@@ -375,7 +375,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       if (f !== undefined) input = '=' + f;
     }
     if (cell?.rich) {
-      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), RICH_TEXT_NOTICE] });
+      this.postNotices(doc, panel, [RICH_TEXT_NOTICE]);
     }
     this.post(panel, { type: 'xlsxCellInput', requestId, sheetId, r: row, c: col, input });
   }
@@ -468,7 +468,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
         ...(range ? { range } : {}),
       });
       if (res.edit) {
-        this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+        this.postNotices(doc, panel);
         if (res.invalidate === 'workbook') this.sendWorkbook(doc, panel, true, this.sheetToSelect(m.wb, msg.edit, sheetsBefore));
       }
       return;
