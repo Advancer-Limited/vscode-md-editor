@@ -341,6 +341,7 @@
 - [ ] Phase 2 — save pipeline + Excel cell editing
   - [x] WP-18 Edits, undo/redo, serialise, verify, save core
   - [x] WP-19 Full CustomEditorProvider
+    - [x] Review B1 (host): edits wait for a save that is writing (`editRefusalAfterSave`) instead of being refused
   - [x] WP-20 Xlsx cell write, input classification, calc handling
   - [x] WP-21 Formula entry, _xlfn, shared formulas
   - [x] WP-22 Date style patch + xlsx validators
