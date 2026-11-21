@@ -642,7 +642,7 @@ function cellLock(tc: XmlElement): Container['lockReason'] {
 
 const CENSUS_PROPS = new Set(['tblPr', 'tblGrid', 'trPr', 'tcPr']);
 
-function census(root: XmlElement): string {
+export function census(root: XmlElement): string {
   let tbl = 0;
   let tr = 0;
   let tc = 0;
