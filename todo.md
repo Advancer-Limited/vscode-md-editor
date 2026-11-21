@@ -361,6 +361,8 @@
   - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
   - [x] WP-34 Island controller and re-render scheduling (`media/docxEdit.js`; detached render + DocxMap; marker CSS; scripts loaded; Edit stays available for tracked-changes-on; 35 tests)
   - [x] WP-35 Word edit toolbar, shortcuts, CSS (38 tests; flag flip left for PR-11 after Gate R3)
+  - [x] Word editing review fixes (feature/office-docx-fixes): B1 typed text never lost, S1 forgiveness by identity, S2 commit timing, S3 keyboard access, S4 model view-only reasons, S5 cascade formatting, S6 pre-wrap, nits N1–N5, N7; L on feature/office-word-viewer
+    - [ ] B/I/U pressed state from table-style formatting (tblStylePr): not done, segment flags exclude it
   - [ ] Gate R3
 - [ ] Phase 4 — Excel structure (rows/columns/sheets)
   - [ ] WP-36 Reference shifting
