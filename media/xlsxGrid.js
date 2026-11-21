@@ -926,7 +926,9 @@
       const res = math.moveActive({ active, focus }, key, mods, navMeta(), isEmptyCell);
       if (!res) return;
       stop();
-      applySelection(res.active, res.focus, res.selection);
+      // Select all (Ctrl+A) keeps the view where it is, like Excel: its focus is the last cell.
+      const selectAll = ctrl && !ev.altKey && (key === 'a' || key === 'A');
+      applySelection(res.active, res.focus, res.selection, undefined, selectAll);
     }
 
     function onScroll() { render(false); }

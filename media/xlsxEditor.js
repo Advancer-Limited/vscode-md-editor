@@ -770,6 +770,15 @@
       return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
     }
 
+    /** Whether the user has selected text inside the formula bar (name box or formula text). */
+    function formulaBarTextSelected() {
+      const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
+      if (!sel || sel.isCollapsed || !String(sel)) { return false; }
+      let n = sel.anchorNode;
+      while (n) { if (n === formulaBar) { return true; } n = n.parentNode; }
+      return false;
+    }
+
     function onKeyDown(ev) {
       const ctrl = ev.ctrlKey || ev.metaKey;
       if (ev.key === 'Escape' && openMenuEl) { closeMenu(); return; }
@@ -785,6 +794,7 @@
         openFind();
       } else if ((k === 'c' || k === 'C') && !ev.shiftKey) {
         if (isTextTarget(ev.target)) { return; }   // native copy inside the find box
+        if (formulaBarTextSelected()) { return; }  // native copy of the selected formula-bar text
         if (ev.preventDefault) { ev.preventDefault(); }
         doCopy();
       } else if (k === 'PageUp' || k === 'PageDown') {

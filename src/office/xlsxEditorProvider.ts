@@ -51,6 +51,10 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private readonly sentInfo = new WeakMap<vscode.WebviewPanel, string>();
   /** Last meta built per sheet (see `metaFor`). */
   private readonly metaCache = new WeakMap<Sheet, XlsxSheetMeta>();
+  /** Panels showing the sheet-unavailable warning (cleared when a sheet then loads). */
+  private readonly unavailableShown = new WeakSet<vscode.WebviewPanel>();
+  /** requestId of the newest find per panel; older finds still running stop at their next yield. */
+  private readonly latestFind = new WeakMap<vscode.WebviewPanel, number>();
 
   protected scripts(): string[] {
     return ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js'];
@@ -210,9 +214,12 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
         type: 'notices',
         notices: [...this.allNotices(doc), { severity: 'warning', code: 'sheet-unavailable', message: r.error.message }],
       });
+      this.unavailableShown.add(panel);
       return;
     }
     this.post(panel, { type: 'xlsxSheetMeta', meta: this.metaFor(m, r.sheet, sheetId, version) });
+    // A sheet that loads replaces the one that could not: drop its warning.
+    if (this.unavailableShown.delete(panel) && !doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
     this.sendWorkbook(doc, panel, false);   // the sheet's own read-only reason is known now
   }
 
@@ -253,7 +260,9 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const m = this.model(doc);
     if (!m) { this.sendState(doc, panel); return; }
     if (sheetId !== null && !m.wb.entry(sheetId)) { this.fail(panel, requestId, 'invalid', 'That sheet does not exist.'); return; }
-    const res = await findInWorkbook(m.wb, query, matchCase, sheetId, m.styles);
+    // A newer find on this panel supersedes this one: stop searching (it still gets its one reply).
+    this.latestFind.set(panel, requestId);
+    const res = await findInWorkbook(m.wb, query, matchCase, sheetId, m.styles, () => this.latestFind.get(panel) !== requestId);
     this.post(panel, { type: 'xlsxFindResult', requestId, matches: res.matches, truncated: res.truncated });
   }
 

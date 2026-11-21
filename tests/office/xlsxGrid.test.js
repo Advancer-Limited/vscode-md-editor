@@ -210,6 +210,16 @@ test('B1: requestFailed frees the in-flight slot and parks the blocks until inva
   assert.ok(cells(t.root).some((e) => e.textContent === '0'));
 });
 
+test('Ctrl+A selects everything without scrolling to the last cell', () => {
+  const t = setup();
+  t.grid.setMeta(t.meta);
+  answer(t);
+  key(t, 'a', { ctrlKey: true });
+  deq(t.grid.getSelection().range, [0, 0, 999, 99]);
+  assert.strictEqual(t.scroller.scrollTop, 0);
+  assert.strictEqual(t.scroller.scrollLeft, 0);
+});
+
 test('discards a batch for a superseded version, sheet or unknown request', () => {
   const t = setup();
   t.grid.setMeta(t.meta);

@@ -157,7 +157,7 @@ export function cellWindow(
     for (const ci of cols) if (c >= ci.min && c <= ci.max && ci.styleIndex !== null) return ci.styleIndex;
     return 0;
   };
-  const annotated = aux.notes.size > 0 || aux.links.size > 0;
+  const annotated = aux.notes.size > 0 || aux.links.size > 0 || aux.linkRanges.length > 0;
   for (let r = r0; r <= r1; r++) {
     const rowStyle = sheet.rowInfo(r)?.styleIndex ?? null;
     for (let c = c0; c <= c1; c++) {
@@ -165,7 +165,8 @@ export function cellWindow(
       const s = rowStyle ?? colStyle(c);
       const a1 = annotated ? rcToA1(r, c) : '';
       const note = aux.notes.get(a1);
-      const link = aux.links.get(a1);
+      // linkAt also covers range hyperlinks ("A1:B3"), so empty cells inside one are clickable too.
+      const link = annotated ? linkAt(aux, r, c) : undefined;
       if (s === 0 && note === undefined && link === undefined) continue;
       const cell: XlsxCell = { r, c, d: '', s, k: 'z' };
       if (link !== undefined) cell.link = link;
