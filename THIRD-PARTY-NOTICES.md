@@ -7,70 +7,70 @@ This extension bundles or vendors the open-source libraries below. Each section 
 - Licence: MIT
 - Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin
 - Vendored (media/markdown-it.min.js)
-- Licence file: `node_modules/markdown-it/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `markdown-it` npm package; `node_modules` is not shipped in the VSIX)
 
 ## turndown 7.2.4
 
 - Licence: MIT
 - Copyright (c) 2017 Dom Christie
 - Vendored (media/turndown.browser.umd.js)
-- Licence file: `node_modules/turndown/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `turndown` npm package; `node_modules` is not shipped in the VSIX)
 
 ## force-graph 1.52.0
 
 - Licence: MIT
 - Copyright (c) 2018 Vasco Asturiano
 - Vendored (media/force-graph.min.js)
-- Licence file: `node_modules/force-graph/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `force-graph` npm package; `node_modules` is not shipped in the VSIX)
 
 ## mermaid 12.1.0
 
 - Licence: MIT
 - Copyright (c) 2014 - 2022 Knut Sveidqvist
 - Vendored (media/mermaid.min.js)
-- Licence file: `node_modules/mermaid/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `mermaid` npm package; `node_modules` is not shipped in the VSIX)
 
 ## three 0.185.1
 
 - Licence: MIT
 - Copyright (c) 2010-2026 three.js authors
 - Bundled into media/three-bundle.js
-- Licence file: `node_modules/three/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `three` npm package; `node_modules` is not shipped in the VSIX)
 
 ## fflate 0.8.3
 
 - Licence: MIT
 - Copyright (c) 2026 Arjun Barrett
 - Bundled into the extension host (dist/extension.js)
-- Licence file: `node_modules/fflate/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `fflate` npm package; `node_modules` is not shipped in the VSIX)
 
 ## numfmt 4.1.4
 
 - Licence: MIT
 - Copyright (c) 2020, Borgar Þorsteinsson <borgar@borgar.net>
 - Bundled into the extension host (dist/extension.js)
-- Licence file: `node_modules/numfmt/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `numfmt` npm package; `node_modules` is not shipped in the VSIX)
 
 ## @borgar/fx 5.1.3
 
 - Licence: MIT
 - Copyright 2021 Borgar Þorsteinsson
 - Bundled into the extension host (dist/extension.js)
-- Licence file: `node_modules/@borgar/fx/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `@borgar/fx` npm package; `node_modules` is not shipped in the VSIX)
 
 ## docx-preview 0.4.1
 
 - Licence: Apache-2.0
 - Copyright (c) Volodymyr Baydalka
 - Vendored (media/docx-preview.min.js)
-- Licence file: `node_modules/docx-preview/LICENSE` in the published package
+- Licence text: the Apache-2.0 text below (upstream: `LICENSE` in the `docx-preview` npm package; `node_modules` is not shipped in the VSIX)
 
 ## JSZip 3.10.2
 
 - Licence: MIT (dual-licensed MIT OR GPL-3.0-or-later; used under MIT)
 - Copyright (c) 2009-2016 Stuart Knightley, David Duponchel, Franz Buchinger, António Afonso
 - Vendored (media/jszip.min.js)
-- Licence file: `node_modules/jszip/LICENSE` in the published package
+- Licence text: the MIT text below (upstream: `LICENSE` in the `jszip` npm package; `node_modules` is not shipped in the VSIX)
 
 JSZip is offered under either the MIT licence or the GPLv3; this extension takes it under the MIT licence.
 

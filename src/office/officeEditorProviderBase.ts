@@ -63,8 +63,16 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/** `ready`: the webview sent `ready` (it can answer `flushPendingEdits`). */
-interface PanelState { showingError: boolean; ready: boolean; }
+interface PanelState {
+  showingError: boolean;
+  /** The webview sent `ready` (it can answer `flushPendingEdits`). */
+  ready: boolean;
+  /** Set while the link-blocked warning is showing; clears it when it fires. */
+  linkBlockedTimer?: ReturnType<typeof setTimeout>;
+}
+
+/** How long the link-blocked warning stays up. */
+export const LINK_BLOCKED_MS = 10_000;
 
 export abstract class OfficeEditorProviderBase implements vscode.CustomEditorProvider<OfficeDocument> {
   protected abstract readonly kind: OfficeKind;
@@ -193,6 +201,8 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     ];
     panel.onDidDispose(() => {
       for (const s of subs) s.dispose();
+      const st = this.panelStates.get(panel);
+      if (st?.linkBlockedTimer) clearTimeout(st.linkBlockedTimer);
       this.panelStates.delete(panel);
     });
   }
@@ -305,18 +315,43 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
 
   /** §12: only http/https/mailto, through openExternal (which applies VS Code's trusted-domain prompt). */
   private async openLink(doc: OfficeDocument, panel: vscode.WebviewPanel, href: string): Promise<void> {
+    const state = this.panelStates.get(panel);
     const url = allowedExternalLink(href);
     if (!url) {
       this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), LINK_BLOCKED_NOTICE] });
+      // The warning is about one click: drop it after a while (or on the next link that opens).
+      if (state) {
+        if (state.linkBlockedTimer) clearTimeout(state.linkBlockedTimer);
+        const timer = setTimeout(() => this.clearLinkBlocked(doc, panel), LINK_BLOCKED_MS);
+        (timer as { unref?: () => void }).unref?.();   // never keeps the host process alive
+        state.linkBlockedTimer = timer;
+      }
       return;
     }
+    this.clearLinkBlocked(doc, panel);
     await vscode.env.openExternal(vscode.Uri.parse(url.href, true));
+  }
+
+  /** Re-post the notices without the link-blocked warning, if it is showing. */
+  private clearLinkBlocked(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+    const state = this.panelStates.get(panel);
+    if (!state?.linkBlockedTimer) return;
+    clearTimeout(state.linkBlockedTimer);
+    state.linkBlockedTimer = undefined;
+    if (!doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
   }
 
   private async openExternally(doc: OfficeDocument): Promise<void> {
     const app = this.kind === 'docx' ? 'Word' : 'Excel';
     if (doc.uri.scheme !== 'file') {
       void vscode.window.showInformationMessage(`Open in ${app} is only available for files on this computer.`);
+      return;
+    }
+    if (vscode.env.remoteName) {
+      // In a Remote-SSH/WSL/container window a file: URI names a path on the remote machine, which
+      // the local Word/Excel cannot open.
+      void vscode.window.showInformationMessage(
+        `Open in ${app} is not available in a remote window: this file is on the remote machine. Download it to open it in ${app}.`);
       return;
     }
     const ok = await vscode.env.openExternal(doc.uri);
