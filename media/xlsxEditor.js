@@ -420,6 +420,7 @@
 
     function onWorkbook(msg) {
       state.version = msg.version;
+      const prevActive = state.activeSheetId !== null ? sheetInfo(state.activeSheetId) : null;
       state.sheets = Array.isArray(msg.sheets) ? msg.sheets : [];
       if (!state.sheets.length) {
         state.activeSheetId = null; state.shownSheetId = null; state.pendingSheetId = null;
@@ -430,8 +431,13 @@
       // WP-41: after adding a sheet the structure UI asks to land on the host's pick (the new sheet).
       const prefer = state.preferSheetId;
       state.preferSheetId = null;
+      // K14: the host keeps session ids stable; should the active id still be gone or name another
+      // sheet, stay on the sheet with the same name.
+      const sameName = prevActive ? state.sheets.find((s) => s.name === prevActive.name) : null;
+      const keep = state.activeSheetId !== null && sheetInfo(state.activeSheetId)
+        && (!prevActive || sheetInfo(state.activeSheetId).name === prevActive.name || !sameName);
       let target = prefer !== null && prefer !== undefined && sheetInfo(prefer) ? prefer
-        : state.activeSheetId !== null && sheetInfo(state.activeSheetId) ? state.activeSheetId : msg.activeSheetId;
+        : keep ? state.activeSheetId : sameName ? sameName.id : msg.activeSheetId;
       if (!sheetInfo(target)) {
         const v = state.sheets.find((s) => s.state === 'visible') || state.sheets[0];
         target = v.id;

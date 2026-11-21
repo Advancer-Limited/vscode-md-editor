@@ -659,6 +659,24 @@ test('stateChanged invalidates the grid and re-requests meta; a workbook message
   deq(t.last('xlsxRequestSheetMeta'), { type: 'xlsxRequestSheetMeta', sheetId: 1 });
 });
 
+test('K14: a workbook whose ids were renumbered keeps the active sheet by name', () => {
+  const t = setup();
+  t.open();
+  t.tab('Totals').click(); t.meta(2);
+  // Ids shifted (as a fresh host model numbers sheets by position): Totals is now id 3, id 2 is another sheet.
+  const renumbered = [
+    Object.assign({}, SHEETS[0], { id: 1 }), Object.assign({}, SHEETS[2], { id: 2 }),
+    Object.assign({}, SHEETS[1], { id: 3 }), Object.assign({}, SHEETS[3], { id: 4 }),
+  ];
+  t.send({ type: 'xlsxWorkbook', version: 3, sheets: renumbered, activeSheetId: 1 });
+  assert.strictEqual(t.tab('Totals').getAttribute('aria-selected'), 'true', 'still on Totals');
+  deq(t.last('xlsxRequestSheetMeta'), { type: 'xlsxRequestSheetMeta', sheetId: 3 });
+  // A rename of the active sheet keeps its id: still selected.
+  t.meta(3, { version: 3 });
+  t.send({ type: 'xlsxWorkbook', version: 4, sheets: renumbered.map((x) => (x.id === 3 ? Object.assign({}, x, { name: 'Sums' }) : x)), activeSheetId: 1 });
+  assert.strictEqual(t.tab('Sums').getAttribute('aria-selected'), 'true');
+});
+
 test('flushPendingEdits is answered immediately (View mode: nothing pending)', () => {
   const t = setup();
   t.open();

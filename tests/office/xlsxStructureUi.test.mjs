@@ -301,6 +301,42 @@ test('addSheet: default name, a fresh xlsxWorkbook selects the new sheet, ids of
   assert.deepStrictEqual(names(lastWorkbook(h)), ['Values', 'Second Sheet']);
 });
 
+// Review S4 / K14: undo/redo used to drop the model, and a fresh model numbers sheets by position, so
+// after an add/delete was undone or redone the webview's active session id named another sheet.
+test('K14: session sheet ids stay stable across undo/redo of add and delete sheet', async () => {
+  ENABLE();
+  const h = await open('basic.xlsx');
+  S.answer = () => 'Continue';
+  const idOf = (wb, name) => wb.sheets.find((s) => s.name === name)?.id;
+  const second = idOf(lastWorkbook(h), 'Second Sheet');
+  const values = idOf(lastWorkbook(h), 'Values');
+  assert.strictEqual((await edit(h, { op: 'addSheet', afterSheetId: values })).ok, true);
+  assert.strictEqual((await edit(h, setOp(second, [[0, 0, 'on second']]))).ok, true);
+  for (let k = 0; k < 2; k++) {
+    await h.events[1].undo();
+    await h.events[0].undo();
+    let wb = lastWorkbook(h);
+    assert.deepStrictEqual(names(wb), ['Values', 'Second Sheet']);
+    assert.strictEqual(idOf(wb, 'Second Sheet'), second, 'Second Sheet keeps its id after undo');
+    await h.events[0].redo();
+    await h.events[1].redo();
+    wb = lastWorkbook(h);
+    assert.deepStrictEqual(names(wb), ['Values', 'Sheet1', 'Second Sheet']);
+    assert.strictEqual(idOf(wb, 'Second Sheet'), second, 'Second Sheet keeps its id after redo');
+    assert.strictEqual(idOf(wb, 'Values'), values);
+    // The id still addresses the same sheet's cells.
+    assert.strictEqual((await cells(h, [0, 0, 0, 0], second)).get('0,0').d, 'on second');
+  }
+  // Delete the first sheet, undo, redo: the others keep their ids.
+  assert.strictEqual((await edit(h, { op: 'deleteSheet', sheetId: values })).ok, true);
+  await h.events[2].undo();
+  assert.strictEqual(idOf(lastWorkbook(h), 'Second Sheet'), second);
+  await h.events[2].redo();
+  assert.deepStrictEqual(names(lastWorkbook(h)), ['Sheet1', 'Second Sheet']);
+  assert.strictEqual(idOf(lastWorkbook(h), 'Second Sheet'), second);
+  assert.strictEqual((await cells(h, [0, 0, 0, 0], second)).get('0,0').d, 'on second');
+});
+
 test('renameSheet: valid names apply; invalid ones are refused with the §5.2 reason', async () => {
   ENABLE();
   const h = await open('basic.xlsx');

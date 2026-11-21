@@ -234,7 +234,7 @@ test('edit -> VS Code stack: one event "Edit Cell", result with version/range, s
   assert.strictEqual((await cells(h, [0, 0, 5, 7])).get('1,6').v, 99);
 });
 
-test('onEdited drops the model: undo/redo mixed with new edits keep the grid and the package consistent', async () => {
+test('onEdited refreshes the model in place: undo/redo mixed with new edits keep the grid and the package consistent', async () => {
   ENABLE();
   const original = fixture('basic.xlsx');
   const h = await open('basic.xlsx');
@@ -247,12 +247,12 @@ test('onEdited drops the model: undo/redo mixed with new edits keep the grid and
   assert.strictEqual(h.events.length, 3);
   await h.events[2].undo();
   await h.events[1].undo();
-  assert.notStrictEqual(h.provider.models.get(h.doc.pkg), modelBefore, 'a fresh model after undo');
+  assert.strictEqual(h.provider.models.get(h.doc.pkg), modelBefore, 'the model is refreshed, not replaced (session sheet ids stay: K14)');
   let c = await cells(h, [0, 0, 40, 4]);
   assert.strictEqual(c.get('1,1').v, 100);
   assert.strictEqual(c.get('2,1').v, 3.14159, 'edit 2 undone');
   assert.ok(!c.has('30,3'));
-  // A new edit after undo works on the fresh model and the sheet is indexed correctly.
+  // A new edit after undo works on the refreshed model and the sheet is indexed correctly.
   const r = await edit(h, setOp(1, [[2, 1, '5']]));
   assert.strictEqual(r.ok, true);
   c = await cells(h, [0, 0, 40, 4]);
@@ -529,8 +529,8 @@ test('recordApplied: an applied edit is registered for undo; if editing stopped 
   assert.ok(same(h.doc.pkg.serialize(), original));
 
   // Edit turned off between building and recording: nothing stays in the package without an undo entry.
-  const m2 = h.provider.model(h.doc);               // undo dropped the model: the old one is not valid any more
-  assert.notStrictEqual(m2, m);
+  const m2 = h.provider.model(h.doc);               // undo refreshed the model in place (K14)
+  assert.strictEqual(m2, m);
   const res2 = await core.xlsx.ops.applyXlsxEdit(m2.wb, h.doc.pkg, setOp(1, [[1, 1, '88']]), { confirmed: false, styles: m2.styles });
   assert.strictEqual(res2.ok, true);
   h.doc.setEditMode(false);

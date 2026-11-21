@@ -96,6 +96,19 @@ export function refreshAfterEdit(wb: Workbook, edit: OfficeEdit, styles?: StyleT
   }
 }
 
+/**
+ * Bring `wb` (and `styles`) in line with its package after changes that are not known one by one (VS
+ * Code's undo/redo applies an edit inside OfficeDocument): as refreshAfterEdit with every part changed.
+ * The sheet list is re-read by syncSheetEntries, so session sheet ids stay stable (review S4 / K14):
+ * dropping the model instead would number the sheets by position again and move the webview's tab.
+ */
+export function refreshAfterUnknownEdit(wb: Workbook, styles?: StyleTable): void {
+  refreshParts(wb, [...wb.pkg.partNames(), wb.workbookPart]);
+  (styles ?? stylesFor(wb)).reload();
+  const cached = stylesCache.get(wb);
+  if (styles && cached && cached !== styles) cached.reload();
+}
+
 /** The sheet-list and sheet-index half of refreshAfterEdit for the changed `parts`; returns them lower-cased. */
 function refreshParts(wb: Workbook, changed: readonly string[]): Set<string> {
   const parts = new Set(changed.map((p) => p.toLowerCase()));

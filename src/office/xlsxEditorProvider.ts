@@ -22,7 +22,7 @@ import { Workbook, SheetLoadError } from './core/xlsx/workbook.js';
 import type { Sheet } from './core/xlsx/sheet.js';
 import { StyleTable } from './core/xlsx/styles.js';
 import { editSeed } from './core/xlsx/format.js';
-import { applyXlsxEdit, refreshAfterEdit } from './core/xlsx/ops.js';
+import { applyXlsxEdit, refreshAfterEdit, refreshAfterUnknownEdit } from './core/xlsx/ops.js';
 import { displayFormula } from './core/xlsx/sharedFormula.js';
 import { CopyTooLargeError, TSV_MAX_CELLS, cellWindow, clampRange, sheetMeta, toTsv } from './core/xlsx/view.js';
 import { findInWorkbook } from './core/xlsx/find.js';
@@ -221,13 +221,21 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   }
 
   /**
-   * Undo/redo (VS Code's stack) changed the package in place. The workbook model and its sheet
-   * indexes are keyed by package, so they are dropped and rebuilt on the next request; the webview is
-   * told to refetch. (`refreshAfterEdit` would need the edit, which the document does not pass on; a
-   * fresh model is equivalent and cheap.)
+   * Undo/redo (VS Code's stack) changed the package in place. The workbook model is refreshed in place
+   * (sheet list re-read, every loaded sheet re-indexed, styles reloaded) rather than dropped: a fresh
+   * model numbers the sheets by position, so after an add/delete sheet was undone the webview's session
+   * sheet id would name another sheet (review S4, K14). The webview is told to refetch.
    */
   protected onEdited(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
-    if (doc.pkg) this.models.delete(doc.pkg);
+    const m = doc.pkg ? this.models.get(doc.pkg) : undefined;
+    if (m) {
+      try {
+        refreshAfterUnknownEdit(m.wb, m.styles);
+      } catch (e) {
+        console.error('[XlsxEditor] model refresh after undo/redo failed; rebuilding it', e);
+        if (doc.pkg) this.models.delete(doc.pkg);
+      }
+    }
     this.editedAt.set(doc, doc.generation);
     this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
     this.onReloaded(doc, panel);
