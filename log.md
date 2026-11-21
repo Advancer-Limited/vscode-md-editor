@@ -1066,3 +1066,6 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 
 - **pdfLog** (`ff87583`, Sonnet; user-approved amendment to the frozen view half): webview → host `pdfLog {level, code: csp-violation|worker-fallback|page-render-failed, detail?}`; detail sanitised (query/fragment stripped, control chars removed, ≤2,000 chars); host appends to a lazily created "VS Code MD Editor" output channel, ≤50 lines per document load, never a toast; viewer posts each identical report once. Spec §5/§12 amended.
 
+
+- **PWP-11** (`da390a5`, Sonnet): PDF viewer registered as default for `*.pdf` (`customEditors` "PDF Viewer", `PdfEditorProvider.register` as extension step 2f; Choose Editors became 2g and now lists PDF); setting `vscodeMdEditor.pdf.defaultZoom` → `data-default-zoom`; host applies the >20,000-page view-only rule from `pdfFacts` (`pdf-many-pages` notice); page regions labelled "Page N of M" (pdf.js l10n attributes removed); high-contrast selection/find CSS. Real Extension Development Host: outline.pdf opened in the PDF Viewer by default in Dark, Light, High Contrast and High Contrast Light. Harness note to check at Gate P1: a .pdf passed on the command line at window startup opened as plain text (opening it after startup worked) — verify with a normal profile whether files restored or opened at startup pick the viewer. 819 tests.
+

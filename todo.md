@@ -393,10 +393,11 @@
 - [x] PWP-05 Host shell (PdfDocument, provider not registered, sniff, load errors, §12 CSP)
 - [x] PWP-06 Shared chrome ('pdf' kind)
 - [x] PWP-08 Viewer core (media/pdfViewer.js/.css, PdfViewerShell hooks; 57 tests; ran in an isolated dev host on 19 fixtures, 0 CSP violations)
-- [x] PWP-09 Sidebar (thumbnails, outline, attachments, properties)`n- [x] PWP-10 Find bar · PWP-11 Notices/registration · PWP-12 docs + gate checklist
+- [x] PWP-09 Sidebar (thumbnails, outline, attachments, properties)`n- [x] PWP-10 Find bar · PWP-11 Notices/registration (done: da390a5) · PWP-12 docs + gate checklist
 - [x] Host-log message for CSP violations / worker fallback (`pdfLog`, output channel)
 - [ ] PWP-11: emit data-default-zoom in bodyHtml
 - [ ] Merge note: PWP-05 generalised src/office/officeEditorProviderBase.ts (OfficeHostDocument, createDocument, bodyHtml(webview)); the Office editing branches also change that file, so expect a conflict when the PDF stack is rebased after Office
 - [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it
 
 - [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)
+- [ ] Gate P1: check that a .pdf opened at window startup (command line / restored tab) opens in the PDF Viewer, not as text (seen once in the PWP-11 harness)
