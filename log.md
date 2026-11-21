@@ -1030,3 +1030,10 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 
 **Issues met on the way** (for whoever writes PWP-08 and the Gate scripts): a `Buffer` posted to a webview arrives as JSON; `doc.destroy` does not exist in 6.5; `canvas.toBlob` is idle-scheduled; a minimised dev-host window stalls rendering (the launcher now restores its own window without focus, bottom of the z-order); closing an untitled buffer raises a modal "save changes?" prompt — one was left on screen for a few minutes during S8, after which the launcher was changed to dismiss any dialog it did not ask for and the test uses a saved file instead.
 
+
+## 2026-11-21 — PDF build started: PWP-02, PWP-04, PWP-07 integrated on feature/pdf-base
+
+- Base: `feature/office-viewers-docs` (Office viewers PR-5) + `feature/pdf-viewer-docs` + PWP-07, because Phase 1 reuses the Office chrome and the user asked to build everything now (merge order stays Office first).
+- **PWP-02** (`0ecc531`, Sonnet): pinned `pdfjs-dist@6.5.438`, dev `@cantoo/pdf-lib@2.11.1`, `@hyzyla/pdfium@3.0.0`; `engines.vscode`/`@types/vscode` ^1.95.0 (README states it); esbuild IIFE `media/pdfjs-bundle.js` (702 KB) and `tests/.build/pdf-core.cjs`; `copy-vendor.js` copies worker, css, images, cmaps, standard_fonts, iccs, wasm with licences (no sandbox/quickjs/nowasm); barrel + stubs + `limits.ts`; smoke tests. VSIX 2.20 MB → 4.64 MB (+2.44 MB, under the 5.2 MB estimate); `dist/extension.js` byte-identical.
+- **PWP-04** (`59cecf5`, Sonnet): `src/pdf/protocol.ts` — view half frozen, edit half draft; `parsePdfToHost`, `PDF_PROTOCOL_LIMITS`; reuses Office common types/parser; 172 validator tests. `src/types.ts` re-exports it (added here). PWP-06 must widen Office `init` kind/read-only reason for PDF.
+- Suite on feature/pdf-base: 634 pass, 0 fail.

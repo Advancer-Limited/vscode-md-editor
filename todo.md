@@ -383,3 +383,11 @@
 - [ ] Phase 2 (edit core): PWP-13 to PWP-21, Gate P2 (independent review)
 - [ ] Phase 3 (annotations): PWP-22 to PWP-26, Gate P3, flip `pdfEdit`
 - [ ] Phase 4 (forms + release): PWP-27 to PWP-30, Gate P4, flip `pdfForms`, Gate P-final
+
+## PDF build (feature/pdf-base = Office viewers PR-5 + PDF docs; stacked because the user asked to build everything now)
+- [x] PWP-01 Spikes (spike/pdf-viewer; reader openings pending the user: spike/pdf/out/for-user/CHECKLIST.md)
+- [x] PWP-02 Scaffolding (pdfjs-dist 6.5.438, engines ^1.95.0, bundle + vendor, barrel, limits, smoke tests)
+- [x] PWP-04 Protocol (view half frozen, edit half draft; 172 tests)
+- [x] PWP-07 View maths (15 tests)
+- [ ] PWP-03 Fixtures · PWP-05 Host shell · PWP-06 Shared chrome · PWP-08 Viewer core · PWP-09..12
+- [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it
