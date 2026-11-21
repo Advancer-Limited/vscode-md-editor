@@ -352,7 +352,7 @@
   - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
   - [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
   - [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
-  - [ ] WP-30 Styles and lists, write side
+  - [x] WP-30 Styles and lists, write side (`stylesWrite.ts`: setStyle/setList/setListLevel; missing heading/List Paragraph styles and the numbering part created; 13 tests; 20/20 outputs open in Word)
   - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
   - [ ] WP-32 Island DOM <-> segments
   - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
@@ -378,7 +378,7 @@
 - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
 - [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
 - [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
-- [ ] WP-30 Styles and lists, write side
+- [x] WP-30 Styles and lists, write side (`stylesWrite.ts`: setStyle/setList/setListLevel; missing heading/List Paragraph styles and the numbering part created; 13 tests; 20/20 outputs open in Word)
 - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
 - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
 - [ ] WP-34 Island controller and re-render scheduling
@@ -391,3 +391,4 @@
 - [ ] Fold the WP-29 deviations (log.md 2026-11-21) into spec §8.5/§6.3
 - [ ] After WP-30 merges: add `setStyle`/`setList` cases to `docxEditWiring.test.mjs`
 - [ ] WP-34/35: keep Edit enabled for `tracked-changes-on` (host asks the Edit-anyway modal on `setEditMode`)
+- [ ] WP-30 follow-ups: allocate new numIds above any numId referenced by paragraphs (not only defined ones); check VSMDBullet/VSMDNumber names survive a Word re-save; remove the dead stub branch in the WP-29 dispatch test
