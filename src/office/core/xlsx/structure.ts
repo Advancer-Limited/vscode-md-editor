@@ -1099,8 +1099,10 @@ function planDefinedNames(op: Op, b: EditBuilder, wb: Workbook, writes: Write[])
  * Insert (`count` > 0) or delete (`count` < 0) rows or columns at 0-based `at` of `sheet` (§9.6 Tier A).
  * Records through `b`; nothing is written when the operation is refused (the returned promise rejects
  * with an Error carrying `officeError`). Changes nothing (records nothing) when nothing moves.
+ * `planOnly`: plan (raising every refusal) without writing anything.
  */
-export async function insertOrDelete(b: EditBuilder, wb: Workbook, sheet: Sheet, axis: 'row' | 'col', at: number, count: number): Promise<void> {
+export async function insertOrDelete(b: EditBuilder, wb: Workbook, sheet: Sheet, axis: 'row' | 'col', at: number, count: number,
+  planOnly = false): Promise<void> {
   if (axis !== 'row' && axis !== 'col') refuse('Invalid axis.', 'invalid');
   const max = axis === 'row' ? MAX_ROWS : MAX_COLS;
   if (!Number.isInteger(at) || !Number.isInteger(count) || count === 0 || at < 0 || at >= max || Math.abs(count) > max) {
@@ -1137,7 +1139,9 @@ export async function insertOrDelete(b: EditBuilder, wb: Workbook, sheet: Sheet,
   for (const { e, s } of others) if (planOtherSheet(op, b, wb, e, s, writes)) touched.push(s);
   planTables(op, b, wb, sheet, writes);
   planDefinedNames(op, b, wb, writes);
-  if (writes.length === 0) return;
+  // planOnly: every refusal has been raised (ops.ts asks for a Tier C confirmation only after this
+  // passes, review S5); nothing is written.
+  if (planOnly || writes.length === 0) return;
 
   try {
     for (const w of writes) w();

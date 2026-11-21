@@ -36,7 +36,8 @@ export function checkStructuralOp(_wb, _pkg, op) {
 }`;
 /** Test-only WP-38 structure op: marks the sheet root so the edit is visible and undoable. */
 const TEST_STRUCTURE = `
-export async function insertOrDelete(b, _wb, sheet, _axis, _at, _count) {
+export async function insertOrDelete(b, _wb, sheet, _axis, _at, _count, planOnly) {
+  if (planOnly) return;
   b.setAttr(sheet.part, sheet.doc.root, '', 'vsmdStruct', String(Number(sheet.doc.root.attrs.find((a) => a.local === 'vsmdStruct')?.value ?? 0) + 1));
 }`;
 

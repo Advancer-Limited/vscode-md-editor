@@ -271,7 +271,12 @@ test('confirmStructuralEdits:false skips the Tier C prompt but not the delete-sh
   assert.strictEqual(r.ok, true);
   assert.strictEqual(asked, 0, 'no prompt for Tier C');
   S.answer = () => { asked++; return undefined; };
-  const d = await edit(h, { op: 'deleteSheet', sheetId: 3 });
+  // Review S5: "Pivot" hosts a pivot table, which deleteSheet refuses: refused up front, never asked.
+  const p = await edit(h, { op: 'deleteSheet', sheetId: 3 });
+  assert.strictEqual(asked, 0, 'no modal for a delete that would be refused');
+  assert.strictEqual(p.error.code, 'blocked');
+  assert.match(p.error.message, /pivot table/);
+  const d = await edit(h, { op: 'deleteSheet', sheetId: 1 });
   assert.strictEqual(asked, 1, 'the delete-sheet modal is shown even when the setting is off');
   assert.strictEqual(d.error.code, 'cancelled');
 });

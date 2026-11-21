@@ -714,6 +714,9 @@ function calcBaseline(name, bytes) {
   return pkg.serialize();
 }
 
+/** Fixtures without an editable worksheet: the round-trip test has nothing to shift there. */
+const NO_ROUND_TRIPS = new Set(['damaged-sheet.xlsx', 'protected-sheet.xlsx']);
+
 for (const name of allFixtures('xlsx')) {
   test(`insert -> delete of the same band restores the bytes: ${name}`, async (t) => {
     let fx;
@@ -766,6 +769,10 @@ for (const name of allFixtures('xlsx')) {
       }
     }
     t.diagnostic(`${ran} insert/delete round trips`);
+    // Review S7: the test must have exercised something. Only fixtures with no editable worksheet
+    // (damaged, protected) have no round trip.
+    if (NO_ROUND_TRIPS.has(name)) assert.strictEqual(ran, 0, `${name}: expected no editable worksheet`);
+    else assert.ok(ran > 0, `${name}: no insert/delete round trip ran`);
   });
 }
 
