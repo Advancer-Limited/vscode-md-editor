@@ -5,17 +5,44 @@
 // `setEditMode`, `openLink`, `openExternally`, `retry`, `writeClipboard`, `showAbout`), the
 // load-error view, and re-sending state when the document reloads. Kind providers supply the
 // assets, the body markup, the CSP and the kind-specific messages.
+//
+// The PDF viewer (src/pdf/pdfEditorProvider.ts) reuses this base with its own document class: the
+// base is generic over `OfficeHostDocument`, the read-only surface it needs (PWP-05 hook; the
+// default is OfficeDocument, so the Office providers are unchanged).
 
 import * as vscode from 'vscode';
 import { getNonce } from '../utils.js';
 import { showAboutDialog } from '../about.js';
 import { OfficeDocument } from './officeDocument.js';
 import type { OfficeDocumentStateChange } from './officeDocument.js';
-import type { OfficeKind } from './core/package.js';
+import type { LoadErrorView } from './loadErrors.js';
 import { parseCommonToHost } from './protocol.js';
 import type {
-  DocxToWebview, OfficeCommonToHost, OfficeError, OfficeNotice, XlsxToWebview,
+  DocxToWebview, OfficeCommonToHost, OfficeCommonToWebview, OfficeError, OfficeNotice, XlsxToWebview,
 } from './protocol.js';
+import type { PdfToWebview } from '../pdf/protocol.js';
+
+type InitMessage = Extract<OfficeCommonToWebview, { type: 'init' }>;
+/** Kinds served by this shell: the `init.kind` union. */
+export type ShellKind = InitMessage['kind'];
+
+/** What the shell needs from a document. OfficeDocument and PdfDocument both satisfy it. */
+export interface OfficeHostDocument extends vscode.CustomDocument {
+  readonly fileName: string;
+  readonly version: number;
+  readonly canEdit: boolean;
+  readonly readOnlyReason: InitMessage['readOnlyReason'];
+  readonly loadError: LoadErrorView | null;
+  readonly notices: OfficeNotice[];
+  readonly onDidChangeState: vscode.Event<OfficeDocumentStateChange>;
+  /** Re-read from disk (Retry); fires `reloaded` when it completes. */
+  reload(): Promise<void>;
+}
+
+/** The application named in "Open in …" messages. */
+function externalAppName(kind: ShellKind): string {
+  return kind === 'docx' ? 'Word' : kind === 'xlsx' ? 'Excel' : 'a PDF reader';
+}
 
 /** Schemes the host will open from a document link (spec §12). Everything else is dropped. */
 export const ALLOWED_LINK_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:', 'mailto:']);
@@ -47,7 +74,8 @@ export function officeCsp(cspSource: string, nonce: string, allowBlobAndData: bo
     + `img-src ${cspSource}${extra}; font-src ${cspSource}${extra};`;
 }
 
-const MEDIA_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/** A media file name, optionally in sub-folders (`pdfjs/pdf_viewer.css`); no segment starts with a dot. */
+const MEDIA_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -63,8 +91,9 @@ interface PanelState {
 /** How long the link-blocked warning stays up. */
 export const LINK_BLOCKED_MS = 10_000;
 
-export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyEditorProvider<OfficeDocument> {
-  protected abstract readonly kind: OfficeKind;
+export abstract class OfficeEditorProviderBase<D extends OfficeHostDocument = OfficeDocument>
+implements vscode.CustomReadonlyEditorProvider<D> {
+  protected abstract readonly kind: ShellKind;
 
   private readonly panelStates = new WeakMap<vscode.WebviewPanel, PanelState>();
 
@@ -75,20 +104,20 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
   /** Media file names of the stylesheets. */
   protected abstract styles(): string[];
   /** Static body markup. Must not contain document-derived text. */
-  protected abstract bodyHtml(): string;
+  protected abstract bodyHtml(webview: vscode.Webview): string;
   protected abstract csp(webview: vscode.Webview, nonce: string): string;
   /** After `init` was sent for a loaded document: send the first payload. */
-  protected abstract onReady(doc: OfficeDocument, panel: vscode.WebviewPanel): void;
+  protected abstract onReady(doc: D, panel: vscode.WebviewPanel): void;
   /** A message that is not a well-formed common message. Validate with the kind's parser. */
-  protected abstract onMessage(doc: OfficeDocument, panel: vscode.WebviewPanel, raw: unknown): void;
+  protected abstract onMessage(doc: D, panel: vscode.WebviewPanel, raw: unknown): void;
 
   /** After the document reloaded (and `init` was re-sent): tell the webview its state changed. */
-  protected onReloaded(_doc: OfficeDocument, _panel: vscode.WebviewPanel): void {
+  protected onReloaded(_doc: D, _panel: vscode.WebviewPanel): void {
     // kind providers post their `…StateChanged`
   }
 
   /** Kind-specific notices added to the document's host notices (WP-10, WP-14). */
-  protected kindNotices(_doc: OfficeDocument): OfficeNotice[] {
+  protected kindNotices(_doc: D): OfficeNotice[] {
     return [];
   }
 
@@ -99,13 +128,19 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
     uri: vscode.Uri,
     openContext: vscode.CustomDocumentOpenContext,
     _token: vscode.CancellationToken,
-  ): Promise<OfficeDocument> {
+  ): Promise<D> {
     // untitledDocumentData is ignored: no "new file" support in v1 (§6.1).
-    return OfficeDocument.create(uri, this.kind, openContext.backupId);
+    return this.createDocument(uri, openContext.backupId);
+  }
+
+  /** Open the kind's document. Never throws for bad content. The default serves Word and Excel. */
+  protected async createDocument(uri: vscode.Uri, backupId: string | undefined): Promise<D> {
+    if (this.kind === 'pdf') throw new Error('PDF providers must override createDocument');
+    return await OfficeDocument.create(uri, this.kind, backupId) as unknown as D;
   }
 
   async resolveCustomEditor(
-    doc: OfficeDocument,
+    doc: D,
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
@@ -131,7 +166,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
   // -------------------------------------------------------------------------------------------
   // Messages
 
-  protected post(panel: vscode.WebviewPanel, msg: DocxToWebview | XlsxToWebview): void {
+  protected post(panel: vscode.WebviewPanel, msg: DocxToWebview | XlsxToWebview | PdfToWebview): void {
     try {
       panel.webview.postMessage(msg).then(undefined, () => { /* panel gone */ });
     } catch {
@@ -152,12 +187,12 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
   }
 
   /** All notices to show: the document's host notices plus the kind's. */
-  protected allNotices(doc: OfficeDocument): OfficeNotice[] {
-    return doc.pkg ? [...doc.notices, ...this.kindNotices(doc)] : [...doc.notices];
+  protected allNotices(doc: D): OfficeNotice[] {
+    return doc.loadError ? [...doc.notices] : [...doc.notices, ...this.kindNotices(doc)];
   }
 
   /** `loadError` when the document failed to load, else `init`. */
-  protected sendState(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+  protected sendState(doc: D, panel: vscode.WebviewPanel): void {
     const state = this.panelStates.get(panel);
     if (doc.loadError) {
       if (state) state.showingError = true;
@@ -182,7 +217,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
   }
 
   /** Returns the handling promise so tests (and nothing else) can await it. */
-  private dispatch(doc: OfficeDocument, panel: vscode.WebviewPanel, raw: unknown): Promise<void> {
+  private dispatch(doc: D, panel: vscode.WebviewPanel, raw: unknown): Promise<void> {
     const common = parseCommonToHost(raw);
     if (common) {
       return this.handleCommon(doc, panel, common).catch((e) => {
@@ -197,7 +232,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
     return Promise.resolve();
   }
 
-  private async handleCommon(doc: OfficeDocument, panel: vscode.WebviewPanel, msg: OfficeCommonToHost): Promise<void> {
+  private async handleCommon(doc: D, panel: vscode.WebviewPanel, msg: OfficeCommonToHost): Promise<void> {
     switch (msg.type) {
       case 'ready':
         this.sendState(doc, panel);
@@ -235,7 +270,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
   }
 
   /** §12: only http/https/mailto, through openExternal (which applies VS Code's trusted-domain prompt). */
-  private async openLink(doc: OfficeDocument, panel: vscode.WebviewPanel, href: string): Promise<void> {
+  private async openLink(doc: D, panel: vscode.WebviewPanel, href: string): Promise<void> {
     const state = this.panelStates.get(panel);
     const url = allowedExternalLink(href);
     if (!url) {
@@ -254,7 +289,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
   }
 
   /** Re-post the notices without the link-blocked warning, if it is showing. */
-  private clearLinkBlocked(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+  private clearLinkBlocked(doc: D, panel: vscode.WebviewPanel): void {
     const state = this.panelStates.get(panel);
     if (!state?.linkBlockedTimer) return;
     clearTimeout(state.linkBlockedTimer);
@@ -262,8 +297,8 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
     if (!doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
   }
 
-  private async openExternally(doc: OfficeDocument): Promise<void> {
-    const app = this.kind === 'docx' ? 'Word' : 'Excel';
+  private async openExternally(doc: D): Promise<void> {
+    const app = externalAppName(this.kind);
     if (doc.uri.scheme !== 'file') {
       void vscode.window.showInformationMessage(`Open in ${app} is only available for files on this computer.`);
       return;
@@ -279,7 +314,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
     if (!ok) void vscode.window.showWarningMessage(`Couldn't open ${doc.fileName} in ${app}.`);
   }
 
-  private onDocumentState(doc: OfficeDocument, panel: vscode.WebviewPanel, e: OfficeDocumentStateChange): void {
+  private onDocumentState(doc: D, panel: vscode.WebviewPanel, e: OfficeDocumentStateChange): void {
     if (e.kind === 'notices') {
       if (!doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
       return;
@@ -299,10 +334,11 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomReadonlyE
     const cacheBust = Date.now();
     const media = (file: string): string => {
       if (!MEDIA_FILE_RE.test(file)) throw new Error(`Invalid media file name: ${file}`);
-      const uri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', file));
+      const uri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', ...file.split('/')));
       return `${uri}?v=${cacheBust}`;
     };
-    const title = this.kind === 'docx' ? 'Word Document Viewer' : 'Excel Workbook Viewer';
+    const title = this.kind === 'docx' ? 'Word Document Viewer'
+      : this.kind === 'xlsx' ? 'Excel Workbook Viewer' : 'PDF Viewer';
     const styles = this.styles().map((f) => `  <link href="${media(f)}" rel="stylesheet">`).join('\n');
     const scripts = this.scripts().map((f) => `  <script nonce="${nonce}" src="${media(f)}"></script>`).join('\n');
     return /* html */ `<!DOCTYPE html>
@@ -315,7 +351,7 @@ ${styles}
   <title>${title}</title>
 </head>
 <body data-office-kind="${this.kind}">
-${this.bodyHtml()}
+${this.bodyHtml(webview)}
 ${scripts}
 </body>
 </html>`;
