@@ -102,3 +102,5 @@
   .pdf-dialog { border-color: CanvasText; }
   .pdf-attachment-save, .pdf-dialog-close { border-color: ButtonText; }
 }
+.pdf-thumbs-note,
+.pdf-outline-truncated { margin: 8px; font-size: 0.9em; color: var(--vscode-descriptionForeground); }

@@ -13,7 +13,7 @@
   const TEXT = {
     label: 'Find in document',
     placeholder: 'Find',
-    noText: 'This PDF has no text layer (it looks like a scan). Selecting and searching text aren’t available.',
+    noText: 'No text was found anywhere in this PDF (it may be scanned), so there is nothing to search.',
     notFound: 'No matches',
     wrappedNext: 'Reached the end of the document; continued from the top.',
     wrappedPrev: 'Reached the top of the document; continued from the end.',
@@ -44,11 +44,14 @@
     };
     let open = false, built = false;
     let bus = null, controller = null;
+    // True only once pdf.js has extracted every page and found no text at all. Never set from the
+    // facts (they sample the first pages only), and never disables the bar: it is a note.
     let noText = false;
     let returnFocus = null;
     let lastKind = 'type';          // 'type' | 'next' | 'prev': what the user did last (decides what is announced)
     let counts = { current: 0, total: 0 };
     let findState = FOUND;
+    let answered = false;           // pdf.js has reported a final state for the current search
     let lastAnnounced = '';
 
     let bar, input, countEl, noteEl, caseBtn, wordBtn, allBtn, prevBtn, nextBtn, closeBtn;
@@ -100,7 +103,6 @@
       caseBtn.setAttribute('aria-pressed', String(opts.matchCase));
       wordBtn.setAttribute('aria-pressed', String(opts.wholeWord));
       allBtn.setAttribute('aria-pressed', String(opts.highlightAll));
-      [input, caseBtn, wordBtn, allBtn, prevBtn, nextBtn].forEach((b) => { b.disabled = noText; });
     }
 
     function syncNote() {
@@ -133,15 +135,15 @@
       if (!built) { return; }
       bind();
       const query = input.value;
-      if (noText || query === '') {
+      if (query === '') {
         counts = { current: 0, total: 0 };
         findState = FOUND;
         render();
-        if (bus && query === '') { bus.dispatch('findbarclose', { source: shell }); }   // clears the highlights
-        else if (noText && query !== '') { shell.hint(TEXT.noText); }
+        if (bus) { bus.dispatch('findbarclose', { source: shell }); }   // clears the highlights
         return;
       }
       if (!bus) { return; }
+      if (type === '') { answered = false; }
       bus.dispatch('find', {
         source: shell, type, query,
         caseSensitive: opts.matchCase, entireWord: opts.wholeWord, highlightAll: opts.highlightAll,
@@ -164,6 +166,7 @@
     function onState(e) {
       if (!e) { return; }
       findState = e.state;
+      if (findState !== PENDING) { answered = true; }
       if (e.matchesCount) { counts = { current: e.matchesCount.current | 0, total: e.matchesCount.total | 0 }; }
       render();
       maybeAnnounce();
@@ -175,8 +178,25 @@
       return !pending || typeof pending.size !== 'number' || pending.size === 0;
     }
 
+    /**
+     * After a search that found nothing: did pdf.js extract every page and get no text at all?
+     * (`_pageContents` holds the normalised text of each extracted page.)
+     */
+    function checkNoText() {
+      if (noText || !answered || !controller || counts.total !== 0 || findState === PENDING || !scanComplete()) { return; }
+      const contents = controller._pageContents;
+      const n = shell.pageCount | 0;
+      if (!Array.isArray(contents) || n <= 0 || contents.length < n) { return; }
+      for (let i = 0; i < n; i++) {
+        if (typeof contents[i] !== 'string' || contents[i].trim() !== '') { return; }
+      }
+      noText = true;
+      syncNote();
+      if (open) { shell.hint(TEXT.noText); }
+    }
+
     function countText() {
-      if (noText || input.value === '') { return ''; }
+      if (input.value === '') { return ''; }
       const complete = scanComplete();
       if (counts.total === 0) { return complete && findState !== PENDING ? TEXT.notFound : SEARCHING; }
       const total = complete ? String(counts.total) : 'more than ' + counts.total;
@@ -186,6 +206,7 @@
 
     function render() {
       if (!built) { return; }
+      if (input.value !== '') { checkNoText(); }
       const t = countText();
       countEl.textContent = t;
       const none = t === TEXT.notFound;
@@ -194,7 +215,7 @@
     }
 
     function maybeAnnounce() {
-      if (!open || noText || input.value === '' || findState === PENDING) { return; }
+      if (!open || input.value === '' || findState === PENDING) { return; }
       if (!scanComplete() && lastKind === 'type') { return; }   // typing: say the final count, not every step
       let msg = countText();
       if (!msg || msg === SEARCHING) { return; }
@@ -227,9 +248,8 @@
       syncButtons();
       syncNote();
       lastKind = 'type';
-      if (seed && !noText && seed !== input.value) { input.value = seed; lastAnnounced = ''; run('', false); }
+      if (seed && seed !== input.value) { input.value = seed; lastAnnounced = ''; run('', false); }
       else if (input.value !== '') { run('', false); }
-      if (noText) { shell.hint(TEXT.noText); return; }
       if (input.focus) { input.focus(); }
       if (input.select) { input.select(); }
     }
@@ -267,6 +287,7 @@
     function reset() {
       counts = { current: 0, total: 0 };
       findState = FOUND;
+      answered = false;
       lastAnnounced = '';
     }
     shell.on('documentloaded', () => {
@@ -285,11 +306,6 @@
     shell.on('viewerchanged', () => {
       bind();
       if (open && input.value !== '') { lastKind = 'type'; run('', false); }
-    });
-    shell.on('facts', (facts) => {
-      noText = !!facts && facts.hasText === false && (facts.pageCount | 0) > 0;
-      syncButtons(); syncNote();
-      if (noText && open) { shell.hint(TEXT.noText); }
     });
 
     return {

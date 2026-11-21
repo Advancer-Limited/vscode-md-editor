@@ -127,15 +127,15 @@ test('pdfCsp: exact §12 string, only the webview origin, no unsafe-eval/unsafe-
   assert.strictEqual(csp,
     "default-src 'none'; script-src 'nonce-NONCE' 'wasm-unsafe-eval'; worker-src blob:; "
     + 'connect-src https://csp.example; style-src https://csp.example; img-src https://csp.example data:; '
-    + 'font-src https://csp.example;');
-  assert.doesNotMatch(csp, /'unsafe-eval'|unsafe-inline|frame-src|object-src|form-action|\*/);
+    + "font-src https://csp.example; form-action 'none'; base-uri 'none';");
+  assert.doesNotMatch(csp, /'unsafe-eval'|unsafe-inline|frame-src|object-src|\*/);
   // Every source that is not a keyword is the webview origin.
   const sources = csp.split(';').flatMap((d) => d.trim().split(/\s+/).slice(1)).filter(Boolean);
   for (const s of sources) {
     assert.ok(s === 'https://csp.example' || /^'[^']+'$/.test(s) || s === 'blob:' || s === 'data:', s);
   }
   assert.deepStrictEqual(csp.split(';').map((d) => d.trim().split(/\s+/)[0]).filter(Boolean),
-    ['default-src', 'script-src', 'worker-src', 'connect-src', 'style-src', 'img-src', 'font-src']);
+    ['default-src', 'script-src', 'worker-src', 'connect-src', 'style-src', 'img-src', 'font-src', 'form-action', 'base-uri']);
 });
 
 test('HTML: CSP with a fresh nonce, nonce on every script, ?v= on every asset, media/ the only root', async () => {
@@ -408,7 +408,7 @@ test('a backup id is read instead of the file; an unreadable backup falls back t
 test('pdfFacts -> notices (display only); a reload drops them until the webview reports again', async () => {
   const { doc, panel, uri } = await open('a.pdf', pdf());
   await panel.send({ type: 'ready' });
-  await panel.send({ type: 'pdfFacts', facts: {
+  await panel.send({ type: 'pdfFacts', generation: doc.generation, facts: {
     ...FACTS, encrypted: true, hasText: false, hasJavaScript: true, hasXfa: true, attachmentCount: 2,
     signatures: [{ signer: '<img src=x onerror=alert(1)>', reason: '', time: '' }],
   } });
@@ -421,12 +421,12 @@ test('pdfFacts -> notices (display only); a reload drops them until the webview 
   assert.strictEqual(doc.canEdit, false, 'facts never change a decision');
   // Invalid facts are dropped without a reply.
   const len = panel.sent.length;
-  await panel.send({ type: 'pdfFacts', facts: { ...FACTS, pageCount: -1 } });
+  await panel.send({ type: 'pdfFacts', generation: doc.generation, facts: { ...FACTS, pageCount: -1 } });
   assert.strictEqual(panel.sent.length, len);
   // Plain facts: nothing to say.
-  await panel.send({ type: 'pdfFacts', facts: FACTS });
+  await panel.send({ type: 'pdfFacts', generation: doc.generation, facts: FACTS });
   assert.deepStrictEqual(panel.last('notices').notices, []);
-  await panel.send({ type: 'pdfFacts', facts: { ...FACTS, hasJavaScript: true } });
+  await panel.send({ type: 'pdfFacts', generation: doc.generation, facts: { ...FACTS, hasJavaScript: true } });
   S.writeFile(uri, pdf('2'), 5000);
   S.watchers[0].fireChange();
   await waitFor(() => panel.types().filter((t) => t === 'init').length === 2, 'reload');
@@ -450,11 +450,51 @@ test('defaultZoom setting is emitted as data-default-zoom (actual -> page-actual
 test('more than 20,000 pages: view-only reason and a notice (webview fact applied by the host)', async () => {
   const { doc, panel } = await open('many.pdf', pdf());
   await panel.send({ type: 'ready' });
-  await panel.send({ type: 'pdfFacts', facts: { ...FACTS, pageCount: 20001 } });
+  await panel.send({ type: 'pdfFacts', generation: doc.generation, facts: { ...FACTS, pageCount: 20001 } });
   assert.strictEqual(doc.readOnlyReason, 'too-large');
   assert.ok(panel.last('notices').notices.some((n) => n.code === 'pdf-many-pages'));
-  await panel.send({ type: 'pdfFacts', facts: { ...FACTS, pageCount: 20000 } });
+  await panel.send({ type: 'pdfFacts', generation: doc.generation, facts: { ...FACTS, pageCount: 20000 } });
   assert.ok(!panel.last('notices').notices.some((n) => n.code === 'pdf-many-pages'));
+});
+
+test('pdfFacts for another generation is dropped; a reload resets the facts-derived reason and notices', async () => {
+  const { doc, panel, uri } = await open('gen.pdf', pdf());
+  await panel.send({ type: 'ready' });
+  const g1 = doc.generation;
+  // Facts without a generation are invalid (answered as such), facts for a future generation are dropped.
+  await panel.send({ type: 'pdfFacts', facts: { ...FACTS, hasJavaScript: true } });
+  assert.ok(!panel.sent.some((m) => m.type === 'notices' && m.notices.some((n) => n.code === 'pdf-javascript')));
+  const len = panel.sent.length;
+  await panel.send({ type: 'pdfFacts', generation: g1 + 1, facts: { ...FACTS, pageCount: 20001 } });
+  assert.strictEqual(panel.sent.length, len);
+  assert.strictEqual(doc.readOnlyReason, null);
+  // The current generation's facts apply.
+  await panel.send({ type: 'pdfFacts', generation: g1, facts: { ...FACTS, pageCount: 20001 } });
+  assert.strictEqual(doc.readOnlyReason, 'too-large');
+  assert.ok(panel.last('notices').notices.some((n) => n.code === 'pdf-many-pages'));
+  // A reload is a new generation: the reason and the notices from the old facts are gone...
+  S.writeFile(uri, pdf('2'), 5000);
+  S.watchers[0].fireChange();
+  await waitFor(() => panel.types().filter((t) => t === 'init').length === 2, 'reload');
+  assert.strictEqual(doc.generation, g1 + 1);
+  assert.strictEqual(doc.readOnlyReason, null);
+  assert.strictEqual(panel.last('init').readOnlyReason, null);
+  assert.deepStrictEqual(panel.last('init').notices, []);
+  // ...and late facts about the old generation cannot bring them back.
+  const len2 = panel.sent.length;
+  await panel.send({ type: 'pdfFacts', generation: g1, facts: { ...FACTS, pageCount: 20001, hasJavaScript: true } });
+  assert.strictEqual(panel.sent.length, len2);
+  assert.strictEqual(doc.readOnlyReason, null);
+});
+
+test('sameAttachmentTarget: case-insensitive for file: on Windows and macOS, exact elsewhere', () => {
+  const a = vscode.Uri.file('/ws/Report.PDF');
+  const b = vscode.Uri.file('/ws/report.pdf');
+  assert.strictEqual(host.sameAttachmentTarget(a, b, 'win32'), true);
+  assert.strictEqual(host.sameAttachmentTarget(a, b, 'darwin'), true);
+  assert.strictEqual(host.sameAttachmentTarget(a, b, 'linux'), false);
+  assert.strictEqual(host.sameAttachmentTarget(b, b, 'linux'), true);
+  assert.strictEqual(host.sameAttachmentTarget(a, vscode.Uri.parse('untitled:/ws/Report.PDF'), 'darwin'), false);
 });
 
 test('openLink: the shared allow-list (http, https, mailto); javascript:/file: dropped with a notice', async () => {

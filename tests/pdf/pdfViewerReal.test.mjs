@@ -85,7 +85,7 @@ for (const [name, want] of Object.entries(FACTS)) {
       assert.strictEqual(t.password.hidden, true, 'no password prompt');
       const msg = t.last('pdfFacts');
       assert.deepStrictEqual(plain(msg.facts), want);
-      assert.deepStrictEqual(parsePdfToHost(plain(msg)), { type: 'pdfFacts', facts: want });
+      assert.deepStrictEqual(parsePdfToHost(plain(msg)), { type: 'pdfFacts', generation: 1, facts: want });
       assert.strictEqual(t.viewer.doc, t.shell.pdfDocument);
       assert.strictEqual(t.pageCount.textContent, 'of ' + want.pageCount);
       // No browser worker in Node, so pdf.js runs on the main thread: the fallback detection says so.

@@ -89,7 +89,7 @@ test('boot order: ready, then pdfRequestDocument after init, then the worker and
   eq(t.shell.pdfDocument, pdf);
   eq(t.shell.diagnostics().workerIsOurs, true);
 
-  deq(t.last('pdfFacts'), { type: 'pdfFacts', facts: {
+  deq(t.last('pdfFacts'), { type: 'pdfFacts', generation: 1, facts: {
     pageCount: 3, encrypted: false, hasText: true, hasJavaScript: false, hasXfa: false, attachmentCount: 0, signatures: [] } });
   eq(t.htmlWrites(), 0);
 });
@@ -100,13 +100,64 @@ test('a document served by anything but our worker is reported (main-thread fall
   assert.ok(t.log.warnings.some((w) => /dedicated worker/.test(w)));
 });
 
-test('a worker file that cannot be read gives the engine error view, with Retry', async () => {
+test('a worker file that cannot be read gives the unexpected-error view (not "newer VS Code"), with Retry', async () => {
   const t = await setup({ fetch: () => ({ ok: false, status: 404, text: async () => '' }) }).open();
   eq(t.log.getDocument.length, 0);
   eq(t.shell.phase, 'failed');
-  eq(t.errorView.find((e) => e.tagName === 'H2')[0].textContent, t.api.TEXT.engineTooOld);
+  eq(t.errorView.find((e) => e.tagName === 'H2')[0].textContent, t.api.TEXT.damaged);
   assert.ok(/HTTP 404/.test(t.errorView.textContent));
   deq(t.errorView.find((e) => e.tagName === 'BUTTON').map((b) => b.getAttribute('data-action')), ['openExternally', 'retry']);
+});
+
+test('a worker that errors while loading fails the load (unexpected-error view) and is replaced on the next load', async () => {
+  const t = await setup().open({ hang: true });
+  eq(t.shell.phase, 'loading');
+  const dead = t.log.workers[1];
+  (dead.listeners.error || []).forEach((f) => f({ message: 'boom' }));
+  await t.tick();
+  eq(t.shell.phase, 'failed');
+  eq(t.errorView.find((e) => e.tagName === 'H2')[0].textContent, t.api.TEXT.damaged);
+  assert.ok(/boom/.test(t.errorView.textContent));
+  // Retry: a new generation gets a new worker; the dead one is terminated.
+  t.log.plan.push({ pdf: makePdf(2) });
+  t.send(t.initMsg());
+  t.send({ type: 'pdfDocument', generation: 2, version: 0, bytes: new Uint8Array([37, 80, 68, 70, 45]) });
+  await t.tick(10);
+  eq(t.shell.phase, 'ready');
+  eq(t.log.workers.length, 3, 'a new worker was made');
+  eq(dead.terminated, true);
+  eq(t.log.fetches.length, 2);
+  eq(t.shell.diagnostics().workerIsOurs, true);
+});
+
+test('a worker error after the document is shown keeps it, and the next load uses a new worker', async () => {
+  const t = await setup().open({ pdf: makePdf(2) });
+  const first = t.log.workers[1];
+  (first.listeners.error || []).forEach((f) => f({ message: 'late' }));
+  eq(t.shell.phase, 'ready');
+  t.log.plan.push({ pdf: makePdf(3) });
+  t.send(t.initMsg());
+  t.send({ type: 'pdfDocument', generation: 2, version: 1, bytes: new Uint8Array([37, 80, 68, 70, 45]) });
+  await t.tick(10);
+  eq(t.shell.pageCount, 3);
+  eq(t.log.workers.length, 3);
+  eq(first.terminated, true);
+  // An error from the replaced worker no longer affects anything.
+  (first.listeners.error || []).forEach((f) => f({ message: 'stale' }));
+  eq(t.shell.phase, 'ready');
+});
+
+test('pdfFacts carries the generation it was collected for', async () => {
+  const t = await setup().open({ pdf: makePdf(2) }, 7);
+  await t.tick(10);
+  eq(t.last('pdfFacts').generation, 7);
+});
+
+test('the page area is a named region that takes the focus', async () => {
+  const t = await setup().open({ pdf: makePdf(1) });
+  eq(t.container.getAttribute('role'), 'region');
+  eq(t.container.getAttribute('aria-label'), 'PDF pages');
+  eq(t.container.getAttribute('tabindex'), '0');
 });
 
 // ---------- engine check (spec §10.4) ----------
@@ -545,7 +596,10 @@ function clickLink(t, href, type = 'click') {
   const span = t.document.createElement('span');
   a.appendChild(span);
   t.container.appendChild(a);
-  const ev = { target: span, prevented: false, preventDefault() { ev.prevented = true; } };
+  const ev = {
+    target: span, prevented: false, stopped: false, stoppedNow: false,
+    preventDefault() { ev.prevented = true; }, stopPropagation() { ev.stopped = true; }, stopImmediatePropagation() { ev.stoppedNow = true; },
+  };
   t.main.fire(type, ev);
   return ev;
 }
@@ -555,10 +609,14 @@ test('links: http/https/mailto go to the host; everything else is dropped; the w
   const before = () => t.posted.filter((m) => m.type === 'openLink').map((m) => m.href);
 
   for (const href of ['https://example.com/a?b=1', 'http://example.com/', 'mailto:someone@example.com', ' HTTPS://EXAMPLE.COM/x ']) {
-    assert.ok(clickLink(t, href).prevented, href);
+    const ev = clickLink(t, href);
+    assert.ok(ev.prevented, href);
+    // VS Code's host page opens any <a href> it sees a click on: the event must not get there.
+    assert.ok(ev.stopped && ev.stoppedNow, 'propagation stopped: ' + href);
   }
   deq(before(), ['https://example.com/a?b=1', 'http://example.com/', 'mailto:someone@example.com', 'HTTPS://EXAMPLE.COM/x']);
-  assert.ok(clickLink(t, 'https://example.com/middle', 'auxclick').prevented, 'middle click too');
+  const aux = clickLink(t, 'https://example.com/middle', 'auxclick');
+  assert.ok(aux.prevented && aux.stopped && aux.stoppedNow, 'middle click too');
   eq(before().length, 5);
 
   const hint = t.byClass('office-hint');
@@ -566,14 +624,17 @@ test('links: http/https/mailto go to the host; everything else is dropped; the w
     'vscode://x/y', 'command:workbench.action.terminal.new', 'data:text/html,<script>alert(1)</script>', 'ftp://example.com/', 'tel:123',
     '//example.com/protocol-relative', 'blob:https://example.com/1']) {
     hint.textContent = '';
-    assert.ok(clickLink(t, href).prevented, href);
+    const ev = clickLink(t, href);
+    assert.ok(ev.prevented && ev.stopped, href);
     eq(hint.textContent, 'This link was not opened.', href);
   }
   eq(before().length, 5, 'nothing else was forwarded');
 
   // Internal destinations: pdf.js's own handler scrolls; we only make sure nothing navigates.
   hint.textContent = '';
-  assert.ok(clickLink(t, '#%5B%7B%22num%22%3A5%7D%5D').prevented);
+  const internal = clickLink(t, '#%5B%7B%22num%22%3A5%7D%5D');
+  assert.ok(internal.prevented);
+  eq(internal.stopped || internal.stoppedNow, false, 'an internal link still reaches pdf.js');
   assert.ok(clickLink(t, '').prevented);
   eq(hint.textContent, '');
   eq(clickLink(t, undefined).prevented, false, 'an anchor without href goes nowhere');

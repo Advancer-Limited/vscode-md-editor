@@ -181,19 +181,56 @@ test('document-derived text only ever reaches textContent (a hostile selection s
   eq(t.find.bar.find((e) => e.tagName === 'IMG').length, 0);
 });
 
-test('a PDF with no text layer: note shown, controls disabled, nothing searched', async () => {
+test('no text on the first pages (facts) neither disables find nor shows the note', async () => {
   const t = await boot(makePdf(2, { getPage: async () => ({
     getTextContent: async () => ({ items: [] }), getJSActions: async () => null, getAnnotations: async () => [],
   }) }));
   await t.tick(20);
+  assert.ok(t.posted.some((m) => m.type === 'pdfFacts' && m.facts.hasText === false));
   t.ctrlF();
   const note = t.find.bar.find((e) => e.className === 'pdf-find-note')[0];
-  eq(note.hidden, false);
-  assert.ok(/no text layer/.test(note.textContent));
-  eq(t.input().disabled, true);
-  eq(t.btn('Next match').disabled, true);
-  assert.ok(/no text layer/.test(t.live.textContent));
-  eq(t.finds.filter((f) => f.n === 'find').length, 0);
+  eq(note.hidden, true);
+  eq(t.input().disabled, false);
+  eq(t.btn('Next match').disabled, false);
+  eq(t.document.activeElement, t.input());
+  t.type('later page text');
+  eq(t.finds.filter((f) => f.n === 'find').length, 1, 'the search runs: later pages may have text');
+});
+
+test('the scanned-file note appears only once every page was extracted and none had text; controls stay enabled', async () => {
+  const t = await boot(makePdf(3));
+  const c = t.shell.findController;
+  const note = () => t.find.bar.find((e) => e.className === 'pdf-find-note')[0];
+  t.ctrlF();
+  t.type('x');
+  // Still extracting: no verdict.
+  c._pageContents = ['', '  '];
+  c._pendingFindMatches = new Set([2]);
+  t.state(3, 0, 0);
+  t.bus.dispatch('updatefindmatchescount', { matchesCount: { current: 0, total: 0 } });
+  eq(note().hidden, true);
+  // Every page scanned, but one has text: no note either.
+  c._pageContents = ['', 'words', ''];
+  c._pendingFindMatches = new Set();
+  t.state(1, 0, 0);
+  eq(note().hidden, true);
+  eq(t.count(), 'No matches');
+  // Every page scanned, none has text: the note, as a soft hint; nothing is disabled.
+  c._pageContents = ['', ' \n', ''];
+  t.type('y');
+  t.state(1, 0, 0);
+  eq(note().hidden, false);
+  assert.ok(/may be scanned/.test(note().textContent));
+  assert.ok(/may be scanned/.test(t.live.textContent));
+  eq(t.input().disabled, false);
+  eq(t.btn('Next match').disabled, false);
+  // A new document clears the verdict (pdf.js resets its page text with the document).
+  c._pageContents = [];
+  t.log.plan.push({ pdf: makePdf(1) });
+  t.send(t.initMsg());
+  t.send({ type: 'pdfDocument', generation: 2, version: 0, bytes: new Uint8Array([37, 80, 68, 70, 45]) });
+  await t.tick(10);
+  eq(note().hidden, true);
 });
 
 test('a new document re-runs an open search; closing the document closes the bar', async () => {

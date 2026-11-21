@@ -55,3 +55,9 @@ test('the bundle is an IIFE global with the display API and viewer components, a
   }
   assert.ok(!/\beval\(|new Function\(/.test(code), 'no eval / new Function');
 });
+
+test('the vendored pdf.js worker contains no eval / new Function (the CSP has no unsafe-eval)', () => {
+  const code = fs.readFileSync(path.join(root, 'media', 'pdfjs', 'pdf.worker.min.mjs'), 'utf8');
+  assert.ok(code.length > 500_000, 'worker file present');
+  assert.ok(!/\beval\(|new Function\(/.test(code), 'no eval / new Function in the worker');
+});

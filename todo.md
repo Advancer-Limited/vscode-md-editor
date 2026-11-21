@@ -397,6 +397,8 @@
 - [x] PWP-10 Find bar · PWP-11 Notices/registration (done: da390a5)
 - [x] PWP-12 Phase 1 docs: README PDF section, CHANGELOG, `docs/pdf-gate-checklist.md` (97 Gate P1 items)
 - [x] Host-log message for CSP violations / worker fallback (`pdfLog`, output channel)
+- [x] Independent review fixes: links opened once, find never disabled by the facts sample, outline/thumbnail caps, `pdfFacts.generation`, CSP form-action/base-uri, page-area role, error titles, dead worker replaced, macOS attachment check, worker no-eval smoke test
+- [ ] Office owner: `media/docxEditor.js` link click has the same double-open pattern (needs stopPropagation for external hrefs)
 - [x] PWP-11: emit data-default-zoom in bodyHtml
 - [ ] Merge note: PWP-05 generalised src/office/officeEditorProviderBase.ts (OfficeHostDocument, createDocument, bodyHtml(webview)); the Office editing branches also change that file, so expect a conflict when the PDF stack is rebased after Office
 - [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it

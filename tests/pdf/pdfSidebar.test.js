@@ -179,6 +179,70 @@ async function outlineSetup() {
 }
 const key = (tree, target, k) => tree.fire('keydown', { key: k, target, preventDefault() {}, stopPropagation() {} });
 
+test('thumbnails: at most MAX_THUMBS buttons, a note for the rest; pages past the cap mark nothing', async () => {
+  const api = require('../../media/pdfSidebar.js');
+  const cap = api.MAX_THUMBS;
+  const t = await boot(makeCanvasPdf(cap + 1500));
+  t.shell.setSidebarOpen(true);
+  await t.tick();
+  const items = find(t, 'pdf-thumb');
+  eq(items.length, cap);
+  eq(t.log.observers[0].targets.length, cap);
+  const note = find(t, 'pdf-thumbs-note')[0];
+  assert.ok(note && /first 5,000 of 6,500 pages/.test(note.textContent), note && note.textContent);
+  t.viewer.currentPageNumber = cap + 10;
+  eq(items.filter((b) => b.getAttribute('aria-current') === 'page').length, 0);
+  eq(items.filter((b) => b.getAttribute('tabindex') === '0').length, 1, 'still one tab stop');
+  t.viewer.currentPageNumber = 3;
+  eq(items[2].getAttribute('aria-current'), 'page');
+});
+
+test('thumbnails: a 2,000-page document gets every button and no note', async () => {
+  const t = await boot(makeCanvasPdf(2000));
+  t.shell.setSidebarOpen(true);
+  await t.tick();
+  eq(find(t, 'pdf-thumb').length, 2000);
+  eq(find(t, 'pdf-thumbs-note').length, 0);
+});
+
+/** n items per level, `depth` levels deep. */
+function wideOutline(n, depth) {
+  const level = (d) => Array.from({ length: n }, (_, i) => ({ title: 'L' + d + '.' + i, dest: 'x', items: d < depth ? level(d + 1) : [] }));
+  return level(1);
+}
+function deepOutline(depth) {
+  let node = { title: 'leaf', dest: 'x', items: [] };
+  for (let d = depth - 1; d >= 1; d--) { node = { title: 'd' + d, dest: 'x', items: [node] }; }
+  return [node];
+}
+
+test('outline: the 5,000-entry cap is shared by the whole tree, with a truncated note', async () => {
+  const api = require('../../media/pdfSidebar.js');
+  // 20 x 20 x 20 = 8,420 entries in all, every level well under 5,000.
+  const t = await boot(makePdf(3, { getOutline: async () => wideOutline(20, 3) }));
+  t.shell.showPanel('outline');
+  await t.tick(10);
+  eq(find(t, 'pdf-outline-item').length, api.MAX_OUTLINE_ITEMS);
+  const note = find(t, 'pdf-outline-truncated')[0];
+  assert.ok(note && /outline truncated/.test(note.textContent));
+  eq(note.getAttribute('role'), 'note');
+});
+
+test('outline: levels deeper than 64 are left out, with the note; a small outline has no note', async () => {
+  const api = require('../../media/pdfSidebar.js');
+  const t = await boot(makePdf(3, { getOutline: async () => deepOutline(500) }));
+  t.shell.showPanel('outline');
+  await t.tick(10);
+  const rows = find(t, 'pdf-outline-item');
+  eq(rows.length, api.MAX_OUTLINE_DEPTH);
+  eq(rows[rows.length - 1].getAttribute('aria-level'), String(api.MAX_OUTLINE_DEPTH));
+  eq(rows[rows.length - 1].getAttribute('aria-expanded'), null, 'the last built level is a leaf');
+  eq(find(t, 'pdf-outline-truncated').length, 1);
+
+  const { t: small } = await outlineSetup();
+  eq(find(small, 'pdf-outline-truncated').length, 0);
+});
+
 test('outline: role=tree, document strings stay text, levels and expanded state', async () => {
   const { t, tree, rows } = await outlineSetup();
   eq(tree.getAttribute('role'), 'tree');
