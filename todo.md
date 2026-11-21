@@ -394,7 +394,7 @@
 - [x] PWP-06 Shared chrome ('pdf' kind)
 - [x] PWP-08 Viewer core (media/pdfViewer.js/.css, PdfViewerShell hooks; 57 tests; ran in an isolated dev host on 19 fixtures, 0 CSP violations)
 - [x] PWP-09 Sidebar (thumbnails, outline, attachments, properties)`n- [x] PWP-10 Find bar · PWP-11 Notices/registration · PWP-12 docs + gate checklist
-- [ ] Decide later: a host-log message for CSP violations / worker fallback (protocol has none; webview console only)
+- [x] Host-log message for CSP violations / worker fallback (`pdfLog`, output channel)
 - [ ] PWP-11: emit data-default-zoom in bodyHtml
 - [ ] Merge note: PWP-05 generalised src/office/officeEditorProviderBase.ts (OfficeHostDocument, createDocument, bodyHtml(webview)); the Office editing branches also change that file, so expect a conflict when the PDF stack is rebased after Office
 - [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it

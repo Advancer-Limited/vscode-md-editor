@@ -1063,3 +1063,6 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 
 ### 2026-11-21 — PDF row in the editor-choice command (feature/pdf-base)
 - `src/office/editorAssociations.ts` `DOCUMENT_TYPES` gains `*.pdf` -> `vscodeMdEditor.pdf` ("PDF Viewer"); it is offered only when that viewType is in `contributes.customEditors` (PWP-11 registers it). Test in `tests/office/editorAssociations.test.mjs`.
+
+- **pdfLog** (`ff87583`, Sonnet; user-approved amendment to the frozen view half): webview → host `pdfLog {level, code: csp-violation|worker-fallback|page-render-failed, detail?}`; detail sanitised (query/fragment stripped, control chars removed, ≤2,000 chars); host appends to a lazily created "VS Code MD Editor" output channel, ≤50 lines per document load, never a toast; viewer posts each identical report once. Spec §5/§12 amended.
+
