@@ -404,3 +404,10 @@
 - [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)
 - [ ] Gate P1 (human): run `docs/pdf-gate-checklist.md` section 3 (about 2 h; item G2 is this one): check that a .pdf opened at window startup (command line / restored tab) opens in the PDF Viewer, not as text (seen once in the PWP-11 harness)
 - [ ] User: Gate P1 sweep; spike reader checks (`docs/pdf-gate-checklist.md` section 2); supply linearized/xfa/scanner/latex PDFs (then acrobat-* and certified for P3/P4)
+
+## PDF edit core (feature/pdf-edit-core)
+- [x] PWP-21 verify-pdf-open.mjs + PG6 helpers
+- [ ] PWP-14 strict reader · PWP-15 edit state/geometry · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
+- [ ] hybrid-xref.pdf: pdf.js page-access failure (with PWP-14)
+- [ ] PWP-13 (BinaryDocumentBase) waits for Office Gate R2
+

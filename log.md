@@ -1078,3 +1078,8 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 - **Spec drift fixed** (`docs/pdf-viewer-spec.md`): §7.2 attachments list name only (sizes not shown, as built in PWP-09); §7.3 no-text notice wording now matches `factsNotices`.
 - todo.md: ticked PWP-12 and the stale "emit data-default-zoom" item (already done in PWP-11); repaired a broken line.
 - Not verified (human): everything in the checklist.
+
+## 2026-11-21 — PDF edit core (feature/pdf-edit-core)
+
+- **PWP-21** (`25df760`, Sonnet): `scripts/verify-pdf-open.mjs` (pdf.js, PDFium, @cantoo/pdf-lib, optional qpdf; JSON summary; exit 0/1/2; --dry-run; PNG of page 1) and PG6 helpers in `tests/pdf/_readers.mjs` (`openAll`, `checkPg6`, `assertPg6`); 11 tests. Fixture run: 22/26 pass; empty/not-a-pdf/truncated fail as expected; `hybrid-xref.pdf` fails in pdf.js on page access (PDFium and pdf-lib open it) — likely a generator bug, handed to PWP-14.
+
