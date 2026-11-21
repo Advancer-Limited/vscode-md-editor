@@ -418,3 +418,5 @@
 - [ ] Gate P2/P3: real-window check that the viewed PDF still renders after several writes (writer uses its own Worker)
 - [x] PWP-27 form classification and field rules
 - [ ] PWP-29: protocol amendment so lockedFields carry a reason
+- [x] PWP-28 form verification rules + PG suites
+- [ ] Remaining PDF editing (PWP-13 → 20, 22–26, 29, 30) blocked on Office Gate R2
