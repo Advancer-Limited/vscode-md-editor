@@ -342,6 +342,7 @@
       const old = container;
       container = mk('div', 'pdf-container');
       container.setAttribute('tabindex', '0');
+      container.setAttribute('role', 'region');
       container.setAttribute('aria-label', 'PDF pages');
       viewerDiv = mk('div', 'pdfViewer');
       container.appendChild(viewerDiv);
@@ -673,6 +674,11 @@
       prevent(ev);                                         // the webview never navigates
       const target = String(href).trim();
       if (target === '' || target.charAt(0) === '#') { return; }   // internal: pdf.js's own handler scrolls
+      // VS Code's webview host page also listens for clicks on <a href> (without looking at
+      // defaultPrevented) and opens http/https/mailto itself: stop the event here, in the capture
+      // phase, so that the link is opened once, by the host's allow-listed `openLink`.
+      if (ev.stopPropagation) { ev.stopPropagation(); }
+      if (ev.stopImmediatePropagation) { ev.stopImmediatePropagation(); }
       if (allowedScheme(target)) { post({ type: 'openLink', href: target }); }
       else { OC.hint(LINK_BLOCKED); }                      // javascript:, file:, Launch, GoToR, …: dropped
     }
@@ -1133,8 +1139,11 @@
           if (!res.ok) { throw new Error('The PDF engine file could not be read (HTTP ' + res.status + ').'); }
           const text = await res.text();
           const blobUrl = win.URL.createObjectURL(new win.Blob([text], { type: 'text/javascript' }));
+          if (worker) {   // an earlier worker that died: its document was closed before this load
+            try { worker.terminate(); } catch (e) { /* already gone */ }
+          }
           const w = new win.Worker(blobUrl, { type: 'module' });
-          w.addEventListener('error', (ev) => onWorkerError(ev));
+          w.addEventListener('error', (ev) => onWorkerError(w, ev));
           lib.GlobalWorkerOptions.workerPort = w;
           worker = w;
         })();
@@ -1143,13 +1152,17 @@
       return workerPromise;
     }
 
-    function onWorkerError(ev) {
+    function onWorkerError(w, ev) {
       warn('worker error:', ev && ev.message);
+      if (w !== worker) { return; }
+      // The cached worker may be dead: the next load (Retry, reload) creates a new one.
+      workerPromise = null;
       if (phase !== 'loading' && phase !== 'password') { return; }
       // The worker never came up: nothing would ever answer. Report instead of waiting for ever.
+      // Not the engine check (that passed): shown as the unexpected-error view, with the reason.
       loadToken++;
       void closeDocument();
-      showFailure(TEXT.engineTooOld, 'The PDF engine could not start: ' + ((ev && ev.message) || 'worker error'), ['openExternally']);
+      showFailure(TEXT.damaged, 'The PDF engine could not start: ' + ((ev && ev.message) || 'worker error'), ['openExternally', 'retry']);
     }
 
     // ---------- loading ----------
@@ -1215,7 +1228,9 @@
         task = lib.getDocument(documentOptions(toBytes(msg.bytes), baseUrl));
       } catch (e) {
         if (token !== loadToken) { return; }
-        showFailure(TEXT.engineTooOld, 'The PDF engine could not start: ' + ((e && e.message) || String(e)), ['openExternally', 'retry']);
+        // The engine check passed (showEngineError is the only "needs a newer VS Code" view): any
+        // other exception before pdf.js has the bytes is the unexpected-error view, with the reason.
+        showFailure(TEXT.damaged, 'The PDF engine could not start: ' + ((e && e.message) || String(e)), ['openExternally', 'retry']);
         return;
       }
       loadingTask = task;
@@ -1261,9 +1276,10 @@
         syncToolbar();
       }, () => { /* no labels */ });
 
+      const factsGeneration = msg.generation;
       collectFacts(pdf, { passwordUsed: passwordAsked }).then((facts) => {
         if (token !== loadToken) { return; }
-        post({ type: 'pdfFacts', facts });
+        post({ type: 'pdfFacts', generation: factsGeneration, facts });
         emit('facts', facts);
       }, (e) => warn('facts failed:', e && e.message));
     }

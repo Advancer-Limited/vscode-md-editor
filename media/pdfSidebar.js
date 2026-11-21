@@ -15,6 +15,9 @@
   const MAX_ATT_BYTES = 250 * 1024 * 1024;   // mirrors MAX_ATTACHMENT_BYTES in src/pdf/protocol.ts
   const THUMB_WIDTH = 96;           // CSS px; the canvas is rendered at up to 2x
   const THUMB_BUFFER = 5;
+  const MAX_THUMBS = 5000;          // thumbnail buttons built; later pages are reached with the page box
+  const MAX_OUTLINE_ITEMS = 5000;   // outline rows built across the whole tree
+  const MAX_OUTLINE_DEPTH = 64;     // outline levels built; deeper entries are left out
   const OPENABLE = /^(https?:|mailto:)/i;
 
   // ---------------------------------------------------------------- pure helpers
@@ -127,12 +130,13 @@
     function thumbBuild() {
       if (thumbs.built || !thumbs.el || !thumbs.pdf) { return; }
       thumbs.built = true;
-      const count = thumbs.pdf.numPages | 0;
+      const pages = thumbs.pdf.numPages | 0;
+      const count = Math.min(pages, MAX_THUMBS);
       const list = mk('div', 'pdf-thumbs');
       list.setAttribute('role', 'group');
       list.setAttribute('aria-label', 'Page thumbnails');
       thumbs.list = list;
-      thumbs.current = Math.max(0, (shell.currentPage || 1) - 1);
+      thumbs.current = Math.max(0, Math.min(count - 1, (shell.currentPage || 1) - 1));
       for (let i = 0; i < count; i++) {
         const b = mk('button', 'pdf-thumb');
         b.setAttribute('type', 'button');
@@ -148,6 +152,13 @@
       }
       list.addEventListener('keydown', thumbKey);
       thumbs.el.appendChild(list);
+      if (pages > count) {
+        const note = mk('p', 'pdf-thumbs-note',
+          'Thumbnails are shown for the first ' + count.toLocaleString('en-US') + ' of '
+          + pages.toLocaleString('en-US') + ' pages. Use the page box (Ctrl+G) to go to a later page.');
+        note.setAttribute('role', 'note');
+        thumbs.el.appendChild(note);
+      }
       if (typeof win.IntersectionObserver === 'function') {
         thumbs.observer = new win.IntersectionObserver((entries) => {
           entries.forEach((e) => {
@@ -192,8 +203,13 @@
 
     /** The shell's current page changed: mark it, and bring it into view when it is not. */
     function thumbCurrent(pageNumber) {
-      if (!thumbs.built) { return; }
-      const i = Math.max(0, Math.min(thumbs.items.length - 1, (pageNumber | 0) - 1));
+      if (!thumbs.built || !thumbs.items.length) { return; }
+      if ((pageNumber | 0) - 1 >= thumbs.items.length) {   // a page past the thumbnail cap: nothing to mark
+        const was = thumbs.items[thumbs.current];
+        if (was) { was.setAttribute('aria-current', 'false'); }
+        return;
+      }
+      const i = Math.max(0, (pageNumber | 0) - 1);
       const hadFocus = thumbs.items.indexOf(doc.activeElement) >= 0;
       thumbRove(i);
       if (hadFocus) { thumbs.items[i].focus(); }
@@ -314,7 +330,7 @@
 
     // ================================================================ outline
 
-    const outline = { el: null, pdf: null, built: false, tree: null, rows: [], current: null, token: 0 };
+    const outline = { el: null, pdf: null, built: false, tree: null, rows: [], current: null, token: 0, truncated: false };
 
     function outlineActivate(row) {
       const item = row.item;
@@ -326,12 +342,13 @@
       if (url && OPENABLE.test(url.trim())) { shell.post({ type: 'openLink', href: url.trim() }); }
     }
 
+    /** One level of the tree. The item cap is shared by the whole tree (`outline.rows`), not per level. */
     function outlineBuildLevel(items, level, parentEl, parentRow) {
-      let made = 0;
-      items.forEach((item) => {
-        if (!item || made >= 5000) { return; }
-        made++;
-        const kids = Array.isArray(item.items) ? item.items : [];
+      for (const item of items) {
+        if (!item) { continue; }
+        if (outline.rows.length >= MAX_OUTLINE_ITEMS) { outline.truncated = true; return; }
+        let kids = Array.isArray(item.items) ? item.items : [];
+        if (kids.length && level >= MAX_OUTLINE_DEPTH) { outline.truncated = true; kids = []; }
         const li = mk('div', 'pdf-outline-item');
         li.setAttribute('role', 'treeitem');
         li.setAttribute('aria-level', String(level));
@@ -362,7 +379,7 @@
           outlineActivate(row);
         });
         if (kids.length) { outlineBuildLevel(kids, level + 1, row.group, row); }
-      });
+      }
     }
 
     function outlineToggle(row, expand) {
@@ -420,7 +437,7 @@
 
     function outlineReset() {
       outline.token++;
-      outline.built = false; outline.rows = []; outline.current = null; outline.tree = null;
+      outline.built = false; outline.rows = []; outline.current = null; outline.tree = null; outline.truncated = false;
       if (outline.el) { clear(outline.el); }
     }
 
@@ -437,6 +454,12 @@
         outlineBuildLevel(items, 1, tree, null);
         tree.addEventListener('keydown', outlineKey);
         outline.el.appendChild(tree);
+        if (outline.truncated) {
+          const note = mk('p', 'pdf-outline-truncated', '…outline truncated: only the first '
+            + MAX_OUTLINE_ITEMS.toLocaleString('en-US') + ' entries and ' + MAX_OUTLINE_DEPTH + ' levels are shown.');
+          note.setAttribute('role', 'note');
+          outline.el.appendChild(note);
+        }
         if (outline.rows.length) { outlineFocus(outline.rows[0], false); }
       });
     }
@@ -613,7 +636,7 @@
     return { thumbs, outline, att, openProps, closeProps, get dialog() { return dialog; } };
   }
 
-  const api = { formatSize, formatPdfDate, formatPageSize, listAttachments, install };
+  const api = { formatSize, formatPdfDate, formatPageSize, listAttachments, install, MAX_THUMBS, MAX_OUTLINE_ITEMS, MAX_OUTLINE_DEPTH };
   global.PdfSidebar = api;
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; }
   if (global.PdfViewerShell && global.document) { global.PdfSidebarInstance = install(global.PdfViewerShell, global.document); }

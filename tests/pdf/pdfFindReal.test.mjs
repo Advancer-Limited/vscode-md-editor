@@ -128,12 +128,26 @@ test('large.pdf: the total is "more than N" while pages are still being scanned,
   assert.ok(Number(/of (\d+)$/.exec(t.count())[1]) >= 2000);
 });
 
-test('scanned.pdf: the no-text-layer note replaces the search', async () => {
+test('scanned.pdf: find stays usable; the scanned note appears once every page was searched and none had text', async () => {
   const t = await open('scanned.pdf');
   await t.until(() => t.posted.some((m) => m.type === 'pdfFacts' && m.facts.hasText === false));
   t.key('f', { ctrlKey: true });
   const note = t.find.bar.find((e) => e.className === 'pdf-find-note')[0];
+  assert.strictEqual(note.hidden, true, 'the facts sample alone shows no note');
+  assert.strictEqual(t.input().disabled, false);
+  t.type('anything');
+  await t.until(() => !note.hidden);
   assert.strictEqual(note.hidden, false);
-  assert.ok(/no text layer/.test(note.textContent));
-  assert.strictEqual(t.input().disabled, true);
+  assert.ok(/may be scanned/.test(note.textContent));
+  assert.strictEqual(t.count(), 'No matches');
+  assert.strictEqual(t.input().disabled, false);
+});
+
+test('basic.pdf: a search with no match does not claim the file is scanned', async () => {
+  const t = await open('basic.pdf');
+  t.key('f', { ctrlKey: true });
+  t.type('zzzqqqxxx');
+  await t.until(() => t.count() === 'No matches');
+  assert.strictEqual(t.count(), 'No matches');
+  assert.strictEqual(t.find.bar.find((e) => e.className === 'pdf-find-note')[0].hidden, true);
 });

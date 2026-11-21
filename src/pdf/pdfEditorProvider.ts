@@ -19,7 +19,6 @@
 import * as vscode from 'vscode';
 import { getBrandButtonHtml } from '../utils.js';
 import { OfficeEditorProviderBase } from '../office/officeEditorProviderBase.js';
-import { sameFile } from '../office/officeDocument.js';
 import type { OfficeNotice } from '../office/protocol.js';
 import { PdfDocument } from './pdfDocument.js';
 import { PDF_LIMITS } from './core/limits.js';
@@ -28,11 +27,13 @@ import type { PdfFacts, PdfLogCode, PdfLogLevel } from './protocol.js';
 
 /**
  * The PDF webview CSP (spec §12, final after spike S1). Only the webview resource origin appears;
- * no `'unsafe-eval'`, no `'unsafe-inline'`, no frame/object/form sources.
+ * no `'unsafe-eval'`, no `'unsafe-inline'`, no frame/object/form sources. `form-action` and
+ * `base-uri` do not fall back to `default-src`, so they are closed explicitly.
  */
 export function pdfCsp(cspSource: string, nonce: string): string {
   return `default-src 'none'; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; worker-src blob:; `
-    + `connect-src ${cspSource}; style-src ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource};`;
+    + `connect-src ${cspSource}; style-src ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource}; `
+    + `form-action 'none'; base-uri 'none';`;
 }
 
 /** Longest attachment file name offered in the Save dialog (common file-system limit). */
@@ -97,7 +98,7 @@ export function factsNotices(facts: PdfFacts): OfficeNotice[] {
   if (!facts.hasText && facts.pageCount > 0) {
     out.push({
       severity: 'info', code: 'pdf-no-text',
-      message: "This PDF has no text layer (it may be a scan), so its text can't be selected or found.",
+      message: 'This PDF may be scanned: no text was found on its first pages, so its text may not be selectable or searchable.',
     });
   }
   if (facts.pageCount > PDF_LIMITS.maxEditPages) {
@@ -113,6 +114,18 @@ export function factsNotices(facts: PdfFacts): OfficeNotice[] {
     });
   }
   return out;
+}
+
+/**
+ * Whether a Save-dialog target is the PDF itself. Stricter than `sameFile`: case-insensitive on
+ * macOS too (its default file systems are), so a case variant of the name is also refused. A false
+ * "same" only asks the user for another name; a false "different" would overwrite the PDF.
+ */
+export function sameAttachmentTarget(a: vscode.Uri, b: vscode.Uri, platform: string = process.platform): boolean {
+  if (a.scheme !== b.scheme || a.authority !== b.authority) return false;
+  return a.scheme === 'file' && (platform === 'win32' || platform === 'darwin')
+    ? a.path.toLowerCase() === b.path.toLowerCase()
+    : a.path === b.path;
 }
 
 function escapeAttr(s: string): string {
@@ -223,7 +236,10 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
         this.sendDocument(doc, panel);
         return;
       case 'pdfFacts':
-        if (doc.loadError) return;
+        // Facts describe one generation: a report about an earlier (or failed) load is dropped, so it
+        // can neither show stale notices nor tighten the read-only state of the bytes now loaded.
+        // Both are recomputed per generation (`PdfDocument.load`, `kindNotices`).
+        if (doc.loadError || msg.generation !== doc.generation) return;
         this.facts.set(doc, { generation: doc.generation, notices: factsNotices(msg.facts) });
         // The page-count half of the view-only rule (§9.3) is only known to the webview; it can only tighten.
         if (msg.facts.pageCount > PDF_LIMITS.maxEditPages && doc.readOnlyReason === null) doc.readOnlyReason = 'too-large';
@@ -284,7 +300,7 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
       reply(false);
       return;
     }
-    if (sameFile(target, doc.uri)) {
+    if (sameAttachmentTarget(target, doc.uri)) {
       void vscode.window.showErrorMessage("An attachment can't be saved over the PDF it came from. Choose another name.");
       reply(false);
       return;

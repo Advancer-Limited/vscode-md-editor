@@ -35,8 +35,8 @@ const ok = [
   { type: 'openLink', href: 'https://example.com' }, { type: 'openExternally' }, { type: 'retry' },
   { type: 'writeClipboard', text: 'x' }, { type: 'showAbout' },
   { type: 'pdfRequestDocument' },
-  { type: 'pdfFacts', facts: facts() },
-  { type: 'pdfFacts', facts: facts({ signatures: [], pageCount: 0 }) },
+  { type: 'pdfFacts', generation: 1, facts: facts() },
+  { type: 'pdfFacts', generation: 0, facts: facts({ signatures: [], pageCount: 0 }) },
   { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'img-src blob:x' },
   { type: 'pdfLog', level: 'info', code: 'worker-fallback' },
   { type: 'pdfLog', level: 'error', code: 'page-render-failed', detail: '' },
@@ -69,8 +69,8 @@ test('unknown keys are dropped and the result is a rebuilt object', () => {
   const m = edit({ op: 'removeAnnotation', target: { localId: 3 }, junk: 1 }, { extra: 'x' });
   const out = parsePdfToHost(m);
   assert.deepStrictEqual(out, edit({ op: 'removeAnnotation', target: { localId: 3 } }));
-  const f = parsePdfToHost({ type: 'pdfFacts', facts: { ...facts(), evil: 1 }, z: 1 });
-  assert.deepStrictEqual(f, { type: 'pdfFacts', facts: facts() });
+  const f = parsePdfToHost({ type: 'pdfFacts', generation: 1, facts: { ...facts(), evil: 1 }, z: 1 });
+  assert.deepStrictEqual(f, { type: 'pdfFacts', generation: 1, facts: facts() });
 });
 
 test('a returned array is a copy, not the caller\'s array', () => {
@@ -100,21 +100,26 @@ const bad = {
   'log detail not string': { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 5 },
   'log detail too long': { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'x'.repeat(2001) },
   // pdfFacts
-  'facts missing': { type: 'pdfFacts' },
-  'facts null': { type: 'pdfFacts', facts: null },
-  'facts pageCount negative': { type: 'pdfFacts', facts: facts({ pageCount: -1 }) },
-  'facts pageCount float': { type: 'pdfFacts', facts: facts({ pageCount: 1.5 }) },
-  'facts pageCount huge': { type: 'pdfFacts', facts: facts({ pageCount: 100001 }) },
-  'facts pageCount NaN': { type: 'pdfFacts', facts: facts({ pageCount: NaN }) },
-  'facts encrypted string': { type: 'pdfFacts', facts: facts({ encrypted: 'no' }) },
-  'facts hasText missing': { type: 'pdfFacts', facts: facts({ hasText: undefined }) },
-  'facts hasXfa number': { type: 'pdfFacts', facts: facts({ hasXfa: 0 }) },
-  'facts attachmentCount negative': { type: 'pdfFacts', facts: facts({ attachmentCount: -3 }) },
-  'facts signatures not array': { type: 'pdfFacts', facts: facts({ signatures: {} }) },
-  'facts too many signatures': { type: 'pdfFacts', facts: facts({ signatures: many(1001, () => ({ signer: 'a', reason: 'b', time: 'c' })) }) },
-  'facts signer too long': { type: 'pdfFacts', facts: facts({ signatures: [{ signer: big(4097), reason: '', time: '' }] }) },
-  'facts signature missing time': { type: 'pdfFacts', facts: facts({ signatures: [{ signer: 'a', reason: 'b' }] }) },
-  'facts signature number reason': { type: 'pdfFacts', facts: facts({ signatures: [{ signer: 'a', reason: 1, time: '' }] }) },
+  'facts missing': { type: 'pdfFacts', generation: 1 },
+  'facts generation missing': { type: 'pdfFacts', facts: facts() },
+  'facts generation negative': { type: 'pdfFacts', generation: -1, facts: facts() },
+  'facts generation float': { type: 'pdfFacts', generation: 1.5, facts: facts() },
+  'facts generation string': { type: 'pdfFacts', generation: '1', facts: facts() },
+  'facts generation unsafe': { type: 'pdfFacts', generation: 2 ** 53, facts: facts() },
+  'facts null': { type: 'pdfFacts', generation: 1, facts: null },
+  'facts pageCount negative': { type: 'pdfFacts', generation: 1, facts: facts({ pageCount: -1 }) },
+  'facts pageCount float': { type: 'pdfFacts', generation: 1, facts: facts({ pageCount: 1.5 }) },
+  'facts pageCount huge': { type: 'pdfFacts', generation: 1, facts: facts({ pageCount: 100001 }) },
+  'facts pageCount NaN': { type: 'pdfFacts', generation: 1, facts: facts({ pageCount: NaN }) },
+  'facts encrypted string': { type: 'pdfFacts', generation: 1, facts: facts({ encrypted: 'no' }) },
+  'facts hasText missing': { type: 'pdfFacts', generation: 1, facts: facts({ hasText: undefined }) },
+  'facts hasXfa number': { type: 'pdfFacts', generation: 1, facts: facts({ hasXfa: 0 }) },
+  'facts attachmentCount negative': { type: 'pdfFacts', generation: 1, facts: facts({ attachmentCount: -3 }) },
+  'facts signatures not array': { type: 'pdfFacts', generation: 1, facts: facts({ signatures: {} }) },
+  'facts too many signatures': { type: 'pdfFacts', generation: 1, facts: facts({ signatures: many(1001, () => ({ signer: 'a', reason: 'b', time: 'c' })) }) },
+  'facts signer too long': { type: 'pdfFacts', generation: 1, facts: facts({ signatures: [{ signer: big(4097), reason: '', time: '' }] }) },
+  'facts signature missing time': { type: 'pdfFacts', generation: 1, facts: facts({ signatures: [{ signer: 'a', reason: 'b' }] }) },
+  'facts signature number reason': { type: 'pdfFacts', generation: 1, facts: facts({ signatures: [{ signer: 'a', reason: 1, time: '' }] }) },
   // pdfSaveAttachment
   'attachment no bytes': { type: 'pdfSaveAttachment', requestId: 1, name: 'a' },
   'attachment bytes array': { type: 'pdfSaveAttachment', requestId: 1, name: 'a', bytes: [1, 2] },
@@ -260,7 +265,7 @@ test('boundary values are accepted', () => {
     edit({ op: 'addAnnotation', spec: hl({ page: L.MAX_PAGES - 1, comment: big(L.MAX_COMMENT), quads: zeros(L.MAX_QUADS * 8).map(() => L.MAX_COORD) }) }),
     edit({ op: 'addAnnotation', spec: ink({ paths: many(L.MAX_STROKES, () => zeros(L.MAX_POINTS_PER_STROKE * 2).map(() => -L.MAX_COORD)) }) }),
     edit({ op: 'setFields', values: many(L.MAX_FIELDS_PER_SET, () => ({ ref: { num: L.MAX_OBJ_NUM, gen: L.MAX_GEN }, value: big(L.MAX_TEXT_VALUE) })) }),
-    { type: 'pdfFacts', facts: facts({ pageCount: L.MAX_PAGES }) },
+    { type: 'pdfFacts', generation: 1, facts: facts({ pageCount: L.MAX_PAGES }) },
   ];
   for (const m of edge) assert.ok(parsePdfToHost(m));
 });

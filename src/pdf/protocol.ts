@@ -7,6 +7,8 @@
 //     `pdfFacts`, `pdfSaveAttachment`, `pdfSaveAttachmentResult`, the common Office messages, and
 //     the limits and rules that govern them. A change is a plan/spec change made with spec §5.
 //   AMENDMENT (view half, 2026-11-21, approved by the user): `pdfLog` (spec §5, §12).
+//   AMENDMENT (view half, 2026-11-21, review fix): `pdfFacts.generation` (spec §5): the host drops
+//     facts reported for a generation other than the current one.
 //   DRAFT (edit half): PdfColor .. PdfObserved, `pdfState`, `pdfEditInfo`, `pdfEdit`,
 //     `pdfEditResult`, `pdfWrite`, `pdfWriteResult`. Confirmed (not redesigned) by the
 //     orchestrator at the start of Phase 2 (plan §3); the validators below already enforce them.
@@ -89,7 +91,7 @@ export type PdfToWebview = OfficeCommonToWebview
 
 export type PdfToHost = OfficeCommonToHost
   | { type: 'pdfRequestDocument' }                              // FROZEN
-  | { type: 'pdfFacts'; facts: PdfFacts }                       // FROZEN; display only, never used for a decision
+  | { type: 'pdfFacts'; generation: number; facts: PdfFacts }   // FROZEN (generation: amendment 2026-11-21); display only, except that a page count over the edit limit can only tighten view-only
   | { type: 'pdfLog'; level: PdfLogLevel; code: PdfLogCode; detail?: string }          // FROZEN (amendment 2026-11-21); appended to the output channel, never shown
   | { type: 'pdfSaveAttachment'; requestId: number; name: string; bytes: Uint8Array }  // FROZEN; `name` is untrusted, the host keeps the base name only
   | { type: 'pdfEdit'; requestId: number; baseVersion: number; edit: PdfEditOp }       // DRAFT from here on
@@ -320,8 +322,9 @@ export function parsePdfToHost(raw: unknown, opts: ParsePdfOptions = {}): PdfToH
   switch (raw.type) {
     case 'pdfRequestDocument': return { type: 'pdfRequestDocument' };
     case 'pdfFacts': {
+      if (!isId(raw.generation)) return null;
       const facts = parseFacts(raw.facts);
-      return facts ? { type: 'pdfFacts', facts } : null;
+      return facts ? { type: 'pdfFacts', generation: raw.generation, facts } : null;
     }
     case 'pdfLog': {
       if (typeof raw.level !== 'string' || !LOG_LEVELS.includes(raw.level)) return null;
