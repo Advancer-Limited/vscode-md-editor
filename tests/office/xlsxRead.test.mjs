@@ -464,6 +464,23 @@ test('damaged worksheet part rejects with SheetLoadError damaged; workbook still
   assert.strictEqual((await wb.sheet(1)).readOnlyReason, null);
 });
 
+test('malformed shared strings part rejects sheet() with SheetLoadError damaged (not a bare error)', async () => {
+  const bytes = await patchedFixture('basic.xlsx', { 'xl/sharedStrings.xml': (t) => t.replace('</sst>', '') });
+  const wb = open('basic.xlsx', bytes);
+  await assert.rejects(wb.sheet(1), (err) => err instanceof SheetLoadError && err.failure === 'damaged'
+    && /Shared strings/.test(err.message));
+});
+
+test('malformed sheet .rels / table part: hyperlinks() and tables() degrade instead of throwing', async () => {
+  const relsBroken = await patchedFixture('features.xlsx', { 'xl/worksheets/_rels/sheet1.xml.rels': (t) => t.replace('</Relationships>', '') });
+  const f = await open('features.xlsx', relsBroken).sheet(1);
+  // The r:id link loses its target; the internal #location link survives.
+  assert.deepStrictEqual([...f.hyperlinks()], [['K3', "#'PivotData'!A1"]]);
+  const tableBroken = await patchedFixture('tables.xlsx', { 'xl/tables/table1.xml': (t) => t.replace(/<\/table>\s*$/, '') });
+  const t = await open('tables.xlsx', tableBroken).sheet(1);
+  assert.deepStrictEqual(t.tables().map((x) => x.name), ['Scores']);
+});
+
 test('every openable xlsx fixture loads and indexes every worksheet', async () => {
   for (const name of ['basic.xlsx', 'styles.xlsx', 'formulas.xlsx', 'tables.xlsx', 'features.xlsx', 'date1904.xlsx',
     'protected-sheet.xlsx', 'protected-structure.xlsx', 'no-date-style.xlsx', 'no-date-style-nocount.xlsx',
