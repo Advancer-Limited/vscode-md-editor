@@ -1,0 +1,46 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /OpenAction 6 0 R /Names << /JavaScript 7 0 R >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /AA << /O 8 0 R >> >>
+endobj
+4 0 obj
+<<  /Length 189 >>
+stream
+BT /F1 16 Tf 56 760 Td (If an alert dialog or a changed title appeared, scripts ran.) Tj ET
+BT /F1 12 Tf 56 730 Td (This page must look identical whether or not scripting is enabled.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Action /S /JavaScript /JS (app.alert\("JS-OPENACTION-RAN"\);) >>
+endobj
+7 0 obj
+<< /Names [(init) 8 0 R] >>
+endobj
+8 0 obj
+<< /Type /Action /S /JavaScript /JS (this.info.Title = "scripts ran"; app.alert\("JS-DOC-LEVEL-RAN"\);) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000113 00000 n 
+0000000170 00000 n 
+0000000315 00000 n 
+0000000556 00000 n 
+0000000626 00000 n 
+0000000716 00000 n 
+0000000759 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info << /Title (js-openaction) /Producer (vsmd-pdf-fixtures) >> >>
+startxref
+881
+%%EOF
