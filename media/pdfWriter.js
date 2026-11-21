@@ -31,6 +31,23 @@
   /** Host timeout is 10 s + 0.2 s per MB (spec §6.5 step 3); the writer gives up a little later than that. */
   function defaultTimeoutMs(bytes) { return 15000 + Math.ceil(0.25 * (bytes / MB) * 1000); }
 
+  /**
+   * The only texts a failed write sends to the host (review N9): fixed sentences, safe to show. The raw error (pdf.js
+   * messages, HTTP status, anything document-derived) goes to the webview console only (`opts.log`).
+   */
+  const WRITE_MESSAGES = Object.freeze({
+    invalid: 'The save request was not valid.',
+    'no-document': 'No document is loaded in the viewer.',
+    stale: 'The document changed while saving.',
+    timeout: 'The PDF engine did not finish writing in time.',
+    failed: 'The PDF engine could not write the file.',
+  });
+  function writeError(code, detail) {
+    const e = new Error(detail || WRITE_MESSAGES[code]);
+    e.writeCode = code;
+    return e;
+  }
+
   function plainBytes(data) {
     const tag = Object.prototype.toString.call(data);          // realm-independent
     if (tag === '[object Uint8Array]') { return data; }
@@ -150,46 +167,68 @@
     const win = o.window || global;
     const engine = o.engine || browserEngine(shell, win, o.document || win.document);
     const timeoutFor = o.timeoutMs || defaultTimeoutMs;
+    const log = o.log || ((text) => { try { win.console.warn(text); } catch (e) { /* no console */ } });
     let chain = Promise.resolve();
-    const stats = { writes: 0, failures: 0, openDocuments: 0, sessions: 0 };
+    const stats = { writes: 0, failures: 0, openDocuments: 0, sessions: 0, lateSessions: 0, lateDocuments: 0 };
 
     function reply(m) { shell.post(m); }
-    function fail(requestId, message) {
+    function fail(requestId, code, raw) {
       stats.failures++;
-      reply({ type: 'pdfWriteResult', requestId, ok: false, message: String(message).slice(0, 2000) });
+      log('[pdfWriter] write ' + requestId + ' failed (' + code + '): ' + String(raw).slice(0, 2000));
+      reply({ type: 'pdfWriteResult', requestId, ok: false, message: WRITE_MESSAGES[code] || WRITE_MESSAGES.failed });
     }
 
     async function run(msg) {
       const src = shell.pdfDocument;
-      if (!src || shell.phase !== 'ready') { throw new Error('No document is loaded in the viewer.'); }
-      if (msg.generation !== shell.generation) { throw new Error('The request is for an older version of the file (generation ' + msg.generation + ', viewer has ' + shell.generation + ').'); }
+      if (!src || shell.phase !== 'ready') { throw writeError('no-document'); }
+      if (msg.generation !== shell.generation) { throw writeError('stale', 'The request is for an older version of the file (generation ' + msg.generation + ', viewer has ' + shell.generation + ').'); }
+      // `aborted` is set by the timeout (or a stale check); the work checks it after every await and gives back
+      // anything that arrives late (a session or a document opened after the reply went out), so a hung step can
+      // never leave a Worker or a document behind.
+      let aborted = false;
       const stale = () => {
-        if (shell.pdfDocument !== src || msg.generation !== shell.generation) { throw new Error('The document changed while saving.'); }
+        if (aborted) { throw writeError('timeout'); }
+        if (shell.pdfDocument !== src || msg.generation !== shell.generation) { aborted = true; throw writeError('stale'); }
       };
       const live = [];        // open documents, closed on every exit
       let session = null;
       let timer = null;
       let rejectTimeout = null;
+      const started = Date.now();
       const timeout = new Promise((_, rej) => { rejectTimeout = rej; });
       timeout.catch(() => {});
+      const arm = (ms) => {
+        if (timer) { clearTimeout(timer); }
+        timer = setTimeout(() => { aborted = true; rejectTimeout(writeError('timeout')); }, Math.max(0, ms));
+      };
+      arm(timeoutFor(0));     // armed before getData(): a hung read of the viewer's bytes times out too
       const work = (async () => {
         let data = plainBytes(await src.getData());            // a copy of the loaded bytes; the viewer's own stay put
         stale();
-        timer = setTimeout(() => rejectTimeout(new Error('The PDF engine did not finish writing in time.')), timeoutFor(data.length));
-        session = await engine.createSession(); stats.sessions++;
+        arm(timeoutFor(data.length) - (Date.now() - started));  // the full budget for this size, from the start
+        const s = await engine.createSession();
+        if (aborted) { stats.lateSessions++; try { s.dispose(); } catch (e) { /* ignore */ } stale(); }
+        session = s; stats.sessions++;
         // Step 1: a fresh document from the bytes (pdf.js transfers `data`; nothing else holds a copy after this).
-        const w = await session.open(data); data = null; stats.openDocuments++; live.push(w);
+        const w = await session.open(data); data = null;
+        if (aborted) { stats.lateDocuments++; try { await w.close(); } catch (e) { /* ignore */ } stale(); }
+        stats.openDocuments++; live.push(w);
         stale();
         // Step 2: exactly the host's entries, then the writer.
         for (const e of msg.storage) { w.doc.annotationStorage.setValue(e[0], e[1]); }
         const out = plainBytes(await w.doc.saveDocument());
+        stale();
         // Free the writing document and its copy of the file before the read-back opens another.
         live.pop(); stats.openDocuments--; await w.close();
         stale();
         // Step 3: a third, throwaway document from a copy of the output (the output itself is the reply).
-        const r = await session.open(out.slice()); stats.openDocuments++; live.push(r);
+        const r = await session.open(out.slice());
+        if (aborted) { stats.lateDocuments++; try { await r.close(); } catch (e) { /* ignore */ } stale(); }
+        stats.openDocuments++; live.push(r);
         let observed;
-        try { observed = await observe(r.doc, requestedFields(msg.storage)); } finally { live.pop(); stats.openDocuments--; await r.close(); }
+        try { observed = await observe(r.doc, requestedFields(msg.storage)); } finally {
+          if (live.indexOf(r) >= 0) { live.splice(live.indexOf(r), 1); stats.openDocuments--; await r.close(); }
+        }
         stale();
         return { out, observed };
       })();
@@ -198,6 +237,7 @@
       try {
         outcome = await Promise.race([work, timeout]);
       } finally {
+        aborted = true;
         if (timer) { clearTimeout(timer); }
         for (const h of live.splice(0).reverse()) { stats.openDocuments--; try { await h.close(); } catch (e) { /* ignore */ } }
         if (session) { session.dispose(); }
@@ -208,13 +248,13 @@
     async function handle(msg) {
       const rid = msg && typeof msg.requestId === 'number' ? msg.requestId : 0;
       const bad = badRequest(msg || {});
-      if (bad) { fail(rid, 'The save request was not valid (' + bad + ').'); return; }
+      if (bad) { fail(rid, 'invalid', bad); return; }
       try {
         const { out, observed } = await run(msg);
         stats.writes++;
         reply({ type: 'pdfWriteResult', requestId: msg.requestId, ok: true, bytes: out, observed });
       } catch (e) {
-        fail(msg.requestId, (e && e.message) || String(e));
+        fail(msg.requestId, (e && e.writeCode) || 'failed', (e && e.message) || String(e));
       }
     }
 
@@ -229,7 +269,7 @@
     return { enqueue, stats: () => Object.assign({}, stats), dispose() { off(); } };
   }
 
-  const api = { create, observe, requestedFields, widgetValue, badRequest, defaultTimeoutMs, EDITOR_PREFIX };
+  const api = { create, observe, requestedFields, widgetValue, badRequest, defaultTimeoutMs, EDITOR_PREFIX, WRITE_MESSAGES };
   global.PdfWriterApi = api;
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; }
   if (global.PdfViewerShell && global.document && typeof global.acquireVsCodeApi === 'function') {

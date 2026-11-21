@@ -421,4 +421,6 @@
 - [x] PWP-27 form classification and field rules
 - [ ] PWP-29: protocol amendment so lockedFields carry a reason
 - [x] PWP-28 form verification rules + PG suites
+- [x] Edit-core independent review: B1 (PV5 bypass) + S1–S5 + nits N1–N10 fixed (`feature/pdf-core-fixes`)
+- [ ] Review residuals: user text containing object-boundary words refuses the save; widget appearance text not compared with /V
 - [ ] Remaining PDF editing (PWP-13 → 20, 22–26, 29, 30) blocked on Office Gate R2

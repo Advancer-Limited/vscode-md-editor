@@ -9,12 +9,14 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { core, fixture } from './_helpers.mjs';
 import { assertPg6 } from './_readers.mjs';
+import { skipWriter, warnIfSkipped } from './_node.mjs';
 
 const require = createRequire(import.meta.url);
 const PJ = path.dirname(require.resolve('pdfjs-dist/package.json'));
 const { openPdfSync } = core.reader;
-const nodeMajor = Number(process.versions.node.split('.')[0]);
-const skip = nodeMajor < 20 && 'pdf.js needs Node 20+';
+// saveDocument() needs Node >= 22.13 (the former `Node 20+` gate let these run, and fail, on Node 20-22.12).
+const skip = skipWriter;
+warnIfSkipped('hybridWrite');
 
 let lib;
 async function save(base, entries) {

@@ -17,6 +17,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { core, fixture } from './_helpers.mjs';
 import { assertPg6, readPdfjs, readPdfLib } from './_readers.mjs';
+import { skipWriter, warnIfSkipped } from './_node.mjs';
 
 const require = createRequire(import.meta.url);
 const Wr = require('../../media/pdfWriter.js');
@@ -24,8 +25,7 @@ const S = core.state, SA = core.storageAdapter, V = core.verify, C = core.classi
 const PJ = path.dirname(require.resolve('pdfjs-dist/package.json'));
 const here = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(here, '..', '.out', 'pdf', 'forms');
-const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
-const skipWriter = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13) ? false : 'pdf.js saveDocument() needs Node >= 22.13';
+warnIfSkipped('formsPg');
 if (skipWriter) console.warn(`formsPg: SKIPPED (${skipWriter}; running ${process.versions.node})`);
 const T = (name, fn) => test(name, { skip: skipWriter }, fn);
 const L1 = (s) => Buffer.from(s, 'latin1');

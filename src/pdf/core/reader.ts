@@ -32,6 +32,7 @@ export type PdfReadErrorCode =
   | 'no-header'      // no `%PDF-` in the first 1,024 bytes
   | 'no-startxref'   // no `startxref N %%EOF` at the end of the file
   | 'bad-xref'       // a cross-reference section or entry is wrong (offsets, headers, ranges, duplicates)
+  | 'ambiguous-xref' // a table subsection `1 N` whose first entry is free: pdf.js renumbers it to start at 0
   | 'prev-cycle'     // the /Prev chain revisits a section
   | 'hybrid'         // a hybrid section (/XRefStm) that is malformed or ambiguous (see `hybridSection`)
   | 'encrypted'      // a trailer has /Encrypt
@@ -88,6 +89,11 @@ const MAX_NAME = 4096;
 const MAX_RESOLVE_DEPTH = 32;
 /** Decoded object streams kept in memory at once: this many times `maxObjectStreamBytes`. */
 const OBJSTM_CACHE_FACTOR = 2;
+/**
+ * Resolved objects (and refusals) kept, least recently used first out. Shared objects (a /MediaBox, a /Resources
+ * dictionary every page points at) are then parsed once, not once per reference.
+ */
+const RESOLVED_CACHE_ENTRIES = 4096;
 
 // ------------------------------------------------------------------ values
 
@@ -168,6 +174,11 @@ export interface PdfFile {
   readonly startxref: number;
   /** In-use objects in the merged (newest-wins) cross-reference view. */
   readonly objectCount: number;
+  /**
+   * Bytes lexed and decoded by `resolve` / `decodeStream` so far (each object counts once while it stays in the
+   * resolved-object cache). Callers with a work budget (classification) compare it against their cap.
+   */
+  readonly workBytes: number;
   /** Merged entry for `num` (newest section that lists it). */
   entry(num: number): XrefEntry | undefined;
   /** Numbers of every in-use object in the merged view, ascending. */
@@ -223,6 +234,8 @@ class Lexer {
     start: number,
     readonly end: number,
     private readonly maxTokenBytes: number,
+    /** Called with the offset of every comment (`%` outside strings) the lexer skips. */
+    private readonly onComment?: (offset: number) => void,
   ) { this.pos = start; }
 
   next(): PdfToken { return this.queue.length ? this.queue.shift()! : this.scan(); }
@@ -234,11 +247,19 @@ class Lexer {
   private scan(): PdfToken {
     const b = this.bytes; const end = this.end;
     let p = this.pos;
+    const gap = p;
     for (;;) { // whitespace and comments
       while (p < end && WS[b[p]]) p++;
-      if (p < end && b[p] === 0x25) { while (p < end && b[p] !== 10 && b[p] !== 13) p++; continue; }
+      if (p < end && b[p] === 0x25) {
+        if (this.onComment) this.onComment(p);
+        while (p < end && b[p] !== 10 && b[p] !== 13) p++;
+        continue;
+      }
       break;
     }
+    // Padding counts against the token cap too: a run of whitespace or comments before a token (e.g. between
+    // `obj` and the value) is work the reader does on every parse of the object.
+    if (p - gap > this.maxTokenBytes) fail('too-large', 'whitespace or comments over the size cap', gap);
     if (p >= end) { this.pos = end; return { type: 'eof', start: end, end }; }
     const c = b[p];
     const start = p;
@@ -348,6 +369,18 @@ export function* tokenise(bytes: Uint8Array, start = 0, end = bytes.length, limi
     if (t.type === 'eof') return;
     yield t;
   }
+}
+
+/**
+ * Offset of the first comment (`%` outside a string) in `bytes[start, end)`, or -1. Lexes the range as PDF tokens
+ * (it must not contain stream data); throws `PdfReadError` on a lexical error. The save verifier uses it on the
+ * appended revision, where pdf.js's writer never writes a comment (spec §6.5 PV2).
+ */
+export function findComment(bytes: Uint8Array, start: number, end: number, limits?: Partial<ReaderLimits>): number {
+  let at = -1;
+  const lx = new Lexer(bytes, start, Math.min(end, bytes.length), readerLimits(limits).maxDictionaryBytes, (o) => { if (at < 0) at = o; });
+  while (at < 0 && lx.next().type !== 'eof') { /* lex to the end or the first comment */ }
+  return at;
 }
 
 // ------------------------------------------------------------------ object parser
@@ -562,6 +595,7 @@ class Reader implements PdfFile {
   xrefKind: XrefKind = 'table';
   startxref = 0;
   objectCount = 0;
+  workBytes = 0;
   private mType = new Uint8Array(0);
   private mA = new Uint32Array(0);
   private mB = new Uint32Array(0);
@@ -570,6 +604,7 @@ class Reader implements PdfFile {
   private depth = 0;
   private readonly objstmCache = new Map<number, { data: Uint8Array; nums: Uint32Array; offs: Uint32Array; first: number }>();
   private objstmCacheBytes = 0;
+  private readonly resolved = new Map<number, PdfIndirectObject | PdfReadError>();
 
   constructor(readonly bytes: Uint8Array, readonly lim: ReaderLimits) {
     const h = findHeader(bytes);
@@ -607,9 +642,11 @@ class Reader implements PdfFile {
       off = sec.prev;
     }
 
-    // merged view, newest wins; per-section duplicates are refused
+    // merged view, newest wins; per-section duplicates are refused. The arrays are sized by the highest number
+    // actually listed (every entry is checked against its section's /Size), never by /Size alone: a tiny file
+    // claiming /Size 5,000,000 allocates nothing.
     let size = 0;
-    for (const s of sections) size = Math.max(size, s.size);
+    for (const s of sections) for (let i = 0; i < s.list.length; i++) size = Math.max(size, s.list.nums[i] + 1);
     this.mType = new Uint8Array(size); this.mA = new Uint32Array(size); this.mB = new Uint32Array(size);
     const stamp = new Uint32Array(size);
     for (let si = 0; si < sections.length; si++) {
@@ -678,6 +715,11 @@ class Reader implements PdfFile {
         else if (b[q] === 10 || b[q] === 13) q += 1;
         else fail('bad-xref', 'bad cross-reference entry end', p);
         const num = first + i;
+        // pdf.js (XRef.readXRefTable) reads a subsection `1 N` whose first entry is free as starting at 0, so it
+        // sees every entry of it under a number one lower than this reader does, and recovers by rescanning the
+        // file when the headers then mismatch. Its own incremental writer produces exactly this shape when object 1
+        // is freed. The two readers would disagree on what every object of the subsection is, so it is refused.
+        if (i === 0 && first === 1 && t === 0x66) fail('ambiguous-xref', 'subsection 1 starts with a free entry (pdf.js renumbers it from 0)', p);
         if (t === 0x6E) { // n
           if (g[0] > 0xFFFF) fail('bad-xref', 'generation out of range', p);
           if (!headerMatches(b, o[0], num, g[0]) || o[0] < this.headerOffset) fail('bad-xref', `object ${num}: entry does not point at its header`, p);
@@ -857,19 +899,38 @@ class Reader implements PdfFile {
     if (t !== T_OFFSET && t !== T_OBJSTM) return null;
     const g = t === T_OFFSET ? this.mB[num] : 0;
     if (gen !== undefined && gen !== g) return null;
+    const hit = this.resolved.get(num);
+    if (hit !== undefined) {
+      this.resolved.delete(num); this.resolved.set(num, hit);
+      if (hit instanceof PdfReadError) throw hit;
+      return hit;
+    }
     if (this.resolving.has(num)) fail('malformed', `object ${num}: reference cycle while resolving`);
     if (this.depth >= MAX_RESOLVE_DEPTH) fail('malformed', `object ${num}: nested resolution too deep`);
     this.resolving.add(num); this.depth++;
+    const outermost = this.depth === 1;
+    let result: PdfIndirectObject | PdfReadError;
     try {
       if (t === T_OFFSET) {
         const offset = this.mA[num];
-        const { value } = this.parseIndirectAt(this.bytes, offset, num, g);
-        return { num, gen: g, value, location: { kind: 'offset', offset }, source: this.bytes };
-      }
-      return this.fromObjectStream(num, this.mA[num], this.mB[num]);
+        const { value, end } = this.parseIndirectAt(this.bytes, offset, num, g);
+        this.workBytes += end - offset;
+        result = { num, gen: g, value, location: { kind: 'offset', offset }, source: this.bytes };
+      } else result = this.fromObjectStream(num, this.mA[num], this.mB[num]);
+    } catch (e) {
+      // A refusal is remembered only when it is not an artefact of the nesting it was found at (depth, cycles).
+      if (outermost && e instanceof PdfReadError) this.remember(num, e);
+      throw e;
     } finally {
       this.resolving.delete(num); this.depth--;
     }
+    this.remember(num, result);
+    return result;
+  }
+
+  private remember(num: number, v: PdfIndirectObject | PdfReadError): void {
+    this.resolved.set(num, v);
+    if (this.resolved.size > RESOLVED_CACHE_ENTRIES) this.resolved.delete(this.resolved.keys().next().value!);
   }
 
   private objectStream(sn: number) {
@@ -895,6 +956,14 @@ class Reader implements PdfFile {
         fail('objstm', `object stream ${sn}: bad header pair ${i}`);
       }
       nums[i] = a.value; offs[i] = o.value;
+      // pdf.js parses object i from offs[i] up to offs[i + 1] and refuses a decreasing offset; it also locates a
+      // number by the LAST header pair naming it, whatever index the cross-reference entry gives. Both are pinned.
+      if (i > 0 && offs[i] < offs[i - 1]) fail('objstm', `object stream ${sn}: offsets decrease at pair ${i}`);
+    }
+    const names = new Set<number>();
+    for (let i = 0; i < N; i++) {
+      if (names.has(nums[i])) fail('objstm', `object stream ${sn}: object ${nums[i]} listed twice`);
+      names.add(nums[i]);
     }
     const entry = { data, nums, offs, first };
     this.objstmCache.set(sn, entry);
@@ -910,8 +979,10 @@ class Reader implements PdfFile {
     const s = this.objectStream(sn);
     if (index >= s.nums.length || s.nums[index] !== num) fail('objstm', `object ${num}: not at index ${index} of object stream ${sn}`);
     const at = s.first + s.offs[index];
-    const lx = new Lexer(s.data, at, s.data.length, this.lim.maxDictionaryBytes);
+    const stop = index + 1 < s.offs.length ? s.first + s.offs[index + 1] : s.data.length;
+    const lx = new Lexer(s.data, at, Math.min(stop, s.data.length), this.lim.maxDictionaryBytes);
     const value = parseValue(lx, 0, this.lim);
+    this.workBytes += value.end - at;
     const after = lx.peek(0);
     if (after.type === 'keyword' && (after.value === 'stream' || after.value === 'obj')) fail('objstm', `object ${num}: a stream or object header inside object stream ${sn}`, after.start);
     return { num, gen: 0, value, location: { kind: 'objstm', stream: sn, index }, source: s.data };
@@ -953,6 +1024,7 @@ class Reader implements PdfFile {
 
   decodeStream(stream: PdfStream, maxBytes: number = this.lim.maxObjectStreamBytes): Uint8Array {
     const raw = this.streamData(stream);
+    this.workBytes += raw.length;
     const f = stream.dict.entries.get('Filter');
     const fv = f && f.kind === 'ref' ? this.deref(f) : f;
     let filters: string[] = [];
@@ -971,7 +1043,9 @@ class Reader implements PdfFile {
     let parms: PdfDict | null = null;
     if (pv && pv.kind === 'dict') parms = pv;
     else if (pv && pv.kind !== 'null') fail('malformed', '/DecodeParms invalid', stream.start);
-    return unpredict(inflateCapped(raw, maxBytes, 'stream', stream.start), parms, stream.start);
+    const out = unpredict(inflateCapped(raw, maxBytes, 'stream', stream.start), parms, stream.start);
+    this.workBytes += out.length;
+    return out;
   }
 }
 

@@ -10,12 +10,13 @@ import v8 from 'node:v8';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { core, fixture, allFixtures } from './_helpers.mjs';
+import { skipPdfjs } from './_node.mjs';
 
 const require = createRequire(import.meta.url);
 const { PDFDocument, PDFDict, PDFRef } = require('@cantoo/pdf-lib');
 const { openPdf, openPdfSync, PdfReadError, tokenise, parseObject } = core.reader;
 const L1 = (s) => Buffer.from(s, 'latin1');
-const nodeMajor = Number(process.versions.node.split('.')[0]);
+
 
 // ------------------------------------------------------------------ expectations per fixture
 
@@ -90,7 +91,7 @@ async function pdfjsPageRefs(bytes) {
 }
 
 for (const name of OK) {
-  test(`${name}: every object resolves and agrees with pdf-lib; trailer, pages, revisions`, { skip: nodeMajor < 20 && 'pdf.js needs Node 20+' }, async () => {
+  test(`${name}: every object resolves and agrees with pdf-lib; trailer, pages, revisions`, { skip: skipPdfjs }, async () => {
     const bytes = fixture(name);
     const pdf = await openPdf(bytes);
     const sync = openPdfSync(bytes);
@@ -354,6 +355,57 @@ test('an inflating object stream over the cap is refused with too-large (default
   assert.strictEqual(code(() => openPdfSync(big).resolve(4)), 'too-large');
   const small = objStmPdf({ 4: '<< >>' }, { raw: zeros(2 * 1024 * 1024) });
   assert.strictEqual(code(() => openPdfSync(small, { maxObjectStreamBytes: 1024 * 1024 }).resolve(4)), 'too-large');
+});
+
+test('object streams are read as pdf.js reads them: bounded at the next offset, no repeated number, no decreasing offset (review N7)', () => {
+  const inner = { 4: '<< >>', 5: '[1]' }; // header "4 0 5 6 ", bodies "<< >> [1] "
+  assert.strictEqual(code(() => openPdfSync(objStmPdf(inner)).resolve(4)), 'ok');
+  // a number listed twice: pdf.js takes the LAST pair naming it, whatever index the xref gives
+  assert.strictEqual(code(() => openPdfSync(objStmPdf(inner, { raw: zlib.deflateSync(L1('4 0 4 6 << >> [1] ')) })).resolve(4)), 'objstm');
+  // offsets that decrease: pdf.js refuses the stream
+  assert.strictEqual(code(() => openPdfSync(objStmPdf(inner, { raw: zlib.deflateSync(L1('4 6 5 0 [1]   << >> ')) })).resolve(4)), 'objstm');
+  // object 4 is "[1 2 " up to the next offset (5); read on to the end it would be [1 2 3]
+  const spill = objStmPdf({ 4: '[1 2', 5: '3]' }, { raw: zlib.deflateSync(L1('4 0 5 5 [1 2 3] ')) });
+  assert.strictEqual(code(() => openPdfSync(spill).resolve(4)), 'malformed');
+});
+
+test('a table subsection `1 N` whose first entry is free is refused (pdf.js renumbers it from 0; review B1)', () => {
+  const head = '%PDF-1.7\n';
+  const o1 = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n', o2 = '2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n';
+  const at1 = head.length, at2 = at1 + o1.length, x = at2 + o2.length;
+  const row = (o, g, t) => `${String(o).padStart(10, '0')} ${String(g).padStart(5, '0')} ${t} \n`;
+  const file = (xref) => new Uint8Array(L1(`${head}${o1}${o2}${xref}trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`));
+  // the same entries as one subsection "0 4" are fine
+  assert.strictEqual(code(() => openPdfSync(file(`xref\n0 4\n${row(0, 65535, 'f')}${row(at1, 0, 'n')}${row(at2, 0, 'n')}${row(0, 1, 'f')}`))), 'ok');
+  // a subsection "1 3" starting with a free entry (object 1 freed, as pdf.js's writer frees it): pdf.js reads every
+  // entry of it under a number one lower
+  const amb = file(`xref\n0 1\n${row(0, 65535, 'f')}1 3\n${row(0, 1, 'f')}${row(at2, 0, 'n')}${row(0, 1, 'f')}`);
+  assert.strictEqual(code(() => openPdfSync(amb)), 'ambiguous-xref');
+  // a subsection starting at 1 with an in-use first entry is unambiguous
+  assert.strictEqual(code(() => openPdfSync(file(`xref\n0 1\n${row(0, 65535, 'f')}1 3\n${row(at1, 0, 'n')}${row(at2, 0, 'n')}${row(0, 1, 'f')}`))), 'ok');
+});
+
+test('/Size alone allocates nothing: the merged view is sized by the entries listed (review N1)', () => {
+  const { bytes } = build(CAT, { size: 5_000_000 });
+  const before = process.memoryUsage().arrayBuffers;
+  const pdf = openPdfSync(bytes);
+  assert.ok(process.memoryUsage().arrayBuffers - before < 4 * 1024 * 1024);
+  assert.strictEqual(pdf.size, 5_000_000);
+  assert.strictEqual(pdf.entry(4_999_999), undefined);
+  assert.strictEqual(pdf.resolve(4_999_999), null);
+});
+
+test('padding before a value counts against the token cap; resolved objects are cached (review S3)', () => {
+  const pad = ' '.repeat(64 * 1024);
+  const { bytes } = build({ ...CAT, 3: `${pad}[0 0 612 792]` });
+  assert.strictEqual(code(() => openPdfSync(bytes, { maxDictionaryBytes: 16 * 1024 }).resolve(3)), 'too-large');
+  const pdf = openPdfSync(bytes);
+  pdf.resolve(3);
+  const w = pdf.workBytes;
+  assert.ok(w >= pad.length);
+  for (let i = 0; i < 1000; i++) pdf.resolve(3);
+  assert.strictEqual(pdf.workBytes, w, 'a cached object is not parsed again');
+  assert.strictEqual(pdf.resolve(3), pdf.resolve(3));
 });
 
 test('object-stream defects are refused with objstm', () => {

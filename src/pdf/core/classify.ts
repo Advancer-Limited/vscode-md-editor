@@ -48,6 +48,7 @@ export const READ_ERROR_REASON: Readonly<Record<PdfReadErrorCode, PdfClassifyRea
   'no-header': 'unsupported-structure',
   'no-startxref': 'unsupported-structure',
   'bad-xref': 'unsupported-structure',     // damaged cross-references are never repaired (§3.3)
+  'ambiguous-xref': 'unsupported-structure', // pdf.js would read the table differently (subsection `1 N`, first free)
   'prev-cycle': 'unsupported-structure',
   'hybrid': 'unsupported-structure',       // see above: becomes rare once the reader accepts hybrids
   'encrypted': 'encrypted',                // §9.1: all encrypted files are view-only
@@ -74,9 +75,17 @@ export const DELETABLE_SUBTYPES: ReadonlySet<string> = new Set([
  *    would free the other annotation's Popup.
  *  - `has-replies`: another annotation's /IRT points at it; deleting it would orphan the replies.
  *  - `other-page`: its /P names a different page than the one listing it.
+ *  - `object-one`: it or its Popup is object 1. pdf.js's writer frees it with a table subsection `1 N` whose first
+ *    entry is free, which pdf.js's own reader renumbers from 0 (reader code `ambiguous-xref`), so the saved file
+ *    would be misread (and the verifier refuses that shape).
+ *  - `struct-parent`: it or its Popup has /StructParent (a tagged PDF's structure tree refers to it; pdf.js does
+ *    not touch the structure tree for a deletion, so the tree would point at a freed object). Other references
+ *    from outside /Annots (an outline or action naming the annotation) are not looked for: that needs the whole
+ *    body to be read (classification is lazy), and a reference to a freed object reads as null.
  */
 export type PdfNotDeletableReason =
-  | 'subtype' | 'inline' | 'dangling' | 'shared' | 'locked' | 'bad-popup' | 'group-reply' | 'has-replies' | 'other-page';
+  | 'subtype' | 'inline' | 'dangling' | 'shared' | 'locked' | 'bad-popup' | 'group-reply' | 'has-replies' | 'other-page'
+  | 'object-one' | 'struct-parent';
 
 /** Annotation flags (ISO 32000-1 table 165). */
 const F_READONLY = 64;
@@ -210,6 +219,9 @@ export interface ClassifyOptions {
   maxEditPages?: number;
   /** Strict-reader caps and yielding parameters. */
   reader?: Partial<ReaderLimits>;
+  /** Work budget (`PDF_LIMITS.classify*`; tests lower it): bytes the reader may lex/decode, and milliseconds. */
+  maxWorkBytes?: number;
+  maxMs?: number;
   /**
    * `PDF_FLAGS.pdfForms` (core cannot import the flags). Off (default): `context.fields` is empty and
    * `info.forms.reason` is 'flag-off'; the field facts are collected either way.
@@ -244,6 +256,7 @@ export async function classify(bytes: Uint8Array, options: ClassifyOptions = {})
   try {
     const early = sizeCheck(bytes, options);
     if (early) return early;
+    const budget = workBudget(bytes, options);
     const file = await openPdf(bytes, options.reader);
     const steps = run(file, options);
     const yielding = bytes.length > (options.reader?.asyncParseThresholdBytes ?? PDF_LIMITS.asyncParseThresholdBytes);
@@ -251,6 +264,7 @@ export async function classify(bytes: Uint8Array, options: ClassifyOptions = {})
     let slice = performance.now();
     for (;;) {
       const r = steps.next();
+      if (budget.over(file)) return budget.result;
       if (r.done) return r.value;
       if (yielding && performance.now() - slice >= interval) {
         await new Promise<void>((res) => setImmediate(res));
@@ -267,14 +281,32 @@ export function classifySync(bytes: Uint8Array, options: ClassifyOptions = {}): 
   try {
     const early = sizeCheck(bytes, options);
     if (early) return early;
-    const steps = run(openPdfSync(bytes, options.reader), options);
+    const budget = workBudget(bytes, options);
+    const file = openPdfSync(bytes, options.reader);
+    const steps = run(file, options);
     for (;;) {
       const r = steps.next();
+      if (budget.over(file)) return budget.result;
       if (r.done) return r.value;
     }
   } catch (e) {
     return toReadOnly(e);
   }
+}
+
+/**
+ * The total work budget of one classification (spec §6.2), checked between steps of the walk (each step is bounded
+ * by the reader's caps): a file whose objects are expensive to read (padded, shared by every page, deeply nested)
+ * ends as `too-large` (`work-budget`) instead of pinning the extension host.
+ */
+function workBudget(bytes: Uint8Array, o: ClassifyOptions): { result: PdfReadOnlyClassification; over(f: PdfFile): boolean } {
+  const maxWork = o.maxWorkBytes ?? PDF_LIMITS.classifyWorkFactor * bytes.length + PDF_LIMITS.classifyWorkBaseBytes;
+  const maxMs = o.maxMs ?? PDF_LIMITS.classifyTimeBaseMs + PDF_LIMITS.classifyTimePerMbMs * (bytes.length / (1024 * 1024));
+  const t0 = performance.now();
+  return {
+    result: { editable: false, reason: 'too-large', detail: 'work-budget' },
+    over: (f) => f.workBytes > maxWork || performance.now() - t0 > maxMs,
+  };
 }
 
 function sizeCheck(bytes: Uint8Array, o: ClassifyOptions): PdfReadOnlyClassification | null {
@@ -422,6 +454,9 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
   const annotDicts = new Map<string, PdfDict | null>();   // ref key -> resolved dictionary (null = dangling)
   const candidates: Candidate[] = [];
   const irtTargets = new Set<string>();
+  // Annotations naming each Popup, over EVERY annotation listed (any subtype, inline ones included): a Popup another
+  // annotation also uses must not be freed with a deletable one.
+  const popupUsers = new Map<string, number>();
   let total = 0;
   for (let p = 0; p < pages.length; p++) {
     const raw = pageDicts[p].entries.get('Annots');
@@ -454,7 +489,10 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
       }
       fact.subtype = nameOf(dict.entries.get('Subtype'));
       const pop = dict.entries.get('Popup');
-      if (pop && pop.kind === 'ref') fact.popup = key(pop);
+      if (pop && pop.kind === 'ref') {
+        fact.popup = key(pop);
+        popupUsers.set(fact.popup, (popupUsers.get(fact.popup) ?? 0) + 1);
+      }
       const par = dict.entries.get('Parent');
       if (fact.subtype === 'Popup' && par && par.kind === 'ref') fact.parent = key(par);
       const irt = dict.entries.get('IRT');
@@ -464,13 +502,6 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
       candidates.push({ fact, key: key(item as { num: number; gen: number }), page: p, dict });
     }
     yield;
-  }
-
-  // Popups referenced by more than one candidate.
-  const popupUsers = new Map<string, number>();
-  for (const c of candidates) {
-    const pop = c.dict.entries.get('Popup');
-    if (pop && pop.kind === 'ref') popupUsers.set(key(pop), (popupUsers.get(key(pop)) ?? 0) + 1);
   }
 
   const deletable = new Map<string, { page: number; popup?: string }>();
@@ -489,6 +520,8 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
   function notDeletable(c: Candidate): PdfNotDeletableReason | null {
     const occ = occurrences.get(c.key)!;
     if (occ.length !== 1) return 'shared';
+    if (c.fact.ref!.num === 1) return 'object-one';
+    if (present(c.dict.entries.get('StructParent'))) return 'struct-parent';
     const flags = numOf(D(c.dict.entries.get('F')));
     if (flags !== null && Number.isInteger(flags) && (flags & (F_LOCKED | F_READONLY)) !== 0) return 'locked';
     const pRef = c.dict.entries.get('P');
@@ -504,6 +537,8 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
       if (!annotDicts.has(pk)) annotDicts.set(pk, asDict(D(pop)));
       const pd = annotDicts.get(pk);
       if (!pd || nameOf(pd.entries.get('Subtype')) !== 'Popup') return 'bad-popup';
+      if (pop.num === 1) return 'object-one';
+      if (present(pd.entries.get('StructParent'))) return 'struct-parent';
       const parent = pd.entries.get('Parent');
       if (parent !== undefined && (parent.kind !== 'ref' || key(parent) !== c.key)) return 'bad-popup';
       const pocc = occurrences.get(pk);

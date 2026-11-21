@@ -109,7 +109,7 @@ test('word.pdf (Word "Save as PDF", hybrid /XRefStm) classifies as HYBRID_EXPECT
 });
 
 test('READ_ERROR_REASON maps every reader error code; only `encrypted` is not unsupported-structure', () => {
-  const codes = ['no-header', 'no-startxref', 'bad-xref', 'prev-cycle', 'hybrid', 'encrypted', 'objstm', 'too-large', 'malformed'];
+  const codes = ['no-header', 'no-startxref', 'bad-xref', 'ambiguous-xref', 'prev-cycle', 'hybrid', 'encrypted', 'objstm', 'too-large', 'malformed'];
   assert.deepStrictEqual(Object.keys(C.READ_ERROR_REASON).sort(), codes.sort());
   for (const c of codes) assert.strictEqual(C.READ_ERROR_REASON[c], c === 'encrypted' ? 'encrypted' : 'unsupported-structure');
   assert.ok(Object.isFrozen(C.READ_ERROR_REASON));
