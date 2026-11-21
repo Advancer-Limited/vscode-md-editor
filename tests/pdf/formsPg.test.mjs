@@ -298,7 +298,40 @@ T('PG forms.pdf: a save, more edits, a second save, then undo to empty still sav
 });
 const R = (bytes) => core.reader.openPdfSync(bytes);
 
-T('PG4 forms.pdf: the same state writes the same bytes, except the rewrite times (/M) of the widgets', async () => {
+/**
+ * A save in a canonical form for PG4: the base prefix, then every appended object with the rewrite times (/M) masked
+ * and the NEW objects renamed in the order they are first referenced from the rewritten existing objects (walked in
+ * object-number order, depth first), with xref offsets masked. Why: pdf.js saves the widgets concurrently
+ * (`Promise.all` over the page's annotations) and takes each new appearance stream's object number when that
+ * widget's async appearance build finishes — after font loading, which is I/O — so under load the same state can
+ * give two widgets' appearances swapped numbers (seen: `/AP << /N 67 0 R>>` vs `68 0 R`, everything else equal).
+ * The canonical form keeps every object's content and which widget points at which appearance, so the state still
+ * has to determine the whole output; only the numbering order is free.
+ */
+function canonicalSave(u8, baseLength) {
+  const s = latin1(u8);
+  const head = s.slice(0, baseLength);
+  const tail = s.slice(baseLength);
+  const OBJ = /(\d+) 0 obj\n([\s\S]*?)\nendobj\n/g;
+  const old = new Set([...head.matchAll(OBJ)].map((m) => +m[1]));
+  const bodies = new Map([...tail.matchAll(OBJ)].map((m) => [+m[1], m[2]]));
+  const rename = new Map();
+  const visit = (num) => {
+    for (const [, r] of bodies.get(num).matchAll(/(\d+) 0 R\b/g)) {
+      const n = +r;
+      if (!old.has(n) && bodies.has(n) && !rename.has(n)) { rename.set(n, `new#${rename.size}`); visit(n); }
+    }
+  };
+  for (const num of [...bodies.keys()].filter((n) => old.has(n)).sort((a, b) => a - b)) visit(num);
+  for (const num of bodies.keys()) if (!old.has(num) && !rename.has(num)) rename.set(num, `orphan#${rename.size}`);
+  const name = (n) => rename.get(n) ?? `${n} 0`;
+  const refs = (text) => text.replace(/(\d+) 0 R\b/g, (_, r) => `${name(+r)} R`);
+  const objects = [...bodies].map(([n, body]) => `${name(n)} obj\n${refs(body).replace(/\/M \(D:\d{14}[^)]*\)/g, '/M (D:*)')}`).sort();
+  const trailer = refs(tail.slice(tail.lastIndexOf('endobj\n') + 7)).replace(/\d{10} \d{5} n/g, 'offset').replace(/startxref\n\d+/, 'startxref');
+  return { head, objects, trailer };
+}
+
+T('PG4 forms.pdf: the same state writes the same objects, except the rewrite times (/M) and the numbering order of new appearances', async () => {
   const cls = classifyForms(FORMS.base);
   const outs = [];
   for (let i = 0; i < 2; i++) {
@@ -307,9 +340,22 @@ T('PG4 forms.pdf: the same state writes the same bytes, except the rewrite times
     outs.push((await serviceWrite(FORMS.base, entriesOf(cls, s))).bytes);
     if (i === 0) await new Promise((r) => setTimeout(r, 1100));
   }
-  const mask = (u8) => latin1(u8).replace(/\/M \(D:\d{14}[^)]*\)/g, '/M (D:*)');
-  assert.equal(outs[0].length, outs[1].length);
-  assert.equal(mask(outs[0]), mask(outs[1]));
+  const [a, b] = outs.map((u8) => canonicalSave(u8, FORMS.base.length));
+  assert.equal(a.head, latin1(FORMS.base), 'the loaded bytes are a prefix');
+  assert.ok(a.objects.length > 0 && !a.objects.some((o) => o.startsWith('orphan#')), 'every new object is referenced');
+  assert.deepStrictEqual(a, b);
+});
+
+test('PG4 canonical form: renumbered new objects compare equal, different content or wiring does not', () => {
+  const base = L1('%PDF-1.7\n1 0 obj\n<< /A 1 >>\nendobj\n2 0 obj\n<< /B 2 >>\nendobj\n');
+  const save = (n1, n2, c1, c2) => new Uint8Array(Buffer.concat([base, L1(
+    `1 0 obj\n<< /AP << /N ${n1} 0 R>> /M (D:20261121100000)>>\nendobj\n2 0 obj\n<< /AP << /N ${n2} 0 R>> /M (D:20261121100059)>>\nendobj\n` +
+    [[n1, c1], [n2, c2]].sort((x, y) => x[0] - y[0]).map(([n, c]) => `${n} 0 obj\n(${c})\nendobj\n`).join('') +
+    `xref\n0 1\n${String(base.length).padStart(10, '0')} 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R>>\nstartxref\n${base.length + 7}\n%%EOF\n`)]));
+  const canon = (u8) => canonicalSave(u8, base.length);
+  assert.deepStrictEqual(canon(save(3, 4, 'x', 'y')), canon(save(4, 3, 'x', 'y')), 'numbering order is free');
+  assert.notDeepStrictEqual(canon(save(3, 4, 'x', 'y')), canon(save(3, 4, 'y', 'x')), 'appearances swapped between widgets');
+  assert.notDeepStrictEqual(canon(save(3, 4, 'x', 'y')), canon(save(3, 4, 'x', 'z')), 'different content');
 });
 
 T('PG0 forms.pdf: an empty state is never written by the writer — the loaded bytes come back', async () => {

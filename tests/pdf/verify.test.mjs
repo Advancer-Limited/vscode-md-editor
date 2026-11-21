@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { warnIfSkipped } from './_node.mjs';
+import { watchLoop, assertResponsive } from './_helpers.mjs';
 import {
   S, SA, V, C, R, fixture, L1, latin1, AUTHOR, DATE0, widgets, hl, ink, scenario, verify, show,
   passes, refused, split, baseBody, obj, setBody, withKey, streamBody, rebuild, fresh, nums, skipWriter,
@@ -631,21 +632,22 @@ test('performance: ~100 MB object-dense base, verification within budget and the
   assert.ok(sync.ok, V.formatFindings(sync));
 
   const baseFile = await R.openPdf(base);
-  let last = performance.now(); let maxGap = 0; let on = true;
-  const tick = () => { const n = performance.now(); maxGap = Math.max(maxGap, n - last); last = n; if (on) setImmediate(tick); };
-  setImmediate(tick);
-  const t0 = performance.now();
-  const withBase = await V.verifySave({ ...input, baseFile });
-  const msWithBase = performance.now() - t0;
-  const t1 = performance.now();
-  const cold = await V.verifySave(input);
-  const msCold = performance.now() - t1;
-  on = false;
-  await new Promise((r) => setImmediate(r));
+  let msWithBase = 0; let msCold = 0;
+  const w = await watchLoop(async () => {
+    const t0 = performance.now();
+    const withBase = await V.verifySave({ ...input, baseFile });
+    msWithBase = performance.now() - t0;
+    const t1 = performance.now();
+    const cold = await V.verifySave(input);
+    msCold = performance.now() - t1;
+    return { withBase, cold };
+  });
+  const { withBase, cold } = w.result;
   assert.ok(withBase.ok && cold.ok);
-  t.diagnostic(`${(base.length / 1048576).toFixed(1)} MB, ${size} objects: verify with the classified base ${msWithBase.toFixed(0)} ms, cold (opens the base too) ${msCold.toFixed(0)} ms, max event-loop gap ${maxGap.toFixed(1)} ms`);
-  assert.ok(msWithBase < 1500, `verify took ${msWithBase.toFixed(0)} ms`);
-  assert.ok(maxGap < 100, `event loop blocked for ${maxGap.toFixed(1)} ms`);
+  t.diagnostic(`${(base.length / 1048576).toFixed(1)} MB, ${size} objects: verify with the classified base ${msWithBase.toFixed(0)} ms, cold (opens the base too) ${msCold.toFixed(0)} ms; ${w.summary}`);
+  // ~0.5 s on an idle machine; the bound has headroom for the other test files npm test runs in parallel
+  assert.ok(msWithBase < 3000, `verify took ${msWithBase.toFixed(0)} ms`);
+  assertResponsive(assert, w, 'verifySave');
   // a tampered prefix is found quickly too
   const bad = out.slice(); bad[base.length - 100] ^= 1;
   const tb = performance.now();

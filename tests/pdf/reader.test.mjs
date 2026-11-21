@@ -9,7 +9,7 @@ import zlib from 'node:zlib';
 import v8 from 'node:v8';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
-import { core, fixture, allFixtures } from './_helpers.mjs';
+import { core, fixture, allFixtures, watchLoop, assertResponsive, MEDIAN_LOOP_GAP_MS } from './_helpers.mjs';
 import { skipPdfjs } from './_node.mjs';
 
 const require = createRequire(import.meta.url);
@@ -676,37 +676,29 @@ function objectDense(target = 100 * 1024 * 1024) {
 /** A full GC (flag set at run time, so `npm test` needs no --expose-gc). */
 function fullGc() { v8.setFlagsFromString('--expose-gc'); vm.runInNewContext('gc')(); }
 
-/** Run `fn` while measuring the longest gap between event-loop turns. */
-async function withLoopWatch(fn) {
-  let last = performance.now(); let maxGap = 0; let on = true; const gaps = []; const t0 = performance.now();
-  const tick = () => { const t = performance.now(); if (t - last > 25) gaps.push(`${(t - last).toFixed(1)}@${(t - t0).toFixed(0)}`); maxGap = Math.max(maxGap, t - last); last = t; if (on) setImmediate(tick); };
-  setImmediate(tick);
-  const tStart = performance.now();
-  const result = await fn();
-  const ms = performance.now() - tStart;
-  on = false;
-  await new Promise((r) => setImmediate(r));
-  return { result, ms, maxGap, gaps };
-}
-
-test('object-dense ~100 MB file: lazy open within budget, event loop never blocked over 50 ms, random access', async (t) => {
+test('object-dense ~100 MB file: lazy open within budget, event loop responsive (yields every ~30 ms), random access', async (t) => {
   const { bytes, count } = objectDense();
   // Settle first: collect the generator's garbage and let earlier tests' pending work run, so the watch measures
   // the reader (whose own slices are ~30 ms) and not the test process.
   fullGc();
   await new Promise((r) => setTimeout(r, 200));
-  const { result: pdf, ms, maxGap, gaps } = await withLoopWatch(() => openPdf(bytes));
-  t.diagnostic('gaps over 25 ms: ' + gaps.join(' '));
+  const w = await watchLoop(() => openPdf(bytes));
+  const { result: pdf, ms } = w;
+  t.diagnostic(w.summary);
   assert.strictEqual(pdf.objectCount, count);
   const t1 = performance.now();
   const r = rng(42);
   for (let i = 0; i < 2000; i++) { const n = 1 + Math.floor(r() * count); assert.strictEqual(pdf.resolve(n).value.entries.get('N')?.value ?? n, n); }
   const resolveMs = performance.now() - t1;
   const syncT = performance.now(); openPdfSync(bytes); const syncMs = performance.now() - syncT;
-  t.diagnostic(`object-dense ${(bytes.length / 1048576).toFixed(1)} MB, ${count} objects: openPdf ${ms.toFixed(0)} ms (max loop gap ${maxGap.toFixed(1)} ms), openPdfSync ${syncMs.toFixed(0)} ms, 2000 random resolves ${resolveMs.toFixed(0)} ms`);
-  assert.ok(maxGap < 50, `event loop blocked for ${maxGap.toFixed(1)} ms`);
+  t.diagnostic(`object-dense ${(bytes.length / 1048576).toFixed(1)} MB, ${count} objects: openPdf ${ms.toFixed(0)} ms (max loop gap ${w.maxGap.toFixed(1)} ms), openPdfSync ${syncMs.toFixed(0)} ms, 2000 random resolves ${resolveMs.toFixed(0)} ms`);
+  assertResponsive(assert, w, 'openPdf');
   assert.ok(ms < 2000, `open took ${ms.toFixed(0)} ms (budget: Edit-on 2 s per 100 MB)`);
   assert.ok(resolveMs < 1000);
+  // The measure is meaningful: the same open without yielding (one synchronous slice) fails it.
+  const blocking = await watchLoop(() => openPdf(bytes, { yieldIntervalMs: 1e9 }));
+  t.diagnostic('without yielding: ' + blocking.summary);
+  if (blocking.ms > 2 * MEDIAN_LOOP_GAP_MS) assert.throws(() => assertResponsive(assert, blocking, 'openPdf without yielding'), assert.AssertionError);
 });
 
 test('makeHugePdf (101 MB, one big stream): opens and the stream is skipped by /Length', async (t) => {
@@ -714,11 +706,13 @@ test('makeHugePdf (101 MB, one big stream): opens and the stream is skipped by /
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vsmd-pwp14-'));
   try {
     const bytes = new Uint8Array(fs.readFileSync(makeHugePdf(dir)));
-    const { result: pdf, ms, maxGap } = await withLoopWatch(async () => { const p = await openPdf(bytes); p.resolve(4); return p; });
-    t.diagnostic(`huge.pdf ${(bytes.length / 1048576).toFixed(1)} MB: open + resolve(stream) ${ms.toFixed(1)} ms, max loop gap ${maxGap.toFixed(1)} ms`);
+    const w = await watchLoop(async () => { const p = await openPdf(bytes); p.resolve(4); return p; });
+    const { result: pdf, ms } = w;
+    t.diagnostic(`huge.pdf ${(bytes.length / 1048576).toFixed(1)} MB: open + resolve(stream) ${ms.toFixed(1)} ms; ${w.summary}`);
     const s = pdf.resolve(4).value;
     assert.strictEqual(s.kind, 'stream');
     assert.strictEqual(s.dataEnd - s.dataStart, 101 * 1048576);
-    assert.ok(ms < 500 && maxGap < 50);
+    assert.ok(ms < 500, `open + resolve took ${ms.toFixed(0)} ms`);
+    assertResponsive(assert, w, 'huge.pdf');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
