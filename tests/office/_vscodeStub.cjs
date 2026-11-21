@@ -65,8 +65,14 @@ const state = {
   saveDialogResult: undefined,
   activeTabInput: undefined,
   clock: 10_000,
+  /** 'section.key' -> { globalValue, workspaceValue, workspaceFolderValue } for getConfiguration().inspect */
+  inspected: {},
+  /** getConfiguration().update calls: { key, value, target } */
+  updates: [],
+  /** answers handed to window.showQuickPick in order (a function receives the items) */
+  quickPicks: [],
   reset() {
-    this.config = {};
+    this.config = {}; this.inspected = {}; this.updates.length = 0; this.quickPicks.length = 0;
     this.files.clear(); this.watchers.length = 0; this.opened.length = 0;
     this.clipboard = undefined; this.messages.length = 0; this.registered.length = 0;
     this.commands.length = 0; this.fsLog.length = 0;
@@ -124,7 +130,11 @@ const workspace = {
   },
   /** Settings: tests put values in `__state.config` keyed 'section.key'. */
   getConfiguration(section) {
-    return { get: (key, dflt) => { const k = `${section}.${key}`; return k in state.config ? state.config[k] : dflt; } };
+    return {
+      get: (key, dflt) => { const k = `${section}.${key}`; return k in state.config ? state.config[k] : dflt; },
+      inspect: (key) => state.inspected[`${section}.${key}`],
+      async update(key, value, target) { state.updates.push({ key: `${section}.${key}`, value, target }); },
+    };
   },
   createFileSystemWatcher(pattern) {
     const change = new EventEmitter(), create = new EventEmitter(), del = new EventEmitter();
@@ -161,6 +171,11 @@ const window = {
   showWarningMessage(...a) { return notify('warning', a); },
   showErrorMessage(...a) { return notify('error', a); },
   async showSaveDialog(opts) { state.messages.push(['saveDialog', opts]); return state.saveDialogResult; },
+  async showQuickPick(items, options) {
+    state.quickPickCalls = (state.quickPickCalls || 0) + 1;
+    const a = state.quickPicks.shift();
+    return typeof a === 'function' ? a(items, options) : a;
+  },
   registerCustomEditorProvider(viewType, provider, options) {
     state.registered.push({ viewType, provider, options });
     return { dispose() {} };
@@ -170,11 +185,13 @@ const window = {
   },
 };
 
+const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };
+
 const commands = {
   async executeCommand(id, ...args) { state.commands.push([id, ...args]); return undefined; },
 };
 
 module.exports = {
-  Uri, EventEmitter, RelativePattern, CancellationError, FileSystemError, TabInputCustom,
+  ConfigurationTarget, Uri, EventEmitter, RelativePattern, CancellationError, FileSystemError, TabInputCustom,
   workspace, env, window, commands, __state: state,
 };
