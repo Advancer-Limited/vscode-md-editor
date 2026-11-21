@@ -9,8 +9,11 @@
 //  - per page, every /Annots entry (ref, subtype, Popup link) and which of them are DELETABLE: the
 //    existing Highlight, Underline, StrikeOut, Squiggly, Text, Ink and FreeText annotations whose removal
 //    pdf.js's writer can express without leaving a dangling reference (see `NOT_DELETABLE` below);
-//  - the AcroForm facts (present, /XFA, field count) and signature facts (signed fields, /Perms).
-//    Forms are OFF until PWP-27 (plan §3.2): `fields` is empty and `forms.reason` is 'flag-off'.
+//  - the AcroForm facts (present, /XFA, /NeedAppearances, every terminal field with its type, flags and
+//    widgets, and whether it is FILLABLE or locked with a `PdfFieldLockReason`) and signature facts
+//    (signed fields, /Perms). Fillable widgets get the value rules of spec §8.5 (`state.fieldRule`).
+//    With `options.forms` off (the default, = `PDF_FLAGS.pdfForms` false) `context.fields` stays empty
+//    and `info.forms.reason` is 'flag-off' (plan PWP-27).
 //
 // Refuse rather than guess: any structure this module does not fully understand makes the file view-only
 // (`unsupported-structure`), never editable on a best guess. Work is LAZY (spike S4): only the catalog,
@@ -24,8 +27,9 @@ import { openPdf, openPdfSync, PdfReadError } from './reader.js';
 import type { PdfArray, PdfDict, PdfFile, PdfReadErrorCode, PdfStream, PdfValue, ReaderLimits, XrefKind } from './reader.js';
 import { normalizeRotation } from './geometry.js';
 import type { PdfBox, PdfPageBoxes } from './geometry.js';
-import { refKey } from './state.js';
-import type { PdfEditContext } from './state.js';
+import { fieldRule, refKey } from './state.js';
+import type { PdfEditContext, PdfFieldLockReason, PdfFieldRule } from './state.js';
+import { decodeTextString } from './verify.js';
 import { PDF_LIMITS } from './limits.js';
 
 // ---------------------------------------------------------------- policy tables
@@ -121,11 +125,54 @@ export interface PdfSignatureFacts {
   usageRights: boolean;
 }
 
+/** A terminal field's type as pdf.js would draw it. */
+export type PdfFieldType = 'text' | 'checkbox' | 'radio' | 'push-button' | 'combo' | 'list' | 'signature' | 'unknown';
+
+/**
+ * One terminal field of the AcroForm tree (spec §6.2, §8.5). Refs, flags and counts only — no field
+ * names, values or option texts (document content); the option list lives only inside the field's rule.
+ */
+export interface PdfFieldFact {
+  /** The terminal field node (for a merged field/widget, also its widget). */
+  ref: PdfObjRef;
+  type: PdfFieldType;
+  /** Its widget annotations (pdf.js annotation ids), with the 0-based page listing each (null = none or several). */
+  widgets: Array<{ ref: PdfObjRef; page: number | null }>;
+  readOnly: boolean;
+  /** Ff Required: reported for the UI; not a value rule (it is enforced on submission, which never happens here). */
+  required: boolean;
+  multiline: boolean;
+  comb: boolean;
+  /** Inherited /MaxLen when it is a positive integer. */
+  maxLen: number | null;
+  /** A list box with MultiSelect. */
+  multiSelect: boolean;
+  /** A combo box with Edit (free text allowed). */
+  editable: boolean;
+  /** Number of /Opt entries (choice fields). */
+  options: number;
+  /** /AA or a widget /A on the field, an ancestor or a widget. */
+  scripts: boolean;
+  /** The field or an ancestor is in the AcroForm /CO. */
+  calculated: boolean;
+  fillable: boolean;
+  /** Set when `fillable` is false. */
+  locked?: PdfFieldLockReason;
+}
+
 export interface PdfFormFacts {
   acroForm: boolean;
   xfa: boolean;
   /** Terminal fields found in the field tree (all types). */
   terminalFields: number;
+  /** The AcroForm has /NeedAppearances true. */
+  needAppearances: boolean;
+  /** Every terminal field, in field-tree order. */
+  fields: PdfFieldFact[];
+  /** Fields fillable by the value rules (independent of the `forms` option). */
+  fillableFields: number;
+  /** Fields with scripts (/AA or /A) or in /CO — drives the "This form uses scripts" notice. */
+  scriptedFields: number;
 }
 
 export interface PdfStructureFacts {
@@ -163,6 +210,11 @@ export interface ClassifyOptions {
   maxEditPages?: number;
   /** Strict-reader caps and yielding parameters. */
   reader?: Partial<ReaderLimits>;
+  /**
+   * `PDF_FLAGS.pdfForms` (core cannot import the flags). Off (default): `context.fields` is empty and
+   * `info.forms.reason` is 'flag-off'; the field facts are collected either way.
+   */
+  forms?: boolean;
 }
 
 // ---------------------------------------------------------------- errors
@@ -242,6 +294,30 @@ function nameOf(v: Val): string | null { return v && v.kind === 'name' ? v.value
 function numOf(v: Val): number | null { return v && v.kind === 'number' ? v.value : null; }
 function isNull(v: Val): boolean { return v === undefined || v === null || v.kind === 'null'; }
 function key(r: { num: number; gen: number }): string { return refKey({ num: r.num, gen: r.gen }); }
+
+// ---------------------------------------------------------------- field-tree helpers
+
+/** Entries inherited down the field tree (raw values, dereferenced when used) and sticky facts. */
+interface FieldInherited {
+  ft: Val; ff: Val; v: Val; maxLen: Val; opt: Val;
+  rich: boolean; scripts: boolean; calculated: boolean; indices: boolean; barcode: boolean;
+  /** A /Parent link in the chain disagrees with the Kids walk. */
+  bad: boolean;
+}
+interface FieldNode {
+  ref: { num: number; gen: number };
+  key: string;
+  dict: PdfDict;
+  inh: FieldInherited;
+  /** Kids without /T (its widgets); null when the node has no /Kids (a merged field/widget, or no widget). */
+  kids: Array<{ ref: { num: number; gen: number }; dict: PdfDict }> | null;
+}
+/** Value-defining entries a separate widget must not carry (pdf.js would read them from the widget first). */
+const SEPARATE_WIDGET_FORBIDDEN = ['T', 'FT', 'Ff', 'V', 'DV', 'MaxLen', 'Opt', 'RV'];
+/** Radio groups larger than one `setFields` op can state (protocol `MAX_FIELDS_PER_SET`) are locked. */
+export const MAX_RADIO_WIDGETS = 2_000;
+/** Present and not null (a direct /Key null counts as absent). */
+function present(v: PdfValue | undefined): boolean { return v !== undefined && v.kind !== 'null'; }
 
 // ---------------------------------------------------------------- the walk
 
@@ -436,16 +512,26 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
   yield;
 
   // --- AcroForm and signatures
-  const forms: PdfFormFacts = { acroForm: false, xfa: false, terminalFields: 0 };
+  const forms: PdfFormFacts = { acroForm: false, xfa: false, terminalFields: 0, needAppearances: false, fields: [], fillableFields: 0, scriptedFields: 0 };
   const signatures: PdfSignatureFacts = { signatureFields: 0, signedFields: 0, docMdp: false, docMdpP: null, usageRights: false };
+  const fieldRules = new Map<string, PdfFieldRule>();      // widget key -> rule (fillable widgets)
+  const lockedKeys = new Map<string, PdfFieldLockReason>(); // widget and field keys of locked fields
+  const terminals: FieldNode[] = [];
+  const calcOrder = new Set<string>();
   const acro = D(catalog.entries.get('AcroForm'));
   if (!isNull(acro)) {
     const af = asDict(acro);
     if (!af) refuse('acroform');
     forms.acroForm = true;
     forms.xfa = !isNull(D(af.entries.get('XFA')));
+    const na = D(af.entries.get('NeedAppearances'));
+    forms.needAppearances = !!na && na.kind === 'bool' && na.value;
+    const co = asArray(D(af.entries.get('CO')));
+    if (co) for (const it of co.items) if (it.kind === 'ref') calcOrder.add(key(it));
     walkFields(af);
   }
+  yield;
+  assessFields();
   const perms = D(catalog.entries.get('Perms'));
   if (!isNull(perms)) {
     const pd = asDict(perms);
@@ -458,17 +544,25 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
     }
   }
 
+  /**
+   * Walk the field tree from /Fields in Kids order. Kids that carry /T are child fields; kids without /T
+   * are the field's widgets. Inheritable entries (FT, Ff, V, MaxLen, Opt) are carried down the walk, as
+   * pdf.js reads them up the /Parent chain — the two agree only when every child's /Parent is the node
+   * listing it, so a mismatch marks the subtree `bad` (locked, never guessed).
+   */
   function walkFields(af: PdfDict): void {
     const fieldsVal = D(af.entries.get('Fields'));
     if (isNull(fieldsVal)) return;
     const roots = asArray(fieldsVal);
     if (!roots) refuse('acroform');
     const seen = new Set<string>();
-    type F = { v: PdfValue; ft: string | null; sigV: Val; depth: number };
-    const work: F[] = [];
-    for (let i = roots.items.length - 1; i >= 0; i--) work.push({ v: roots.items[i], ft: null, sigV: undefined, depth: 0 });
+    type W = { v: PdfValue; parent: string | null; inh: FieldInherited; depth: number };
+    const rootInh: FieldInherited = { ft: undefined, ff: undefined, v: undefined, maxLen: undefined, opt: undefined,
+      rich: false, scripts: false, calculated: false, indices: false, barcode: false, bad: false };
+    const work: W[] = [];
+    for (let i = roots.items.length - 1; i >= 0; i--) work.push({ v: roots.items[i], parent: null, inh: rootInh, depth: 0 });
     while (work.length) {
-      const { v, ft: inheritedFt, sigV: inheritedV, depth } = work.pop()!;
+      const { v, parent, inh: up, depth } = work.pop()!;
       if (depth > MAX_FIELD_DEPTH) refuse('acroform');
       if (v.kind !== 'ref') refuse('acroform');
       const k = key(v);
@@ -477,31 +571,208 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
       if (seen.size > MAX_FIELD_NODES) refuse('acroform');
       const d = asDict(D(v));
       if (!d) refuse('acroform');
-      const ft = d.entries.has('FT') ? nameOf(D(d.entries.get('FT'))) : inheritedFt;
-      const val = d.entries.has('V') ? d.entries.get('V') : inheritedV;
-      const kidsVal = d.entries.has('Kids') ? D(d.entries.get('Kids')) : null;
+      const e = d.entries;
+      const par = e.get('Parent');
+      const inh: FieldInherited = {
+        ft: e.has('FT') ? e.get('FT') : up.ft,
+        ff: e.has('Ff') ? e.get('Ff') : up.ff,
+        v: e.has('V') ? e.get('V') : up.v,
+        maxLen: e.has('MaxLen') ? e.get('MaxLen') : up.maxLen,
+        opt: e.has('Opt') ? e.get('Opt') : up.opt,
+        rich: up.rich || present(e.get('RV')),
+        scripts: up.scripts || present(e.get('AA')),
+        calculated: up.calculated || calcOrder.has(k),
+        indices: up.indices || present(e.get('I')),
+        barcode: up.barcode || present(e.get('PMD')),
+        bad: up.bad || (parent === null ? par !== undefined && par.kind !== 'null' : !(par && par.kind === 'ref' && key(par) === parent)),
+      };
+      const kidsVal = e.has('Kids') ? D(e.get('Kids')) : null;
       const kids = isNull(kidsVal) ? null : asArray(kidsVal);
       if (!isNull(kidsVal) && !kids) refuse('acroform');
-      // Kids that carry /T are child fields; kids without /T are this field's widgets.
       const childFields: PdfValue[] = [];
+      const widgetKids: Array<{ ref: { num: number; gen: number }; dict: PdfDict }> = [];
       if (kids) {
         for (const kid of kids.items) {
           if (kid.kind !== 'ref') refuse('acroform');
           const kd = asDict(D(kid));
           if (!kd) refuse('acroform');
           if (kd.entries.has('T')) childFields.push(kid);
+          else widgetKids.push({ ref: { num: kid.num, gen: kid.gen }, dict: kd });
         }
       }
       if (childFields.length === 0) {
         forms.terminalFields++;
+        const ft = nameOf(D(inh.ft));
         if (ft === 'Sig') {
           signatures.signatureFields++;
-          if (asDict(D(val))) signatures.signedFields++;
+          if (asDict(D(inh.v))) signatures.signedFields++;
         }
+        terminals.push({ ref: { num: v.num, gen: v.gen }, key: k, dict: d, inh, kids: kids ? widgetKids : null });
         continue;
       }
-      for (let i = childFields.length - 1; i >= 0; i--) work.push({ v: childFields[i], ft, sigV: val, depth: depth + 1 });
+      // Widgets of a node that also has child fields are not a field's widgets: they stay `not-a-field`.
+      for (let i = childFields.length - 1; i >= 0; i--) work.push({ v: childFields[i], parent: k, inh, depth: depth + 1 });
     }
+  }
+
+  /**
+   * Decide, per terminal field, whether it is fillable (spec §8.5) and with which value rule, or why not.
+   * The first reason in the order below wins; facts are collected either way.
+   */
+  function assessFields(): void {
+    // How many terminal fields claim each widget (a widget shared between fields is never fillable).
+    const claims = new Map<string, number>();
+    const widgetsOf = new Map<FieldNode, Array<{ ref: { num: number; gen: number }; key: string; dict: PdfDict }>>();
+    for (const t of terminals) {
+      const ws = t.kids !== null
+        ? t.kids.map((w) => ({ ref: w.ref, key: key(w.ref), dict: w.dict }))
+        : nameOf(t.dict.entries.get('Subtype')) === 'Widget' ? [{ ref: t.ref, key: t.key, dict: t.dict }] : [];
+      widgetsOf.set(t, ws);
+      for (const w of ws) claims.set(w.key, (claims.get(w.key) ?? 0) + 1);
+    }
+    for (const t of terminals) {
+      const ws = widgetsOf.get(t)!;
+      const fact = assessField(t, ws, claims);
+      forms.fields.push(fact);
+      if (fact.scripts || fact.calculated) forms.scriptedFields++;
+      if (fact.fillable) forms.fillableFields++;
+    }
+  }
+
+  function assessField(t: FieldNode, ws: Array<{ ref: { num: number; gen: number }; key: string; dict: PdfDict }>,
+    claims: ReadonlyMap<string, number>): PdfFieldFact {
+    const inh = t.inh;
+    const ft = nameOf(D(inh.ft));
+    const ffVal = D(inh.ff);
+    const ffOk = isNull(ffVal) || (!!ffVal && ffVal.kind === 'number' && Number.isSafeInteger(ffVal.value) && ffVal.value >= 0 && ffVal.value <= 0xFFFFFFFF);
+    const ff = ffOk && ffVal && ffVal.kind === 'number' ? ffVal.value : 0;
+    const bit = (n: number): boolean => Math.floor(ff / 2 ** n) % 2 === 1; // bit n (0-based); Ff may exceed 2^31
+    const push = bit(16), radio = !push && bit(15);
+    const combo = bit(17);
+    const type: PdfFieldType = ft === 'Sig' ? 'signature' : ft === 'Tx' ? 'text'
+      : ft === 'Btn' ? (push ? 'push-button' : radio ? 'radio' : 'checkbox')
+      : ft === 'Ch' ? (combo ? 'combo' : 'list') : 'unknown';
+    const mlRaw = D(inh.maxLen);
+    const maxLenOk = isNull(mlRaw) || (!!mlRaw && mlRaw.kind === 'number' && Number.isSafeInteger(mlRaw.value) && mlRaw.value > 0);
+    const maxLen = maxLenOk && mlRaw && mlRaw.kind === 'number' ? mlRaw.value : null;
+    const multiline = type === 'text' && bit(12);
+    const comb = type === 'text' && bit(24);
+    const multiSelect = type === 'list' && bit(21);
+    const editable = type === 'combo' && bit(18);
+
+    // Widgets: a separate widget must be a Widget annotation whose /Parent is the field and which carries
+    // none of the value-defining entries (pdf.js reads them from the widget first, so they would override).
+    let structure = inh.bad;
+    let scripts = inh.scripts;
+    let indices = inh.indices;
+    let barcode = inh.barcode;
+    let placement = false;
+    const widgets: PdfFieldFact['widgets'] = [];
+    for (const w of ws) {
+      const we = w.dict.entries;
+      if (w.key !== t.key) {
+        const par = we.get('Parent');
+        if (nameOf(we.get('Subtype')) !== 'Widget' || !par || par.kind !== 'ref' || key(par) !== t.key || we.has('Kids')
+          || SEPARATE_WIDGET_FORBIDDEN.some((k) => we.has(k))) structure = true;
+        if (present(we.get('AA'))) scripts = true;
+        if (present(we.get('I'))) indices = true;
+        if (present(we.get('PMD'))) barcode = true;
+      }
+      if (present(we.get('A')) && !push) scripts = true;
+      const occ = occurrences.get(w.key);
+      if ((claims.get(w.key) ?? 0) !== 1 || !occ || occ.length !== 1) placement = true;
+      widgets.push({ ref: w.ref, page: occ && occ.length === 1 ? occ[0] : null });
+    }
+    if (ws.length === 0) structure = true;
+
+    // Type-specific facts.
+    let options: string[] = [];
+    let optionsBad = false;
+    if (type === 'combo' || type === 'list') {
+      const opt = D(inh.opt);
+      if (!isNull(opt)) {
+        const arr = asArray(opt);
+        if (!arr) optionsBad = true;
+        else for (const it of arr.items) {
+          const o = D(it);
+          const ex = o && o.kind === 'array' && o.items.length === 2 ? D(o.items[0]) : o;
+          const disp = o && o.kind === 'array' && o.items.length === 2 ? D(o.items[1]) : o;
+          if (!ex || ex.kind !== 'string' || !disp || disp.kind !== 'string') { optionsBad = true; break; }
+          options.push(decodeTextString(ex.bytes));
+        }
+      }
+      if (optionsBad) options = [];
+    }
+    const onStates = (type === 'checkbox' || type === 'radio') ? ws.map((w) => onStateOf(w.dict)) : [];
+
+    const locked = ((): PdfFieldLockReason | undefined => {
+      if (type === 'signature') return 'signature';
+      if (forms.xfa) return 'xfa';
+      if (structure || optionsBad) return 'structure';
+      if (type === 'unknown') return 'unknown-type';
+      if (placement) return 'widget-placement';
+      if (!ffOk) return 'bad-flags';
+      if (bit(0)) return 'read-only';
+      if (scripts) return 'scripts';
+      if (inh.calculated) return 'calculated';
+      if (forms.needAppearances) return 'need-appearances';
+      if (barcode) return 'barcode';
+      switch (type) {
+        case 'text':
+          if (bit(13)) return 'password';
+          if (bit(20)) return 'file-select';
+          if (bit(25) || inh.rich) return 'rich-text';
+          if (ws.length > 1) return 'multi-widget';
+          if (!maxLenOk || (comb && maxLen === null)) return 'bad-max-len';
+          if (comb && multiline) return 'bad-flags';
+          return undefined;
+        case 'push-button':
+          return 'push-button';
+        case 'checkbox':
+          if (ws.length > 1) return 'multi-widget';
+          return onStates[0] === null ? 'no-on-state' : onStates[0] === undefined ? 'ambiguous-on-state' : undefined;
+        case 'radio': {
+          if (ws.length > MAX_RADIO_WIDGETS) return 'structure';
+          if (onStates.some((s) => s === null)) return 'no-on-state';
+          if (onStates.some((s) => s === undefined) || new Set(onStates).size !== onStates.length) return 'ambiguous-on-state';
+          return undefined;
+        }
+        case 'combo': case 'list':
+          if (combo && bit(21)) return 'bad-flags';
+          if (ws.length > 1) return 'multi-widget';
+          if (indices) return 'indices';
+          if (new Set(options).size !== options.length) return 'duplicate-options';
+          if (options.length === 0 && !editable) return 'no-options';
+          return undefined;
+      }
+    })();
+
+    const fact: PdfFieldFact = {
+      ref: t.ref, type, widgets, readOnly: bit(0), required: bit(1), multiline, comb: comb && !multiline && maxLen !== null,
+      maxLen, multiSelect, editable, options: options.length, scripts, calculated: inh.calculated, fillable: locked === undefined,
+    };
+    if (locked) {
+      fact.locked = locked;
+      lockedKeys.set(t.key, locked);
+      for (const w of ws) if (!lockedKeys.has(w.key) && !fieldRules.has(w.key)) lockedKeys.set(w.key, locked);
+      return fact;
+    }
+    const members = ws.map((w) => w.key);
+    const rule = type === 'text' ? fieldRule({ kind: 'text', maxLen, multiline, comb: fact.comb })
+      : type === 'checkbox' ? fieldRule({ kind: 'checkbox' })
+      : type === 'radio' ? fieldRule({ kind: 'radio', group: t.key, members, noToggleToOff: bit(14) })
+      : fieldRule({ kind: 'choice', options, editable, multiSelect });
+    for (const k of members) fieldRules.set(k, rule);
+    return fact;
+  }
+
+  /** The widget's single on-state: its /AP /N state names other than Off. null = none, undefined = several. */
+  function onStateOf(w: PdfDict): string | null | undefined {
+    const ap = asDict(D(w.entries.get('AP')));
+    const n = ap ? asDict(D(ap.entries.get('N'))) : null;
+    if (!n) return null;
+    const on = [...n.entries.keys()].filter((k) => k !== 'Off');
+    return on.length === 0 ? null : on.length === 1 ? on[0] : undefined;
   }
 
   function docMdpP(sig: PdfDict | null): 1 | 2 | 3 | null {
@@ -519,15 +790,35 @@ function* run(file: PdfFile, o: ClassifyOptions): Generator<void, PdfClassificat
   }
 
   const signed = signatures.signedFields > 0 || signatures.docMdp || signatures.usageRights;
+  // Every widget annotation on a page that is not fillable is locked; one no terminal field claims is
+  // `not-a-field` (pdf.js would still draw an input for it).
+  const lockedFields: PdfObjRef[] = [];
+  const listed = new Set<string>();
+  for (const p of pages) {
+    for (const a of p.annots) {
+      if (!a.ref || a.subtype !== 'Widget') continue;
+      const k = key(a.ref);
+      if (fieldRules.has(k) || listed.has(k)) continue;
+      listed.add(k);
+      lockedFields.push(a.ref);
+      if (!lockedKeys.has(k)) lockedKeys.set(k, 'not-a-field');
+    }
+  }
+  const formsOn = o.forms === true;
+  const formsInfo: PdfEditInfo['forms'] = !formsOn ? { editable: false, reason: 'flag-off', lockedFields: [] }
+    : forms.xfa ? { editable: false, reason: 'xfa', lockedFields: [] }
+    : fieldRules.size === 0 ? { editable: false, reason: 'none', lockedFields: [] }
+    : { editable: true, lockedFields };
   const context: PdfEditContext = {
     pages: pages.map(({ mediaBox, cropBox, rotate }) => (cropBox ? { mediaBox, cropBox, rotate } : { mediaBox, rotate })),
     deletable,
     popups,
-    fields: new Map(), // forms are off until PWP-27 (plan §3.2)
+    fields: formsInfo.editable ? fieldRules : new Map(),
+    locked: formsInfo.editable ? lockedKeys : new Map(),
   };
   const info: PdfEditInfo = {
     deletable: deletableRefs,
-    forms: { editable: false, reason: 'flag-off', lockedFields: [] },
+    forms: formsInfo,
     signed,
   };
   const structure: PdfStructureFacts = {

@@ -49,13 +49,133 @@ export type PdfEditLabel =
   | 'Highlight' | 'Draw' | 'Edit Comment' | 'Change Colour' | 'Delete Annotation' | 'Fill Form Field';
 
 /**
- * Value kinds a fillable field accepts. PWP-27 adds the value rules of spec §8.5 (MaxLen, options,
- * read-only and rich-text refusals) through `check`.
+ * Value kinds a fillable field accepts. The value rules of spec §8.5 (MaxLen, single line, options,
+ * multi-select) come through `check`, built by `fieldRule`; read-only, signature, rich-text and the other
+ * refusals are decided by classification, which leaves such fields out of `PdfEditContext.fields`.
  */
 export interface PdfFieldRule {
   kind: 'text' | 'button' | 'choice';
   /** Extra rule; returns a user-presentable refusal, or null to accept. */
   check?(value: PdfFieldValue): string | null;
+  /**
+   * A radio-button group: every `setFields` op touching one member MUST state every member (pdf.js's
+   * radio inputs write all siblings on each change), and at most one may be on — exactly one when the
+   * field has NoToggleToOff. Members are widget keys, the field's own `key` included when it is merged.
+   */
+  group?: { readonly key: string; readonly members: readonly string[]; readonly exactlyOne: boolean };
+}
+
+/**
+ * The value rules of one fillable field (spec §8.5), as classification derives them. Keys of
+ * `PdfEditContext.fields` are WIDGET keys (pdf.js annotation ids); a text or choice field has exactly one
+ * widget (multi-widget ones are locked), a checkbox one, a radio group one per button.
+ */
+export type PdfFieldSpec =
+  /** `maxLen`: the inherited /MaxLen (a positive integer), or null for none. */
+  | { kind: 'text'; maxLen: number | null; multiline: boolean; comb: boolean }
+  | { kind: 'checkbox' }
+  | { kind: 'radio'; group: string; members: readonly string[]; noToggleToOff: boolean }
+  /** `options`: the export values in /Opt order (distinct). `editable`: a combo box with the Edit flag. */
+  | { kind: 'choice'; options: readonly string[]; editable: boolean; multiSelect: boolean };
+
+/**
+ * Why a field cannot be filled (spec §8.5; plan PWP-27). Classification decides; the state refuses a
+ * `setFields` on a locked widget with the reason's sentence (`FIELD_LOCK_MESSAGES`).
+ */
+export type PdfFieldLockReason =
+  | 'read-only'          // Ff bit 1
+  | 'signature'          // /FT /Sig: never touched
+  | 'xfa'                // the AcroForm has /XFA: form filling is off for the document
+  | 'scripts'            // /AA on the field, an ancestor or a widget, or /A on a widget (decision 2026-11-21)
+  | 'calculated'         // the field or an ancestor is listed in the AcroForm /CO (calculation order)
+  | 'need-appearances'   // the AcroForm already has /NeedAppearances true (§8.5: not relied on)
+  | 'rich-text'          // Ff RichText or /RV
+  | 'password'           // Ff Password: pdf.js writes no appearance and drops the value
+  | 'file-select'        // Ff FileSelect
+  | 'barcode'            // /PMD: pdf.js hides barcode fields
+  | 'push-button'        // no value
+  | 'multi-widget'       // a text/choice/checkbox field with more than one widget
+  | 'no-on-state'        // a checkbox or radio widget whose /AP /N has no on-state
+  | 'ambiguous-on-state' // ... more than one on-state, or radio widgets sharing one
+  | 'no-options'         // a non-editable choice field without options
+  | 'duplicate-options'  // two options with the same export value
+  | 'indices'            // a choice field with /I (pdf.js rewrites it; not in the verifier's allow-list)
+  | 'bad-max-len'        // /MaxLen not a positive integer, or Comb without one
+  | 'bad-flags'          // /Ff not a non-negative integer, or a contradictory flag combination
+  | 'unknown-type'       // /FT missing or not Tx/Btn/Ch
+  | 'widget-placement'   // a widget not listed exactly once in exactly one page's /Annots
+  | 'structure'          // kids/parent links, widget dictionaries or /Opt entries not as expected
+  | 'not-a-field';       // a widget annotation not reached from the AcroForm /Fields tree
+
+const UNSUPPORTED = 'This field cannot be filled here: its structure is not supported.';
+/** User-presentable sentence per lock reason (UI `title`/`aria-describedby`, state refusals). No document content. */
+export const FIELD_LOCK_MESSAGES: Readonly<Record<PdfFieldLockReason, string>> = Object.freeze({
+  'read-only': 'This field is read-only.',
+  'signature': 'Signature fields cannot be signed or changed here.',
+  'xfa': 'This form uses XFA, which this editor does not fill.',
+  'scripts': 'This field uses scripts (formatting, validation or calculation), which are not run here.',
+  'calculated': 'This field is calculated by the form\'s scripts, which are not run here.',
+  'need-appearances': 'This form asks readers to redraw its fields, which this editor does not rely on.',
+  'rich-text': 'Rich-text fields cannot be filled here.',
+  'password': 'Password fields cannot be filled here.',
+  'file-select': 'File-selection fields cannot be filled here.',
+  'barcode': 'Barcode fields cannot be filled here.',
+  'push-button': 'Buttons have no value to fill.',
+  'multi-widget': 'This field appears more than once in the document and cannot be filled here.',
+  'no-on-state': UNSUPPORTED,
+  'ambiguous-on-state': UNSUPPORTED,
+  'no-options': UNSUPPORTED,
+  'duplicate-options': UNSUPPORTED,
+  'indices': UNSUPPORTED,
+  'bad-max-len': UNSUPPORTED,
+  'bad-flags': UNSUPPORTED,
+  'unknown-type': UNSUPPORTED,
+  'widget-placement': UNSUPPORTED,
+  'structure': UNSUPPORTED,
+  'not-a-field': UNSUPPORTED,
+});
+
+/** The rule for one widget of a fillable field. Pure; `spec` arrays are copied and frozen. */
+export function fieldRule(spec: PdfFieldSpec): PdfFieldRule {
+  switch (spec.kind) {
+    case 'text': {
+      const { maxLen, multiline } = spec;
+      return Object.freeze({ kind: 'text', check: (v: PdfFieldValue): string | null => {
+        if (typeof v !== 'string') return 'The value does not fit the field.';
+        // UTF-16 code units, as the browser's `maxLength` counts them: never more than the input allows.
+        if (maxLen !== null && v.length > maxLen) return `This field takes at most ${maxLen} characters.`;
+        if (!multiline && /[\r\n]/.test(v)) return 'This field takes a single line.';
+        return null;
+      } });
+    }
+    case 'checkbox':
+      return Object.freeze({ kind: 'button' });
+    case 'radio':
+      return Object.freeze({ kind: 'button',
+        group: Object.freeze({ key: spec.group, members: Object.freeze(spec.members.slice()), exactlyOne: spec.noToggleToOff }) });
+    case 'choice': {
+      const options = Object.freeze(spec.options.slice());
+      const index = new Map(options.map((o, i) => [o, i]));
+      const { editable, multiSelect } = spec;
+      return Object.freeze({ kind: 'choice', check: (v: PdfFieldValue): string | null => {
+        if (multiSelect) {
+          if (!Array.isArray(v)) return 'The value does not fit the field.';
+          // Distinct options in /Opt order: pdf.js derives /I from the values in that order.
+          let last = -1;
+          for (const s of v) {
+            const i = index.get(s);
+            if (i === undefined) return 'The value is not one of the field\'s options.';
+            if (i <= last) return 'The selected options are repeated or out of order.';
+            last = i;
+          }
+          return null;
+        }
+        if (typeof v !== 'string') return 'This field takes one value.';
+        if (editable) return /[\r\n]/.test(v) ? 'This field takes a single line.' : null;
+        return index.has(v) ? null : 'The value is not one of the field\'s options.';
+      } });
+    }
+  }
 }
 
 /** Facts from classification (§6.2) that edits are validated against. */
@@ -66,8 +186,10 @@ export interface PdfEditContext {
   deletable: ReadonlyMap<string, { page: number; popup?: string }>;
   /** Popup "num gen" -> its parent's "num gen"; removing a Popup removes its parent. */
   popups?: ReadonlyMap<string, string>;
-  /** Fillable fields/widgets: "num gen" -> rule. Empty while forms are off (until PWP-27). */
+  /** Fillable widgets: "num gen" -> rule. Empty while forms are off (classify without orms: true). */
   fields: ReadonlyMap<string, PdfFieldRule>;
+  /** Widgets (and locked fields) that classification found NOT fillable, with the reason; refusals name it. */
+  locked?: ReadonlyMap<string, PdfFieldLockReason>;
 }
 
 /** Host-assigned data for an added annotation. */
@@ -85,7 +207,7 @@ export interface PdfEditEnv {
 
 export type PdfEditRefusalReason =
   | 'unknown-page' | 'bad-geometry' | 'outside-page' | 'too-many-annotations' | 'duplicate-local-id'
-  | 'unknown-annotation' | 'not-deletable' | 'not-fillable' | 'bad-value' | 'duplicate-field';
+  | 'unknown-annotation' | 'not-deletable' | 'not-fillable' | 'field-locked' | 'bad-value' | 'duplicate-field';
 
 /** Structurally an `OfficeError` (code 'invalid'), plus a machine-readable reason for logs and tests. */
 export interface PdfEditRefusal { code: 'invalid'; reason: PdfEditRefusalReason; message: string; }
@@ -330,6 +452,26 @@ function valueFitsKind(rule: PdfFieldRule, v: PdfFieldValue): boolean {
   }
 }
 
+/** Radio groups touched by a `setFields` op must be stated whole, with at most (or exactly) one on. */
+function checkGroups(values: ReadonlyArray<{ ref: PdfObjRef; value: PdfFieldValue }>, ctx: PdfEditContext): string | null {
+  const given = new Map<string, PdfFieldValue>();
+  for (const { ref, value } of values) given.set(refKey(ref), value);
+  const done = new Set<string>();
+  for (const k of given.keys()) {
+    const g = ctx.fields.get(k)?.group;
+    if (!g || done.has(g.key)) continue;
+    done.add(g.key);
+    let on = 0;
+    for (const m of g.members) {
+      if (!given.has(m)) return 'A group of radio buttons must be set as a whole.';
+      if (given.get(m) === true) on++;
+    }
+    if (on > 1) return 'Only one radio button of a group can be on.';
+    if (g.exactlyOne && on !== 1) return 'One radio button of this group must stay on.';
+  }
+  return null;
+}
+
 /**
  * Plan `op` against `s` without changing it. The protocol validator (`parsePdfToHost`) has already
  * checked types and caps; this checks the op against the state and the classification. An
@@ -381,7 +523,10 @@ export function planEdit(s: PdfEditState, op: PdfEditOp, ctx: PdfEditContext, en
         if (seen.has(key)) return refuse('duplicate-field', 'A field was given two values.');
         seen.add(key);
         const rule = ctx.fields.get(key);
-        if (!rule) return refuse('not-fillable', 'This field cannot be filled.');
+        if (!rule) {
+          const why = ctx.locked?.get(key);
+          return why ? refuse('field-locked', FIELD_LOCK_MESSAGES[why]) : refuse('not-fillable', 'This field cannot be filled.');
+        }
         if (!valueFitsKind(rule, value) || (loaded !== undefined && !valueFitsKind(rule, loaded))) {
           return refuse('bad-value', 'The value does not fit the field.');
         }
@@ -394,6 +539,8 @@ export function planEdit(s: PdfEditState, op: PdfEditOp, ctx: PdfEditContext, en
         if (fieldValuesEqual(before, after)) continue;
         delta.push({ slot: 'fields', key, before, after });
       }
+      const groupMsg = checkGroups(op.values, ctx);
+      if (groupMsg) return refuse('bad-value', groupMsg);
       return { ok: true, label: 'Fill Form Field', delta };
     }
   }
