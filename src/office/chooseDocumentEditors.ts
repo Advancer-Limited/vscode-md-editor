@@ -32,15 +32,18 @@ export async function chooseDocumentEditors(packageJSON: unknown): Promise<void>
   });
   if (!choiceItem) return;
 
-  const next = nextAssociations(info?.globalValue, typeItem.def, choiceItem.choice);
+  // Re-read just before writing: the setting may have changed while the pickers were open (review N6).
+  // The write is based on the user-level value only, never on the merged workspace values.
+  const fresh = vscode.workspace.getConfiguration('workbench').inspect<Associations>('editorAssociations');
+  const next = nextAssociations(fresh?.globalValue, typeItem.def, choiceItem.choice);
   try {
-    await cfg.update('editorAssociations', next, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('workbench').update('editorAssociations', next, vscode.ConfigurationTarget.Global);
   } catch (err) {
     void vscode.window.showErrorMessage(`Could not update workbench.editorAssociations: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
   void vscode.window.showInformationMessage(`${typeItem.def.pattern} files: "${choiceItem.label}". This applies to files opened from now on.`);
-  if (workspaceOverrides(typeItem.def, info?.workspaceValue, info?.workspaceFolderValue)) {
+  if (workspaceOverrides(typeItem.def, fresh?.workspaceValue, fresh?.workspaceFolderValue)) {
     void vscode.window.showInformationMessage(
       `This workspace's settings also set an editor for ${typeItem.def.pattern} and take priority over your user setting here.`,
     );

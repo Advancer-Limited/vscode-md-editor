@@ -61,7 +61,11 @@ test('nextAssociations sets, defaults and removes while preserving other keys, w
   assert.deepStrictEqual(m.nextAssociations(cur, DOCX, 'extension'), { ...cur, '*.docx': 'vscodeMdEditor.docx' });
   assert.deepStrictEqual(m.nextAssociations(cur, DOCX, 'default'), { ...cur, '*.docx': 'default' });
   assert.deepStrictEqual(m.nextAssociations({ ...cur, '*.docx': 'default' }, DOCX, 'auto'), cur);
-  assert.deepStrictEqual(m.nextAssociations(undefined, DOCX, 'auto'), {});
+  // Review N6: nothing left -> undefined (the setting is removed, not written as {}).
+  assert.strictEqual(m.nextAssociations(undefined, DOCX, 'auto'), undefined);
+  assert.strictEqual(m.nextAssociations({ '*.docx': 'default' }, DOCX, 'auto'), undefined);
+  // Case and glob variants of the pattern are replaced by the exact pattern.
+  assert.deepStrictEqual(m.nextAssociations({ '*.DOCX': 'x', '**/*.docx': 'y', '*.png': 'img' }, DOCX, 'extension'), { '*.png': 'img', '*.docx': 'vscodeMdEditor.docx' });
   assert.deepStrictEqual(cur, copy);
 });
 
@@ -103,7 +107,36 @@ test('command: cancelling either step writes nothing; workspace override is repo
   S.quickPicks.push((items) => items.find((i) => i.label === '*.docx'), (items) => items.find((i) => i.choice === 'auto'));
   await m.chooseDocumentEditors(pkg);
   assert.strictEqual(S.updates.length, 1);
-  assert.deepStrictEqual(S.updates[0].value, {});
+  assert.strictEqual(S.updates[0].value, undefined, 'an empty result removes the setting');
   assert.strictEqual(S.messages.filter((x) => x[0] === 'info').length, 2);
   assert.match(S.messages[1][1], /workspace/i);
+});
+
+test('N6: case-variant and glob keys are recognised when showing the current choice and for workspace overrides', async () => {
+  S.inspected['workbench.editorAssociations'] = { globalValue: { '*.DOCX': 'default', '**/*.xlsx': 'vscodeMdEditor.xlsx' } };
+  let seen;
+  S.quickPicks.push((items) => { seen = items; return undefined; });
+  await m.chooseDocumentEditors(pkg);
+  assert.match(seen.find((i) => i.label === '*.docx').description, /default editor \(set for \*\.DOCX\)/);
+  assert.match(seen.find((i) => i.label === '*.xlsx').description, /This extension .*set for \*\*\/\*\.xlsx/);
+  assert.strictEqual(m.workspaceOverrides(DOCX, { '**/*.DOCX': 'x' }), true);
+  assert.deepStrictEqual(m.matchingKeys(DOCX, { '*.docx': 'a', '*.DOCX': 'b', '*.docm': 'c' }), ['*.docx', '*.DOCX']);
+});
+
+test('N6: the write is based on the user-level value re-read just before writing, never on workspace values', async () => {
+  S.inspected['workbench.editorAssociations'] = {
+    globalValue: { '*.gif': 'g' }, workspaceValue: { '*.png': 'ws' }, workspaceFolderValue: { '*.bmp': 'wf' },
+  };
+  S.quickPicks.push(
+    (items) => items.find((i) => i.label === '*.docx'),
+    (items) => {
+      // The user setting changes while the picker is open (another window, settings.json edit).
+      S.inspected['workbench.editorAssociations'] = { ...S.inspected['workbench.editorAssociations'], globalValue: { '*.gif': 'g', '*.svg': 's' } };
+      return items.find((i) => i.choice === 'default');
+    },
+  );
+  await m.chooseDocumentEditors(pkg);
+  assert.strictEqual(S.updates.length, 1);
+  assert.deepStrictEqual(S.updates[0].value, { '*.gif': 'g', '*.svg': 's', '*.docx': 'default' });
+  assert.strictEqual(S.updates[0].target, vscode.ConfigurationTarget.Global);
 });
