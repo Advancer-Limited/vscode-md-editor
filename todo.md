@@ -369,3 +369,17 @@
   - [ ] Gate R4
   - [ ] Gate R-final (Fable)
 - [ ] Post-v1: Excel range → Markdown table; Word → Markdown; Markdown → Word; Office files in wikilinks/graph
+
+## Word editing, group D (feature/office-docx-model; started 2026-11-21 without the S3 result, using the documented Ctrl+Z fallback)
+- [x] WP-25 Docx block and segment model incl. table cells (`core/docx/model.ts`, 17 tests)
+- [x] WP-26 Docx styles + numbering, read side (`core/docx/styles.ts`, `numbering.ts`, 13 tests)
+- [x] WP-32 Island DOM <-> segments (`media/docxIsland.js`, 60 tests)
+- [ ] WP-27 Render copy + DOM mapping
+- [ ] WP-28 Paragraph writer
+- [ ] WP-29 Paragraph structure ops
+- [ ] WP-30 Styles and lists, write side
+- [ ] WP-31 Docx validators + protection detection
+- [ ] WP-33 Docx provider edit path
+- [ ] WP-34 Island controller and re-render scheduling
+- [ ] WP-35 Word edit toolbar, shortcuts, CSS
+- [ ] Gate R3 (needs S3 result and the LibreOffice/Google/German fixtures)
