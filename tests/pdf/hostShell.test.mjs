@@ -149,11 +149,11 @@ test('HTML: CSP with a fresh nonce, nonce on every script, ?v= on every asset, m
   assert.strictEqual(csp, host.pdfCsp('https://csp.example', nonce));
   const scripts = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1]);
   assert.deepStrictEqual(scripts.map((a) => /src="https:\/\/webview\/ext\/media\/([^?"]+)\?v=\d+"/.exec(a)?.[1]),
-    ['pdfjs-bundle.js', 'officeCommon.js', 'pdfViewMath.js', 'pdfViewer.js']);
+    ['pdfjs-bundle.js', 'officeCommon.js', 'pdfViewMath.js', 'pdfViewer.js', 'pdfSidebar.js']);
   for (const a of scripts) assert.ok(a.includes(`nonce="${nonce}"`));
   const links = [...html.matchAll(/<link href="([^"]+)" rel="stylesheet">/g)].map((m) => m[1]);
   assert.deepStrictEqual(links.map((l) => /\/ext\/media\/([^?]+)\?v=\d+$/.exec(l)?.[1]),
-    ['pdfjs/pdf_viewer.css', 'officeCommon.css', 'pdfViewer.css']);
+    ['pdfjs/pdf_viewer.css', 'officeCommon.css', 'pdfViewer.css', 'pdfSidebar.css']);
   assert.match(html, /data-pdfjs-base="https:\/\/webview\/ext\/media\/pdfjs\/"/);
   assert.match(html, /data-cache-bust="\d+"/);
   assert.match(html, /<body data-office-kind="pdf">/);

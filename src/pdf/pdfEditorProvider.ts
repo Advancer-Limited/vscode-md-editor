@@ -132,11 +132,11 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
 
   protected scripts(): string[] {
     // The pdf.js bundle defines `PdfjsBundle`; pdfViewMath is UMD; the viewer files land in PWP-08+.
-    return ['pdfjs-bundle.js', 'officeCommon.js', 'pdfViewMath.js', 'pdfViewer.js'];
+    return ['pdfjs-bundle.js', 'officeCommon.js', 'pdfViewMath.js', 'pdfViewer.js', 'pdfSidebar.js'];
   }
 
   protected styles(): string[] {
-    return ['pdfjs/pdf_viewer.css', 'officeCommon.css', 'pdfViewer.css'];
+    return ['pdfjs/pdf_viewer.css', 'officeCommon.css', 'pdfViewer.css', 'pdfSidebar.css'];
   }
 
   protected bodyHtml(webview: vscode.Webview): string {

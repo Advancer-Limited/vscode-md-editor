@@ -271,9 +271,11 @@ function setup(opts = {}) {
   const VM = sandbox.PdfViewMath;
   const shell = api.create({ window: win, document, vscode, OfficeCommon: win.OfficeCommon, PdfViewMath: VM });
 
+  /** Runs another media script in the same sandbox (after the shell exists as PdfViewerShell). */
+  const runScript = (name) => { win.PdfViewerShell = shell; win.document = document; win.PdfViewMath = VM; return vm.runInContext(read(name), sandbox, { filename: name }); };
   const byClass = (cls) => document.body.find((e) => e.className.split(' ').indexOf(cls) >= 0)[0] || null;
   const t = {
-    api, shell, log, posted, document, win, timers, VM, byClass,
+    sandbox, runScript, api, shell, log, posted, document, win, timers, VM, byClass,
     /** Deliver a host message. */
     send: (msg) => win.fire('message', { data: msg }),
     /** Let pending promise chains settle. */
