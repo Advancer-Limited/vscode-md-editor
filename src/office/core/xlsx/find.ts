@@ -13,10 +13,13 @@ export interface FindMatch { sheetId: number; r: number; c: number }
  * Search the worksheets in tab order (hidden ones included, very hidden ones not), cells in row-major
  * order. `sheetId` null = all sheets. A cell matches when its display string or its formula text
  * (`=` + formula) contains the query. Yields to the event loop every ~30 ms on big workbooks (§10.2).
+ * `isCancelled` is checked at every yield; once it returns true the search stops and resolves
+ * with `cancelled: true` (a newer search superseded this one).
  */
 export async function findInWorkbook(
   wb: Workbook, query: string, matchCase: boolean, sheetId: number | null, styles?: StyleTable,
-): Promise<{ matches: FindMatch[]; truncated: boolean }> {
+  isCancelled?: () => boolean,
+): Promise<{ matches: FindMatch[]; truncated: boolean; cancelled?: true }> {
   const matches: FindMatch[] = [];
   if (query === '') return { matches, truncated: false };
   const st = styles ?? StyleTable.load(wb.pkg, wb.stylesPart, wb.themePart);
@@ -29,6 +32,7 @@ export async function findInWorkbook(
     if (sheetId !== null && entry.id !== sheetId) continue;
     let sheet;
     try { sheet = await wb.sheet(entry.id); } catch { continue; }   // unreadable sheet: nothing to search
+    if (isCancelled?.()) return { matches: [], truncated: false, cancelled: true };
     const dims = sheet.dimensions();
     if (dims.rows === 0 || dims.cols === 0) continue;
     for (const cell of sheet.cellsIn([0, 0, dims.rows - 1, dims.cols - 1])) {
@@ -41,6 +45,7 @@ export async function findInWorkbook(
       }
       if (Date.now() - sliceStart > LIMITS.parseYieldMs) {
         await new Promise<void>((resolve) => setImmediate(resolve));
+        if (isCancelled?.()) return { matches: [], truncated: false, cancelled: true };
         sliceStart = Date.now();
       }
     }

@@ -345,6 +345,18 @@ test('copy: Ctrl+C posts xlsxCopy (tsv) for the selection; never the markdown fo
   t.posted.length = 0;
   t.key({ ctrlKey: true, key: 'c', target: t.cls('xlsx-find-input') });
   deq(t.posted, []);
+  // text selected in the formula bar: native copy of that text, not the range
+  const fText = t.cls('xlsx-formula-text');
+  t.win.getSelection = () => ({ isCollapsed: false, anchorNode: fText, toString: () => '=SUM(A1:A3)' });
+  const e2 = t.key({ ctrlKey: true, key: 'c' });
+  deq(t.posted, []);
+  assert.notStrictEqual(e2.prevented, true);
+  // a collapsed selection (just a caret) still copies the range
+  t.win.getSelection = () => ({ isCollapsed: true, anchorNode: fText, toString: () => '' });
+  t.key({ ctrlKey: true, key: 'c' });
+  assert.strictEqual(t.all('xlsxCopy').length, 1);
+  delete t.win.getSelection;
+  t.posted.length = 0;
   // nothing to copy on a chart sheet
   t.tab('Chart1').click();
   t.posted.length = 0;
