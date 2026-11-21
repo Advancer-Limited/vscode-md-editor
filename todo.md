@@ -416,3 +416,5 @@
 - [ ] Tagged PDFs: added annotations get no StructParent (accessibility gap; post-v1 or note in README)
 - [x] PWP-19 writer service
 - [ ] Gate P2/P3: real-window check that the viewed PDF still renders after several writes (writer uses its own Worker)
+- [x] PWP-27 form classification and field rules
+- [ ] PWP-29: protocol amendment so lockedFields carry a reason
