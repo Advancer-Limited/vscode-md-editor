@@ -389,5 +389,9 @@
 - [x] PWP-02 Scaffolding (pdfjs-dist 6.5.438, engines ^1.95.0, bundle + vendor, barrel, limits, smoke tests)
 - [x] PWP-04 Protocol (view half frozen, edit half draft; 172 tests)
 - [x] PWP-07 View maths (15 tests)
-- [ ] PWP-03 Fixtures · PWP-05 Host shell · PWP-06 Shared chrome · PWP-08 Viewer core · PWP-09..12
+- [x] PWP-03 Fixtures (26 committed; 8 PENDING user-supplied, see tests/fixtures/pdf/README.md)
+- [x] PWP-05 Host shell (PdfDocument, provider not registered, sniff, load errors, §12 CSP)
+- [x] PWP-06 Shared chrome ('pdf' kind)
+- [ ] PWP-08 Viewer core · PWP-09..12
+- [ ] Merge note: PWP-05 generalised src/office/officeEditorProviderBase.ts (OfficeHostDocument, createDocument, bodyHtml(webview)); the Office editing branches also change that file, so expect a conflict when the PDF stack is rebased after Office
 - [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it
