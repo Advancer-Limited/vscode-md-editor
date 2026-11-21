@@ -710,10 +710,16 @@
 
     // ---------- wiring ----------
 
+    /** Ctrl/Cmd+= / Ctrl/Cmd+- zoom the page (window, capture phase: stopped so VS Code does not zoom too). */
     function onKeyDown(ev) {
       if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) { return; }
-      if (ev.key === '=' || ev.key === '+') { if (ev.preventDefault) { ev.preventDefault(); } stepZoom(1); }
-      else if (ev.key === '-' || ev.key === '_') { if (ev.preventDefault) { ev.preventDefault(); } stepZoom(-1); }
+      let step = 0;
+      if (ev.key === '=' || ev.key === '+') { step = 1; }
+      else if (ev.key === '-' || ev.key === '_') { step = -1; }
+      if (!step) { return; }
+      if (ev.preventDefault) { ev.preventDefault(); }
+      if (ev.stopPropagation) { ev.stopPropagation(); }
+      stepZoom(step);
     }
 
     function onWheel(ev) {
@@ -750,7 +756,7 @@
       content.addEventListener('keydown', onContentKey);
       content.addEventListener('dblclick', editHint);
       content.addEventListener('wheel', onWheel, { passive: false });
-      window.addEventListener('keydown', onKeyDown);
+      window.addEventListener('keydown', onKeyDown, true);
       window.addEventListener('resize', () => { if (fit) { applyZoom(); } });
       edit = DocxEditLib ? DocxEditLib.create({
         content, toolbar: toolbarEl, post, resume: pump, hasHeld: () => !!queued,

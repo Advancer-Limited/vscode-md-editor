@@ -268,12 +268,14 @@
       }
     }
 
+    /** Keys of the find box. Handled keys are stopped, so VS Code does not also act on them (F3: Find Next). */
     function onInputKey(ev) {
       const key = ev.key;
-      if (key === 'Enter' || key === 'F3') { prevent(ev); step(!!ev.shiftKey); }
-      else if (key === 'Escape') { prevent(ev); close(true); }
-      else if ((ev.ctrlKey || ev.metaKey) && (key === 'f' || key === 'F')) { prevent(ev); if (input.select) { input.select(); } }
+      if (key === 'Enter' || key === 'F3') { handled(ev); step(!!ev.shiftKey); }
+      else if (key === 'Escape') { handled(ev); close(true); }
+      else if ((ev.ctrlKey || ev.metaKey) && (key === 'f' || key === 'F')) { handled(ev); if (input.select) { input.select(); } }
     }
+    function handled(ev) { prevent(ev); if (ev.stopPropagation) { ev.stopPropagation(); } }
 
     // ---------- shell wiring ----------
 

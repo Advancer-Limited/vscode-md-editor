@@ -341,9 +341,14 @@
     if (state.onMessage) { state.onMessage(msg); }
   }
 
+  /**
+   * Ctrl/Cmd+E toggles Edit. Registered on window in the capture phase and stopped there, so VS Code's
+   * own keydown listener in the webview never forwards it to the workbench (where Ctrl+E is Quick Open).
+   */
   function onKeyDown(ev) {
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && (ev.key === 'e' || ev.key === 'E')) {
       if (ev.preventDefault) { ev.preventDefault(); }
+      if (ev.stopPropagation) { ev.stopPropagation(); }
       requestEditMode(!state.editMode);
     }
   }
@@ -354,7 +359,7 @@
     state.onMessage = opts.onMessage || null;
     ensureChrome();
     window.addEventListener('message', (e) => { handleMessage(e.data); });
-    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
     post({ type: 'ready' });
   }
 

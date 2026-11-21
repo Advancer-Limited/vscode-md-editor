@@ -243,3 +243,17 @@ test('a new document re-runs an open search; closing the document closes the bar
   eq(t.find.isOpen, false);
   assert.ok(before >= 1);
 });
+
+test('Ctrl+F and F3 are stopped when handled (VS Code does not also find / Find Next)', async () => {
+  const t = await boot();
+  const ctrlF = t.ctrlF();
+  assert.ok(ctrlF.prevented && ctrlF.stopped, 'Ctrl+F from the page');
+  let stopped = 0;
+  const f3 = { key: 'F3', target: t.input(), preventDefault() {}, stopPropagation() { stopped++; } };
+  t.input().fire('keydown', f3);
+  eq(stopped, 1, 'F3 in the find box');
+  const f3Page = t.key('F3');
+  assert.ok(f3Page.prevented && f3Page.stopped, 'F3 from the page while the bar is open');
+  const save = t.key('s', { ctrlKey: true });
+  assert.ok(!save.prevented && !save.stopped, 'Ctrl+S reaches VS Code');
+});

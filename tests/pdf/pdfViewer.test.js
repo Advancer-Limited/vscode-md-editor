@@ -1045,3 +1045,21 @@ test('the main-thread worker fallback and a failed page each post a pdfLog (the 
   const pages = t.posted.filter((m) => m.type === 'pdfLog' && m.code === 'page-render-failed');
   deq(pages, [{ type: 'pdfLog', level: 'warn', code: 'page-render-failed', detail: 'page 2: Error' }]);
 });
+
+test('handled keys are stopped in the capture phase (VS Code does not also zoom, Go to Line, Quick Open); others reach it', async () => {
+  const t = await setup().open({ pdf: makePdf(3) });
+  const forwarded = [];
+  t.win.addEventListener('keydown', (e) => forwarded.push(((e.ctrlKey || e.metaKey) ? 'Ctrl+' : '') + e.key));   // VS Code's listener
+  for (const [k, mods] of [['=', { ctrlKey: true }], ['+', { metaKey: true }], ['-', { ctrlKey: true }], ['0', { ctrlKey: true }],
+    ['g', { ctrlKey: true }], ['e', { ctrlKey: true }], ['r', {}], ['End', {}]]) {
+    const e = t.key(k, mods);
+    assert.ok(e.prevented && e.stopped, `${JSON.stringify(mods)} ${k}`);
+  }
+  for (const k of ['s', 'z', 'y', 'w', 'p', 'b']) {
+    const e = t.key(k, { ctrlKey: true });
+    assert.ok(!e.prevented && !e.stopped, `Ctrl+${k} reaches VS Code`);
+  }
+  const typed = t.key('r', { target: t.pageInput });
+  assert.ok(!typed.prevented && !typed.stopped, 'a letter typed in the page box is not a shortcut');
+  deq(forwarded, ['Ctrl+s', 'Ctrl+z', 'Ctrl+y', 'Ctrl+w', 'Ctrl+p', 'Ctrl+b', 'r']);
+});

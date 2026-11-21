@@ -87,8 +87,20 @@ function setup(opts = {}) {
   [toolbar, banner, content].forEach((e) => app.appendChild(e));
   doc.body.appendChild(app); doc.body.appendChild(brandWrap);
 
-  win.addEventListener = (t, f) => { (win.listeners[t] = win.listeners[t] || []).push(f); };
-  win.dispatch = (t, ev) => { const e = Object.assign({ preventDefault() { e.prevented = true; } }, ev); (win.listeners[t] || []).forEach((f) => f(e)); return e; };
+  // Window listeners in DOM order: capture-phase ones first, then the bubble-phase ones (where VS Code's own keydown
+  // listener sits in a real webview) only when nothing stopped propagation.
+  win.capture = new Set();
+  win.addEventListener = (t, f, o) => { (win.listeners[t] = win.listeners[t] || []).push(f); if (o === true || (o && o.capture)) { win.capture.add(f); } };
+  win.dispatch = (t, ev) => {
+    const e = ev && typeof ev === 'object' ? ev : {};
+    const own = e.stopPropagation;
+    e.stopPropagation = function () { e.stopped = true; if (own) { own.call(e); } };
+    if (!e.preventDefault) { e.preventDefault = function () { e.prevented = true; }; }
+    const all = (win.listeners[t] || []).slice();
+    all.filter((f) => win.capture.has(f)).forEach((f) => f(e));
+    if (!e.stopped) { all.filter((f) => !win.capture.has(f)).forEach((f) => f(e)); }
+    return e;
+  };
   const timers = [];
   const sandbox = {
     window: win, document: doc, console,
@@ -759,4 +771,26 @@ test('window.XlsxShell exposes grid, state and both plug-in hooks when auto-star
   assert.strictEqual(typeof t.shell.registerMenuItems, 'function');
   assert.ok(t.shell.grid);
   assert.ok(t.shell.state && 'activeSheetId' in t.shell.state);
+});
+
+test('shortcuts VS Code also binds are handled in the capture phase and stopped; other keys reach VS Code', () => {
+  const t = setup();
+  t.open();
+  const forwarded = [];
+  t.win.addEventListener('keydown', (e) => forwarded.push(((e.ctrlKey || e.metaKey) ? 'Ctrl+' : '') + e.key));   // VS Code's listener
+  // F3 is ours only while find is open
+  const f3closed = t.key({ key: 'F3' });
+  assert.ok(!f3closed.prevented && !f3closed.stopped, 'F3 with find closed');
+  for (const ev of [{ ctrlKey: true, key: 'f' }, { metaKey: true, key: 'F' }, { key: 'F3' }, { key: 'F3', shiftKey: true },
+    { ctrlKey: true, key: 'PageDown' }, { ctrlKey: true, key: 'PageUp' }]) {
+    const e = t.key(ev);
+    assert.ok(e.prevented && e.stopped, JSON.stringify(ev));
+  }
+  for (const k of ['s', 'z', 'y', 'w', 'p']) {
+    const e = t.key({ ctrlKey: true, key: k });
+    assert.ok(!e.stopped, `Ctrl+${k} reaches VS Code`);
+  }
+  const shiftF = t.key({ ctrlKey: true, shiftKey: true, key: 'F' });
+  assert.ok(!shiftF.prevented && !shiftF.stopped, 'Ctrl+Shift+F (Search) is not ours');
+  deq(forwarded, ['F3', 'Ctrl+s', 'Ctrl+z', 'Ctrl+y', 'Ctrl+w', 'Ctrl+p', 'Ctrl+F']);
 });

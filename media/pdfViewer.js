@@ -594,6 +594,17 @@
 
     function scrollPages(dy) { container.scrollTop = container.scrollTop + dy; }
 
+    /** A key this viewer handled: no default action, and not forwarded to VS Code (see `onKeyDown`). */
+    function handled(ev) {
+      prevent(ev);
+      if (ev && ev.stopPropagation) { ev.stopPropagation(); }
+    }
+
+    /**
+     * Registered on window in the capture phase: a key handled here is stopped before VS Code's own keydown
+     * listener in the webview forwards it to the workbench (Ctrl+= / Ctrl+- / Ctrl+0 would also zoom the
+     * window, Ctrl+G open Go to Line, F4 jump to the next search result). Keys not handled here go on as usual.
+     */
     function onKeyDown(ev) {
       if (ev.defaultPrevented) { return; }
       const key = ev.key;
@@ -606,7 +617,7 @@
         if (k.key !== key.toLowerCase() || k.ctrl !== ctrl || !!ev.altKey) { continue; }
         if (k.shift !== undefined && k.shift !== !!ev.shiftKey) { continue; }
         if (!k.ctrl && (text || !page)) { continue; }
-        if (k.run(ev, shell) !== false) { prevent(ev); return; }
+        if (k.run(ev, shell) !== false) { handled(ev); return; }
       }
       if (ev.altKey) { return; }
 
@@ -618,20 +629,20 @@
           case 'g': case 'G': focusPageBox(); break;
           default: return;
         }
-        prevent(ev);
+        handled(ev);
         return;
       }
-      if (key === 'F4') { prevent(ev); setSidebarOpen(!sidebarOpen); return; }
+      if (key === 'F4') { handled(ev); setSidebarOpen(!sidebarOpen); return; }
       // Single-letter and navigation keys: only in the page area and never in a text input.
       if (text || !page) { return; }
       if (key === 'Escape') {
-        if (activeTool) { prevent(ev); setTool(null); }
+        if (activeTool) { handled(ev); setTool(null); }
         return;
       }
       if (key.length === 1 && key !== ' ') {
         const t = tools.find((x) => x.key === key.toLowerCase() && !(x.editOnly && !editMode));
         if (t && phase === 'ready') {
-          prevent(ev);
+          handled(ev);
           if (t.run) { runTool(t); } else { setTool(t.id); }
           return;
         }
@@ -654,7 +665,7 @@
         case ' ': if (native) { return; } scrollPages(ev.shiftKey ? -pageStep : pageStep); break;
         default: return;
       }
-      prevent(ev);
+      handled(ev);
     }
 
     // ---------- links (spec §7.5) and copy (spec §7.3) ----------
@@ -1372,7 +1383,7 @@
       main.addEventListener('auxclick', onLinkClick, true);
       main.addEventListener('wheel', onWheel, { passive: false });
       document.addEventListener('copy', onCopy, true);
-      win.addEventListener('keydown', onKeyDown);
+      win.addEventListener('keydown', onKeyDown, true);
       win.addEventListener('resize', onResize);
       if (typeof win.ResizeObserver === 'function') { new win.ResizeObserver(onResize).observe(main); }
 

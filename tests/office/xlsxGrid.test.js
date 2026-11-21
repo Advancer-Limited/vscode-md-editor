@@ -527,3 +527,25 @@ test('large sheet: 1,048,576 x 16,384 renders a bounded node set', () => {
   assert.ok(t.root.find(() => true).length < 1200);
   assert.ok(cells(t.root).length > 0);
 });
+
+test('handled Ctrl/Cmd chords are stopped at the grid (not forwarded to VS Code); unhandled ones and plain keys are not', () => {
+  const t = setup();
+  t.grid.setMeta(t.meta);
+  answer(t);
+  const press = (k, mods) => {
+    const e = { key: k, prevented: false, stopped: false };
+    Object.assign(e, mods, { preventDefault() { e.prevented = true; }, stopPropagation() { e.stopped = true; } });
+    t.root.fire('keydown', e);
+    return e;
+  };
+  for (const [k, mods] of [['a', { ctrlKey: true }], ['End', { ctrlKey: true }], ['ArrowDown', { metaKey: true }], ['Home', { ctrlKey: true }]]) {
+    const e = press(k, mods);
+    assert.ok(e.prevented && e.stopped, `Ctrl+${k}`);
+  }
+  for (const k of ['c', 'v', 'x', 'z', 'y', 'f', 's', 'e', 'PageDown', 'PageUp']) {
+    const e = press(k, { ctrlKey: true });
+    assert.ok(!e.prevented && !e.stopped, `Ctrl+${k} is not the grid's`);
+  }
+  const arrow = press('ArrowDown', {});
+  assert.ok(arrow.prevented && !arrow.stopped, 'a plain navigation key is handled but not stopped');
+});

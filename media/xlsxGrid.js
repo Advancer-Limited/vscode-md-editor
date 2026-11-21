@@ -896,7 +896,9 @@
       const key = ev.key;
       const mods = { ctrl: ev.ctrlKey, meta: ev.metaKey, shift: ev.shiftKey, alt: ev.altKey };
       const ctrl = ev.ctrlKey || ev.metaKey;
-      const stop = () => { if (ev.preventDefault) ev.preventDefault(); };
+      // A handled Ctrl/Cmd chord (Ctrl+A, Ctrl+Arrow, Ctrl+Home/End) is also stopped here, below the window,
+      // so VS Code's keydown listener in the webview never forwards it to the workbench.
+      const stop = () => { if (ev.preventDefault) ev.preventDefault(); if (ctrl && ev.stopPropagation) ev.stopPropagation(); };
 
       if ((key === 'F10' && ev.shiftKey) || key === 'ContextMenu') {
         stop();

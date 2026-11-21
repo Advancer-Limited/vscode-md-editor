@@ -68,8 +68,20 @@ function setup() {
     add: (c) => bodyClasses.add(c), remove: (c) => bodyClasses.delete(c),
     contains: (c) => bodyClasses.has(c),
   };
-  win.addEventListener = (t, f) => { (win.listeners[t] = win.listeners[t] || []).push(f); };
-  win.dispatch = (t, ev) => (win.listeners[t] || []).forEach((f) => f(ev));
+  // Window listeners in DOM order: capture-phase ones first, then the bubble-phase ones (where VS Code's own keydown
+  // listener sits in a real webview) only when nothing stopped propagation.
+  win.capture = new Set();
+  win.addEventListener = (t, f, o) => { (win.listeners[t] = win.listeners[t] || []).push(f); if (o === true || (o && o.capture)) { win.capture.add(f); } };
+  win.dispatch = (t, ev) => {
+    const e = ev && typeof ev === 'object' ? ev : {};
+    const own = e.stopPropagation;
+    e.stopPropagation = function () { e.stopped = true; if (own) { own.call(e); } };
+    if (!e.preventDefault) { e.preventDefault = function () { e.prevented = true; }; }
+    const all = (win.listeners[t] || []).slice();
+    all.filter((f) => win.capture.has(f)).forEach((f) => f(e));
+    if (!e.stopped) { all.filter((f) => !win.capture.has(f)).forEach((f) => f(e)); }
+    return e;
+  };
   const timers = [];
   const sandbox = {
     window: win, document: doc, console,
@@ -310,4 +322,22 @@ test('pdf kind: Ctrl+E without edit rights hints with the PDF sentence', () => {
   t.OC.setInit(initMsg({ kind: 'pdf', canEdit: false, readOnlyReason: 'encrypted' }));
   t.win.dispatch('keydown', { key: 'e', ctrlKey: true, preventDefault() {} });
   assert.strictEqual(t.q((e) => e.className === 'office-hint')[0].textContent, t.OC.PDF_READ_ONLY_TEXT.encrypted);
+});
+
+test('Ctrl+E is handled in the capture phase and stopped; keys VS Code must get pass through', () => {
+  const t = setup();
+  t.OC.setInit(initMsg({ canEdit: true, editMode: false }));
+  // Stands in for VS Code's own keydown listener in the webview (bubble phase on window).
+  const forwarded = [];
+  t.win.addEventListener('keydown', (e) => forwarded.push((e.ctrlKey ? 'Ctrl+' : '') + (e.shiftKey ? 'Shift+' : '') + e.key));
+  const e = t.win.dispatch('keydown', { key: 'e', ctrlKey: true });
+  assert.ok(e.prevented && e.stopped, 'Ctrl+E is not also Quick Open');
+  deq(t.posted.pop(), { type: 'setEditMode', editMode: true });
+  for (const k of ['s', 'z', 'y', 'w', 'p']) {
+    const o = t.win.dispatch('keydown', { key: k, ctrlKey: true });
+    assert.ok(!o.prevented && !o.stopped, `Ctrl+${k}`);
+  }
+  const shiftE = t.win.dispatch('keydown', { key: 'E', ctrlKey: true, shiftKey: true });
+  assert.ok(!shiftE.prevented && !shiftE.stopped, 'Ctrl+Shift+E (Explorer) is not ours');
+  deq(forwarded, ['Ctrl+s', 'Ctrl+z', 'Ctrl+y', 'Ctrl+w', 'Ctrl+p', 'Ctrl+Shift+E']);
 });

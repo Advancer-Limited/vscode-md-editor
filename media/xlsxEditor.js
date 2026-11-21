@@ -88,6 +88,7 @@
     const inputCache = new Map();       // "sheetId:r:c:version" -> formula text
     const lastActive = new Map();       // sheetId -> { r, c } so tab switching keeps the cursor
     let cellEditor = null;
+    let beforeSheetKey = null;
     let flushHandler = null;            // WP-23: commits an in-progress cell edit (returns a promise)
     const messageHandlers = [];         // WP-23: the cell editor sees every host message
     const menuProviders = [];
@@ -794,27 +795,37 @@
       return false;
     }
 
+    /**
+     * Shortcuts VS Code also binds (Ctrl+F: its find widget, F3: Find Next, Ctrl+PageUp/PageDown: previous/next
+     * editor). Registered on window in the capture phase and stopped there when handled, so VS Code's own
+     * keydown listener in the webview never forwards them to the workbench. Other keys go on untouched.
+     */
+    function onShortcutKey(ev) {
+      const ctrl = ev.ctrlKey || ev.metaKey;
+      const k = ev.key;
+      let run = null;
+      if (k === 'F3' && find.open && !ctrl && !ev.altKey) { run = () => findStep(ev.shiftKey ? -1 : 1); }
+      else if (ctrl && !ev.altKey && !ev.shiftKey && (k === 'f' || k === 'F')) { run = openFind; }
+      else if (ctrl && !ev.altKey && (k === 'PageUp' || k === 'PageDown')) {
+        // An open cell editor commits first (it would never see the key: it is stopped here).
+        run = () => { if (beforeSheetKey) { beforeSheetKey(); } switchRelative(k === 'PageDown' ? 1 : -1); };
+      }
+      if (!run) { return; }
+      if (ev.preventDefault) { ev.preventDefault(); }
+      if (ev.stopPropagation) { ev.stopPropagation(); }
+      run();
+    }
+
     function onKeyDown(ev) {
       const ctrl = ev.ctrlKey || ev.metaKey;
       if (ev.key === 'Escape' && openMenuEl) { closeMenu(); return; }
-      if (ev.key === 'F3' && find.open && !ctrl && !ev.altKey) {
-        if (ev.preventDefault) { ev.preventDefault(); }
-        findStep(ev.shiftKey ? -1 : 1);
-        return;
-      }
       if (!ctrl || ev.altKey) { return; }
       const k = ev.key;
-      if ((k === 'f' || k === 'F') && !ev.shiftKey) {
-        if (ev.preventDefault) { ev.preventDefault(); }
-        openFind();
-      } else if ((k === 'c' || k === 'C') && !ev.shiftKey) {
+      if ((k === 'c' || k === 'C') && !ev.shiftKey) {
         if (isTextTarget(ev.target)) { return; }   // native copy inside the find box
         if (formulaBarTextSelected()) { return; }  // native copy of the selected formula-bar text
         if (ev.preventDefault) { ev.preventDefault(); }
         doCopy();
-      } else if (k === 'PageUp' || k === 'PageDown') {
-        if (ev.preventDefault) { ev.preventDefault(); }
-        switchRelative(k === 'PageDown' ? 1 : -1);
       }
     }
 
@@ -867,6 +878,8 @@
       registerMessageHandler(fn) { if (typeof fn === 'function') { messageHandlers.push(fn); } },
       /** WP-23: `fn()` commits an in-progress edit and returns a promise settled once the host answered. */
       registerFlushHandler(fn) { flushHandler = typeof fn === 'function' ? fn : null; },
+      /** `fn()` runs before Ctrl+PageUp/PageDown switches the sheet (the cell editor commits there). */
+      registerBeforeSheetKey(fn) { beforeSheetKey = typeof fn === 'function' ? fn : null; },
       post, nextId,
       /** Run an edit gesture through the shell's gating (edit mode, sheet protection) and the cell editor. */
       editGesture: (g) => onEditGesture(g),
@@ -919,6 +932,7 @@
           themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
         }
       }
+      window.addEventListener('keydown', onShortcutKey, true);
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('mousedown', (ev) => {
         if (openMenuEl && !(ev.target && openMenuEl.contains && openMenuEl.contains(ev.target))) {

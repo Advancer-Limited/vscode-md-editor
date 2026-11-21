@@ -237,8 +237,20 @@ function setup(opts = {}) {
   const document = makeDocument(opts);
   const timers = [];
   const win = { listeners: {} };
-  win.addEventListener = (t, f) => { (win.listeners[t] = win.listeners[t] || []).push(f); };
-  win.fire = (t, ev) => { (win.listeners[t] || []).slice().forEach((f) => f(ev)); return ev; };
+  // Window listeners in DOM order: capture-phase ones first, then the bubble-phase ones (where VS Code's own keydown
+  // listener sits in a real webview) only when nothing stopped propagation.
+  win.capture = new Set();
+  win.addEventListener = (t, f, o) => { (win.listeners[t] = win.listeners[t] || []).push(f); if (o === true || (o && o.capture)) { win.capture.add(f); } };
+  win.fire = (t, ev) => {
+    if (ev && typeof ev === 'object') {
+      const own = ev.stopPropagation;
+      ev.stopPropagation = function () { ev.stopped = true; if (own) { own.call(ev); } };
+    }
+    const all = (win.listeners[t] || []).slice();
+    all.filter((f) => win.capture.has(f)).forEach((f) => f(ev));
+    if (!(ev && ev.stopped)) { all.filter((f) => !win.capture.has(f)).forEach((f) => f(ev)); }
+    return ev;
+  };
   win.setTimeout = (f) => { timers.push(f); return timers.length; };
   win.clearTimeout = () => {};
   win.console = { warn: (...a) => log.warnings.push(a.join(' ')), error: (...a) => log.errors.push(a.join(' ')), log() {} };

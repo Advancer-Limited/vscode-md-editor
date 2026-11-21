@@ -76,8 +76,20 @@ function setup(opts = {}) {
   [toolbar, banner, content].forEach((e) => app.appendChild(e));
   doc.body.appendChild(app); doc.body.appendChild(brandWrap);
 
-  win.addEventListener = (t, f) => { (win.listeners[t] = win.listeners[t] || []).push(f); };
-  win.dispatch = (t, ev) => (win.listeners[t] || []).forEach((f) => f(ev));
+  // Window listeners in DOM order: capture-phase ones first, then the bubble-phase ones (where VS Code's own keydown
+  // listener sits in a real webview) only when nothing stopped propagation.
+  win.capture = new Set();
+  win.addEventListener = (t, f, o) => { (win.listeners[t] = win.listeners[t] || []).push(f); if (o === true || (o && o.capture)) { win.capture.add(f); } };
+  win.dispatch = (t, ev) => {
+    const e = ev && typeof ev === 'object' ? ev : {};
+    const own = e.stopPropagation;
+    e.stopPropagation = function () { e.stopped = true; if (own) { own.call(e); } };
+    if (!e.preventDefault) { e.preventDefault = function () { e.prevented = true; }; }
+    const all = (win.listeners[t] || []).slice();
+    all.filter((f) => win.capture.has(f)).forEach((f) => f(e));
+    if (!e.stopped) { all.filter((f) => !win.capture.has(f)).forEach((f) => f(e)); }
+    return e;
+  };
   const sandbox = { window: win, document: doc, console, setTimeout: () => 1, clearTimeout() {} };
   vm.createContext(sandbox);
   vm.runInContext(COMMON_SRC, sandbox);
@@ -334,4 +346,23 @@ test('stylesheet has theme-token backdrop, high-contrast outline, forced-colors 
   assert.match(css, /vscode-contrastBorder/);
   assert.match(css, /forced-colors: active/);
   assert.match(css, /prefers-reduced-motion/);
+});
+
+test('zoom keys are handled in the capture phase and stopped (VS Code does not zoom too); Ctrl+0 is not ours', async () => {
+  const t = setup();
+  t.render();
+  await t.viewer.whenIdle();
+  const forwarded = [];
+  t.win.addEventListener('keydown', (e) => forwarded.push(e.key));   // VS Code's listener (bubble phase)
+  for (const k of ['=', '+', '-', '_']) {
+    const e = t.win.dispatch('keydown', { key: k, ctrlKey: true });
+    assert.ok(e.prevented && e.stopped, `Ctrl+${k}`);
+  }
+  for (const k of ['0', 's', 'z', 'w']) {
+    const e = t.win.dispatch('keydown', { key: k, ctrlKey: true });
+    assert.ok(!e.prevented && !e.stopped, `Ctrl+${k} reaches VS Code`);
+  }
+  const plain = t.win.dispatch('keydown', { key: '=' });
+  assert.ok(!plain.prevented && !plain.stopped);
+  assert.deepStrictEqual(forwarded, ['0', 's', 'z', 'w', '=']);
 });

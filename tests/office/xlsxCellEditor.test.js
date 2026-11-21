@@ -84,8 +84,20 @@ function setup(opts = {}) {
   [toolbar, banner, content].forEach((e) => app.appendChild(e));
   doc.body.appendChild(app); doc.body.appendChild(brandWrap);
 
-  win.addEventListener = (t, f) => { (win.listeners[t] = win.listeners[t] || []).push(f); };
-  win.dispatch = (t, ev) => { const e = Object.assign({ preventDefault() { e.prevented = true; }, stopPropagation() { e.stopped = true; } }, ev); (win.listeners[t] || []).forEach((f) => f(e)); return e; };
+  // Window listeners in DOM order: capture-phase ones first, then the bubble-phase ones (where VS Code's own keydown
+  // listener sits in a real webview) only when nothing stopped propagation.
+  win.capture = new Set();
+  win.addEventListener = (t, f, o) => { (win.listeners[t] = win.listeners[t] || []).push(f); if (o === true || (o && o.capture)) { win.capture.add(f); } };
+  win.dispatch = (t, ev) => {
+    const e = ev && typeof ev === 'object' ? ev : {};
+    const own = e.stopPropagation;
+    e.stopPropagation = function () { e.stopped = true; if (own) { own.call(e); } };
+    if (!e.preventDefault) { e.preventDefault = function () { e.prevented = true; }; }
+    const all = (win.listeners[t] || []).slice();
+    all.filter((f) => win.capture.has(f)).forEach((f) => f(e));
+    if (!e.stopped) { all.filter((f) => !win.capture.has(f)).forEach((f) => f(e)); }
+    return e;
+  };
   const timers = [];
   const sandbox = {
     window: win, document: doc, console,
@@ -634,4 +646,21 @@ test('parseTsv: rows, quotes, line endings, trailing break', () => {
   deq(p(''), []);
   deq(p('\n'), [['']]);
   deq(p('a\n\nb'), [['a'], [''], ['b']]);
+});
+
+test('Ctrl+PageDown with an editor open commits it before the shell switches the sheet; the key is stopped', () => {
+  const t = setup();
+  t.open();
+  t.gesture({ kind: 'type', text: 'x', r: 2, c: 1 });
+  t.typeInto(t.cell(), 'x7');
+  const n = t.posted.length;
+  const ev = t.win.dispatch('keydown', { key: 'PageDown', ctrlKey: true, target: t.cell() });
+  assert.ok(ev.prevented && ev.stopped, 'not also Next Editor in VS Code');
+  const after = t.posted.slice(n);
+  const edit = after.findIndex((m) => m.type === 'xlsxEdit');
+  assert.ok(edit >= 0, 'the open edit was committed');
+  deq(after[edit].edit.cells, [{ r: 2, c: 1, input: 'x7' }]);
+  const meta = after.findIndex((m) => m.type === 'xlsxRequestSheetMeta');
+  assert.ok(meta === -1 || meta > edit, 'committed before the switch');
+  assert.strictEqual(t.editor.isEditing(), false);
 });

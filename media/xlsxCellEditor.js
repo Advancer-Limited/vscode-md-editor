@@ -330,7 +330,6 @@
       if (k === 'Enter' && !ctrl && !ev.altKey) { stop(); commit({ move: { dr: ev.shiftKey ? -1 : 1, dc: 0 } }); }
       else if (k === 'Tab' && !ctrl && !ev.altKey) { stop(); commit({ move: { dr: 0, dc: ev.shiftKey ? -1 : 1 } }); }
       else if (k === 'Escape') { stop(); cancel('Edit cancelled'); }
-      else if (ctrl && !ev.altKey && (k === 'PageUp' || k === 'PageDown')) { commit({ focus: false }); }
     }
     [cellInput, barInput].forEach((el) => {
       el.addEventListener('keydown', onEditorKey);
@@ -502,6 +501,8 @@
     shell.registerCellEditor(onGesture);
     shell.registerMessageHandler(onMessage);
     shell.registerFlushHandler(flush);
+    // Ctrl+PageUp/PageDown switches the sheet in the shell's capture-phase listener: commit what is open first.
+    if (shell.registerBeforeSheetKey) { shell.registerBeforeSheetKey(() => { if (ed) { commit({ focus: false }); } }); }
     OC.setBeforeEditModeOff(commitAndFlush);
 
     return {
