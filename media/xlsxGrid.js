@@ -21,6 +21,9 @@
   const BLOCK_COLS = 10;
   const MAX_REQUEST_CELLS = 20000;
   const MAX_IN_FLIGHT = 6;
+  // Widest run of blocks one request may span: a full-height block row of this many blocks is
+  // exactly the host's per-request cell limit (wide windows, e.g. many hidden columns, split).
+  const MAX_RUN_BLOCKS = Math.max(1, Math.floor(MAX_REQUEST_CELLS / (BLOCK_ROWS * BLOCK_COLS)));
   const MAX_CACHED_CELLS = 60000;
   const MAX_FROZEN_ROWS = 200;
   const MAX_FROZEN_COLS = 100;
@@ -194,6 +197,7 @@
     let cells = new Map();          // r * MAX_COLS + c -> XlsxCell
     const loaded = new Set();       // block keys with data
     const pending = new Map();      // requestId -> { blocks: string[], range }
+    const failed = new Set();       // block keys whose request the host refused (not retried until meta/invalidate)
     let nextRequestId = 1;
     let lastSig = '';
     let lastWin = null;
@@ -239,6 +243,7 @@
       // a new version/sheet supersedes everything in flight and everything fetched
       pending.clear();
       loaded.clear();
+      failed.clear();
       if (!sameSheet) {
         cells = new Map();
         styles = new Map();
@@ -313,6 +318,7 @@
       const kind = typeof scope === 'string' ? scope : scope && (scope.invalidate || scope.kind);
       const range = scope && typeof scope === 'object' ? scope.range : null;
       pending.clear();
+      failed.clear();
       if (kind === 'sheet' || kind === 'workbook') {
         // meta is stale as well: the shell re-requests it and calls setMeta again
         loaded.clear(); cells = new Map(); styles = new Map();
@@ -343,7 +349,7 @@
         for (let br = Math.floor(rg[0] / BLOCK_ROWS); br <= Math.floor(rg[2] / BLOCK_ROWS); br++) {
           for (let bc = Math.floor(rg[1] / BLOCK_COLS); bc <= Math.floor(rg[3] / BLOCK_COLS); bc++) {
             const k = blockKey(br, bc);
-            if (loaded.has(k) || pendingBlocks.has(k)) continue;
+            if (loaded.has(k) || pendingBlocks.has(k) || failed.has(k)) continue;
             let a = missing.get(br);
             if (!a) { a = new Set(); missing.set(br, a); }
             a.add(bc);
@@ -357,7 +363,7 @@
         const bcs = Array.from(missing.get(br)).sort((a, b) => a - b);
         let s = bcs[0], p = bcs[0];
         for (let i = 1; i <= bcs.length; i++) {
-          if (i < bcs.length && bcs[i] === p + 1) { p = bcs[i]; continue; }
+          if (i < bcs.length && bcs[i] === p + 1 && p - s + 1 < MAX_RUN_BLOCKS) { p = bcs[i]; continue; }
           const prev = runs.find((x) => x.br1 === br - 1 && x.bc0 === s && x.bc1 === p);
           if (prev && (prev.br1 - prev.br0 + 1) * BLOCK_ROWS * (p - s + 1) * BLOCK_COLS + BLOCK_ROWS * (p - s + 1) * BLOCK_COLS <= MAX_REQUEST_CELLS) prev.br1 = br;
           else runs.push({ br0: br, br1: br, bc0: s, bc1: p });
@@ -920,7 +926,9 @@
       const res = math.moveActive({ active, focus }, key, mods, navMeta(), isEmptyCell);
       if (!res) return;
       stop();
-      applySelection(res.active, res.focus, res.selection);
+      // Select all (Ctrl+A) keeps the view where it is, like Excel: its focus is the last cell.
+      const selectAll = ctrl && !ev.altKey && (key === 'a' || key === 'A');
+      applySelection(res.active, res.focus, res.selection, undefined, selectAll);
     }
 
     function onScroll() { render(false); }
@@ -961,6 +969,20 @@
       return out;
     }
 
+    /**
+     * The host refused request `requestId` (requestFailed). Frees its in-flight slot, so the
+     * remaining blocks can still be fetched, and parks its blocks so they are not re-requested in
+     * a loop; a new meta or an invalidate retries them. Returns whether the id was one of ours.
+     */
+    function requestFailed(requestId) {
+      const req = pending.get(requestId);
+      if (!req) return false;
+      pending.delete(requestId);
+      for (const b of req.blocks) failed.add(b);
+      if (meta && lastWin) requestMissing(lastWin);
+      return true;
+    }
+
     function destroy() {
       destroyed = true;
       scroller.removeEventListener && scroller.removeEventListener('scroll', onScroll);
@@ -972,7 +994,7 @@
     }
 
     return {
-      setMeta, setCells, invalidate, getSelection, setActive, setSelection, getCells,
+      setMeta, setCells, invalidate, requestFailed, getSelection, setActive, setSelection, getCells,
       getCell: (r, c) => cellAt(r, c) || null,
       focus() { if (root.focus) root.focus(); },
       destroy,

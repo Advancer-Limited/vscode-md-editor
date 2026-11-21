@@ -33,6 +33,8 @@ const state = {
   watchers: [],
   opened: [],
   clipboard: undefined,
+  /** uri strings passed to workspace.fs.readFile, in order */
+  reads: [],
   messages: [],
   registered: [],
   config: {},
@@ -40,6 +42,7 @@ const state = {
     this.config = {};
     this.files.clear(); this.watchers.length = 0; this.opened.length = 0;
     this.clipboard = undefined; this.messages.length = 0; this.registered.length = 0;
+    this.reads.length = 0; env.remoteName = undefined;
   },
   writeFile(uri, data, mtime = Date.now()) { this.files.set(uri.toString(), { data, mtime }); },
 };
@@ -49,6 +52,7 @@ function fileNotFound(uri) { const e = new Error(`EntryNotFound (FileSystemError
 const workspace = {
   fs: {
     async readFile(uri) {
+      state.reads.push(uri.toString());
       const f = state.files.get(uri.toString());
       if (!f) throw fileNotFound(uri);
       return f.data;
@@ -73,7 +77,9 @@ const workspace = {
     const w = {
       pattern, disposed: false,
       onDidChange: change.event, onDidCreate: create.event, onDidDelete: del.event,
-      fireChange: () => change.fire(), fireCreate: () => create.fire(),
+      // Like VS Code, events carry the changed file's URI (default: the pattern's own file).
+      fireChange: (u) => change.fire(u ?? Uri.joinPath(pattern.base, pattern.pattern)),
+      fireCreate: (u) => create.fire(u ?? Uri.joinPath(pattern.base, pattern.pattern)),
       dispose() { this.disposed = true; },
     };
     state.watchers.push(w);
@@ -82,6 +88,8 @@ const workspace = {
 };
 
 const env = {
+  /** undefined for a local window; e.g. 'ssh-remote' in a remote one. */
+  remoteName: undefined,
   async openExternal(uri) { state.opened.push(uri.toString()); return true; },
   clipboard: { async writeText(t) { state.clipboard = t; } },
 };
