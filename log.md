@@ -769,3 +769,8 @@ Documents only; nothing implemented. New: `docs/pptx-viewer-spec.md`, `docs/pptx
 **Not verified** (spike items): fidelity on decks made by PowerPoint, LibreOffice and Google Slides; behaviour inside a real VS Code webview; the render copy with zero-length entries; DOM order versus shape-tree order; performance (the headless run's timings were not usable — the windowed list never completed under virtual time).
 
 **Issue encountered:** the knowledge that PPTXjs is a jQuery plugin is out of date — a TypeScript rewrite was published to npm as `@meshesha/pptxjs` 2.0.0 on 2026-11-20; it was evaluated as the runner-up. A network outage interrupted the session before the first file was written; nothing was lost.
+
+## 2026-11-21 — PowerPoint spec questions answered
+
+- User answered spec §15.2: Q1 (a) open-source renderer, Q2 (a) all six file types, Q3 (b) no Present mode in v1 (XWP-16 moves to post-v1), Q4 (a) hold the registration PR until Gate X2. Files: `docs/pptx-viewer-spec.md`, `docs/pptx-viewer-plan.md`, `log.md`.
+

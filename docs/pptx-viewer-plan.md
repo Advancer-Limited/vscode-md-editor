@@ -4,7 +4,7 @@ Date: 2026-11-21 · Spec: `docs/pptx-viewer-spec.md` (all `§` references are to
 
 This plan slices the spec into work packages (XWPs). Each is sized for one implementation subagent run (≤ ~1,500 changed lines including tests) and names its files, dependencies, acceptance tests and implementer model. The spec says *what*; this document says *in what order, by whom, in which files, and how it is checked*. Where the two disagree, the spec wins and the plan gets fixed.
 
-The plan is written for the recommended answers to the open questions (spec §15.2). §11 says what changes for each other answer.
+The plan is written for the recommended answers to the open questions (spec §15.2). §11 says what changes for each other answer. **Answered 2026-11-21:** recommended answers for Q1, Q2 and Q4; **Q3 is (b)**: XWP-16 (Present mode) is dropped from v1 and listed as post-v1 (−0.5 day, see §11 row Q3).
 
 ---
 

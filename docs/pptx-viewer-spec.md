@@ -599,6 +599,8 @@ Editing anything, including speaker notes · saving, Save As, export, conversion
 
 ### 15.2 Open questions for the user
 
+**Answered by the user on 2026-11-21:** Q1 (a) open-source renderer (`@aiden0z/pptx-renderer`, confirmed by the spike bake-off); Q2 (a) all six file types; **Q3 (b) no Present mode in v1** — XWP-16 is dropped, Present mode (§7.8, the `P` shortcut, `pptxPresent.js`) moves to post-v1; Q4 (a) the registration PR stays unmerged until Gate X2 passes.
+
 Only questions whose answer changes the plan. The plan is written for the recommended answers; plan §11 says what changes otherwise.
 
 **Q1. How are slides drawn?**
