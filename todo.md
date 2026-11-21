@@ -345,6 +345,7 @@
   - [x] WP-21 Formula entry, _xlfn, shared formulas
   - [x] WP-22 Date style patch + xlsx validators
   - [x] WP-23 Xlsx editing wiring
+    - [x] Review B1 (xlsx): `runEdit` waits for a save that is writing (and re-runs an edit a save rolled back) instead of refusing it
   - [x] WP-24 verify-office-open.ps1, OpenXmlValidator script
   - [ ] Gate R2 (Fable): review done, F1–F10 fixed (645 tests). Waiting on the user: verify-office-open.ps1 on `scratchpad/r2/excel-check` + `tests/.out`, then the dev-host checklist; then flip `xlsxEdit`
   - [x] Follow-up (F5): async core serialize, verify and xlsxValidator; the longest block on large.xlsx is now 42–85 ms for a backup and 83–187 ms for a save
