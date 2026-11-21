@@ -1173,6 +1173,7 @@
     // Ctrl/Cmd+Space explicitly requests completions.
     if ((e.ctrlKey || e.metaKey) && e.key === ' ') {
       e.preventDefault();
+      e.stopPropagation();   // not also forwarded to VS Code
       refreshCompletions();
     }
   });

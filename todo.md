@@ -305,3 +305,183 @@
 - [x] PR #80 fix/bump-1.5.0 → develop (version 1.5.0 + CHANGELOG), merge
 - [x] PR #81 develop → master (Release 1.5.0), merge
 - [x] Publish 1.5.0 from master to VS Code Marketplace
+
+## 2026-11-20 Office viewers/editors — Word (.docx) + Excel (.xlsx) (feature/office-viewers)
+
+- [x] Gather requirements (user): .docx/.xlsx only; viewer first, basic edit; default editor; View mode by default with an Edit toggle
+- [x] Spec — `docs/office-viewers-spec.md` (Fable subagent)
+- [x] Resolve spec open questions (user): real dates in v1, Word table-cell text editable in v1, warn-and-allow for charts/pivots on row/col changes
+- [x] Implementation plan — `docs/office-viewers-plan.md` (Fable subagent)
+- [ ] Phase 0 — spikes + core (ZIP container, lossless XML)
+  - [x] WP-01 Spikes (S1, S2, S4–S7 pass; S3 Ctrl+Z awaiting a manual run by the user)
+  - [x] WP-02 Scaffolding, dependencies, test bundle, housekeeping
+  - [x] WP-03 Fixtures and generators (36 fixtures; PENDING from user: libreoffice.docx/.xlsx, googledocs.docx, googlesheets.xlsx, localised-de.docx — recipes in tests/fixtures/office/README.md)
+  - [x] WP-04 ZIP container (`core/zip.ts`, 22 tests)
+  - [x] WP-05 Lossless XML (`core/xml.ts`, 19 tests)
+  - [x] WP-06 OPC, OfficePackage, load classification (`core/opc.ts`, `package.ts`, `sniff.ts`, 20 tests)
+  - [x] Gate R0 — self-review of zip/xml/package against spec §3.2–3.3 (G1/G2 green on all 31 openable fixtures); review findings 1–7, 10, 11 fixed with regression tests, `partSize` added (nits 8, 9, 12 logged as known limitations)
+- [ ] Phase 1 — read-only viewers
+  - [x] WP-07 Protocol contract freeze
+  - [x] WP-08 Host shell
+  - [x] WP-09 Common webview chrome
+  - [x] WP-10 Word viewer
+    - [x] Review L: external links open once (link click stopped before VS Code's host page)
+  - [x] WP-11 Xlsx read model
+  - [x] WP-12 Xlsx styles and display formatting
+  - [x] WP-13 Grid maths
+  - [x] WP-14 Xlsx provider view path
+  - [x] WP-15 Grid component
+  - [x] WP-16 Excel viewer shell
+  - [x] WP-17 Phase 1 docs and gate run
+  - [x] Independent review of PRs #85/#88/#89/#90 fixed: B1, S1–S7, S9 and the cheap nits (S8 left for the user to check in a live window)
+  - [ ] Gate R1 — automated checks green (WP-17); human checks in `docs/office-gate-checklist.md` section 3 (57 R1 items incl. setup and S3, ~50 min for the must items) are waiting on the user
+  - [x] Follow-up: synthetic fixtures for a hidden or very hidden sheet, a chartsheet and a damaged sheet part (make-synthetic.mjs, no COM)
+  - [ ] Note: small `.gltf`/`.mmd` samples for the regression checks are still to do
+- [x] Consolidated human gate checklist for R1, R2 and R4 (setup, user items, S3, viewers, Excel editing, structure, WP-37 goldens): `docs/office-gate-checklist.md` (113 items, about 3 h 45 min; replaces `docs/office-gate-r1-checklist.md`)
+- [ ] Phase 2 — save pipeline + Excel cell editing
+  - [x] WP-18 Edits, undo/redo, serialise, verify, save core
+  - [x] WP-19 Full CustomEditorProvider
+    - [x] Review B1 (host): edits wait for a save that is writing (`editRefusalAfterSave`) instead of being refused
+  - [x] WP-20 Xlsx cell write, input classification, calc handling
+  - [x] WP-21 Formula entry, _xlfn, shared formulas
+  - [x] WP-22 Date style patch + xlsx validators
+  - [x] WP-23 Xlsx editing wiring
+    - [x] Review B1 (xlsx): `runEdit` waits for a save that is writing (and re-runs an edit a save rolled back) instead of refusing it
+  - [x] WP-24 verify-office-open.ps1, OpenXmlValidator script
+  - [ ] Gate R2 (Fable): review done, F1–F10 fixed (645 tests). Waiting on the user: verify-office-open.ps1 on `scratchpad/r2/excel-check` + `tests/.out`, then the dev-host checklist; then flip `xlsxEdit`
+  - [x] Follow-up (F5): async core serialize, verify and xlsxValidator; the longest block on large.xlsx is now 42–85 ms for a backup and 83–187 ms for a save
+- [ ] Phase 3 — Word editing
+  - [ ] WP-25 Docx block/segment model
+  - [ ] WP-26 Docx styles + numbering, read side
+  - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
+  - [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
+  - [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
+  - [x] WP-30 Styles and lists, write side (`stylesWrite.ts`: setStyle/setList/setListLevel; missing heading/List Paragraph styles and the numbering part created; 13 tests; 20/20 outputs open in Word)
+  - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
+  - [ ] WP-32 Island DOM <-> segments
+  - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
+  - [x] WP-34 Island controller and re-render scheduling (`media/docxEdit.js`; detached render + DocxMap; marker CSS; scripts loaded; Edit stays available for tracked-changes-on; 35 tests)
+  - [x] WP-35 Word edit toolbar, shortcuts, CSS (38 tests; flag flip left for PR-11 after Gate R3)
+  - [x] Word editing review fixes (feature/office-docx-fixes): B1 typed text never lost, S1 forgiveness by identity, S2 commit timing, S3 keyboard access, S4 model view-only reasons, S5 cascade formatting, S6 pre-wrap, nits N1–N5, N7; L on feature/office-word-viewer
+    - [ ] B/I/U pressed state from table-style formatting (tblStylePr): not done, segment flags exclude it
+  - [ ] Gate R3
+- [ ] Phase 4 — Excel structure (rows/columns/sheets)
+  - [x] WP-36 Reference shifting
+  - [ ] WP-37 Excel-produced goldens
+  - [x] WP-38 Insert/delete rows and columns, Tier A
+  - [x] WP-39 Tier B/C guards
+  - [x] WP-40 Add / rename / delete sheet
+  - [x] PR-13 integration pass (feature/office-xlsx-structure): stub-era tests rewritten, grid aux invalidation (Sheet.structureGeneration), sheet list after outside undo/redo and aborted sheet ops, add-sheet keeps the calc chain, structural random run (1156 pass / 1 skipped)
+  - [x] WP-41 Structure UI + host wiring
+  - [x] First real-Excel run (V3) findings: reviewer formulas already refused; 3 damaged synthetic test inputs fixed; structure-UI expectations (A1 = 42); V4 add-after-first is the calcChain false positive
+  - [x] Independent review of Excel structural editing, editor choice and viewer fixes (feature/office-xlsx-fixes): B1 sheet-name quoting, S1 TRUE/FALSE, S2 table formulas, S3 linear row ops, S4 stable sheet ids (checklist K14 fixed), S5 refusals before the Tier C modal, S6 copy size check, S7 tests, nits N1–N7
+  - [ ] Merge the save fix being propagated through the Excel stack into feature/office-xlsx-fixes, then flip `xlsxEdit`
+  - [ ] WP-42 v1 release preparation
+  - [ ] Gate R4
+  - [ ] Gate R-final (Fable)
+- [ ] Post-v1: Excel range → Markdown table; Word → Markdown; Markdown → Word; Office files in wikilinks/graph
+## 2026-11-21 PDF viewer with basic editing (feature/pdf-viewer-docs)
+
+- [x] Read the Office spec, plan and gate checklist as the template; assess which Office code is reusable (chrome, common protocol, provider base: as is; `officeDocument.ts` save/undo/backup: after extracting a shared base)
+- [x] Check library claims against the published packages (pdfjs-dist 6.5.438, pdf-lib 1.17.1, @cantoo/pdf-lib 2.11.1) in a scratch install, including an incremental-save experiment under Node
+- [x] Write `docs/pdf-viewer-spec.md`
+- [x] Write `docs/pdf-viewer-plan.md`
+- [ ] User: answer open questions Q1-Q8 (spec section 16.2)
+- [ ] User: supply ten everyday PDFs for the spike corpus and the PENDING fixtures (spec section 13.3)
+- [ ] PR-P0 feature/pdf-viewer-docs -> develop (make sure `docs/**` is in `.vscodeignore` before any release)
+- [ ] Phase 0: PWP-01 spikes S1-S8, PWP-02 scaffolding, PWP-03 fixtures, Gate P0
+- [ ] Phase 1 (viewer): PWP-04 to PWP-12, Gate P1, viewer-first release
+- [ ] Phase 2 (edit core): PWP-13 to PWP-21, Gate P2 (independent review)
+- [ ] Phase 3 (annotations): PWP-22 to PWP-26, Gate P3, flip `pdfEdit`
+- [ ] Phase 4 (forms + release): PWP-27 to PWP-30, Gate P4, flip `pdfForms`, Gate P-final
+
+## PDF build (feature/pdf-base = Office viewers PR-5 + PDF docs; stacked because the user asked to build everything now)
+- [x] PWP-01 Spikes (spike/pdf-viewer; reader openings pending the user: spike/pdf/out/for-user/CHECKLIST.md)
+- [x] PWP-02 Scaffolding (pdfjs-dist 6.5.438, engines ^1.95.0, bundle + vendor, barrel, limits, smoke tests)
+- [x] PWP-04 Protocol (view half frozen, edit half draft; 172 tests)
+- [x] PWP-07 View maths (15 tests)
+- [x] PWP-03 Fixtures (26 committed; 8 PENDING user-supplied, see tests/fixtures/pdf/README.md)
+- [x] PWP-05 Host shell (PdfDocument, provider not registered, sniff, load errors, §12 CSP)
+- [x] PWP-06 Shared chrome ('pdf' kind)
+- [x] PWP-08 Viewer core (media/pdfViewer.js/.css, PdfViewerShell hooks; 57 tests; ran in an isolated dev host on 19 fixtures, 0 CSP violations)
+- [x] PWP-09 Sidebar (thumbnails, outline, attachments, properties)
+- [x] PWP-10 Find bar · PWP-11 Notices/registration (done: da390a5)
+- [x] PWP-12 Phase 1 docs: README PDF section, CHANGELOG, `docs/pdf-gate-checklist.md` (97 Gate P1 items)
+- [x] Host-log message for CSP violations / worker fallback (`pdfLog`, output channel)
+- [x] Independent review fixes: links opened once, find never disabled by the facts sample, outline/thumbnail caps, `pdfFacts.generation`, CSP form-action/base-uri, page-area role, error titles, dead worker replaced, macOS attachment check, worker no-eval smoke test
+- [ ] Office owner: `media/docxEditor.js` link click has the same double-open pattern (needs stopPropagation for external hrefs)
+- [x] PWP-11: emit data-default-zoom in bodyHtml
+- [ ] Merge note: PWP-05 generalised src/office/officeEditorProviderBase.ts (OfficeHostDocument, createDocument, bodyHtml(webview)); the Office editing branches also change that file, so expect a conflict when the PDF stack is rebased after Office
+- [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it
+
+## Word editing, group D (feature/office-docx-model; started 2026-11-21 without the S3 result, using the documented Ctrl+Z fallback)
+- [x] WP-25 Docx block and segment model incl. table cells (`core/docx/model.ts`, 17 tests)
+- [x] WP-26 Docx styles + numbering, read side (`core/docx/styles.ts`, `numbering.ts`, 13 tests)
+- [x] WP-32 Island DOM <-> segments (`media/docxIsland.js`, 60 tests)
+- [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
+- [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
+- [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
+- [x] WP-30 Styles and lists, write side (`stylesWrite.ts`: setStyle/setList/setListLevel; missing heading/List Paragraph styles and the numbering part created; 13 tests; 20/20 outputs open in Word)
+- [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
+- [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
+- [x] WP-34 Island controller and re-render scheduling (`media/docxEdit.js`; detached render + DocxMap; marker CSS; scripts loaded; Edit stays available for tracked-changes-on; 35 tests)
+- [x] WP-35 Word edit toolbar, shortcuts, CSS (38 tests; flag flip left for PR-11 after Gate R3)
+- [ ] Gate R3 (needs S3 result and the LibreOffice/Google/German fixtures)
+- [ ] WP-34/35: add `span[id^="__vsmd_"]{display:none}` to `media/docxEditor.css`; load `media/docxMap.js` in the docx webview; WP-33 sends `buildRenderCopyAsync` bytes with block infos
+- [ ] WP-29/33/34: call `model.refresh()` after finishing the builder; use `BuildOptions.omit` for split halves; rebuild the island when `commitParagraph` returns `changed:false, reinsertedAtoms:true`
+- [ ] Make `prettyDocx()` (tests/office/_roundtrip.mjs) a package Word opens, or stop writing `pretty-edit.docx` to tests/.out for the Word check
+
+- [ ] Fold the WP-29 deviations (log.md 2026-11-21) into spec §8.5/§6.3
+- [ ] After WP-30 merges: add `setStyle`/`setList` cases to `docxEditWiring.test.mjs`
+- [ ] WP-34/35: keep Edit enabled for `tracked-changes-on` (host asks the Edit-anyway modal on `setEditMode`)
+- [ ] WP-30 follow-ups: allocate new numIds above any numId referenced by paragraphs (not only defined ones); check VSMDBullet/VSMDNumber names survive a Word re-save; remove the dead stub branch in the WP-29 dispatch test
+- [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)
+- [ ] Gate P1 (human): run `docs/pdf-gate-checklist.md` section 3 (about 2 h; item G2 is this one): check that a .pdf opened at window startup (command line / restored tab) opens in the PDF Viewer, not as text (seen once in the PWP-11 harness)
+- [ ] User: Gate P1 sweep; spike reader checks (`docs/pdf-gate-checklist.md` section 2); supply linearized/xfa/scanner/latex PDFs (then acrobat-* and certified for P3/P4)
+
+## PDF edit core (feature/pdf-edit-core)
+- [x] PWP-21 verify-pdf-open.mjs + PG6 helpers
+- [x] PWP-14 strict reader
+- [ ] PWP-15 edit state/geometry (done) · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
+- [x] hybrid-xref.pdf fixed (generator bug)
+- [x] Hybrid-xref files (Word 'Save as PDF') editable (user decision; reader + spec updated)
+- [ ] PWP-13 (BinaryDocumentBase) waits for Office Gate R2
+
+- [ ] PWP-18/27: decide fields with /AA (pdf.js supersedes the AcroForm with /NeedAppearances) — recommend not fillable
+- [ ] Tagged PDFs: added annotations get no StructParent (accessibility gap; post-v1 or note in README)
+- [x] PWP-19 writer service
+- [ ] Gate P2/P3: real-window check that the viewed PDF still renders after several writes (writer uses its own Worker)
+- [x] PWP-27 form classification and field rules
+- [ ] PWP-29: protocol amendment so lockedFields carry a reason
+- [x] PWP-28 form verification rules + PG suites
+- [x] Edit-core independent review: B1 (PV5 bypass) + S1–S5 + nits N1–N10 fixed (`feature/pdf-core-fixes`)
+- [ ] Review residuals: user text containing object-boundary words refuses the save; widget appearance text not compared with /V
+- [ ] Remaining PDF editing (PWP-13 → 20, 22–26, 29, 30) blocked on Office Gate R2
+
+## v1.6 release integration (feature/v1.6-integration)
+- [x] Merge `feature/office-xlsx-fixes`, `feature/office-docx-model`, `feature/pdf-edit-core` onto the Excel stack tip (conflicts resolved, tests green after each)
+- [x] Switch on `xlsxEdit`, `xlsxStructure`, `docxEdit` (PDF flags stay off); flag-off tests kept through the mutable-flags copy
+- [x] Verify: check-types, compile, production build, npm test, vsce ls / package (4.62 MB), real Excel 177/177, real Word 102/109 (7 known prettyDocx), PDF 121/121
+- [x] Rewrite README / CHANGELOG / Marketplace metadata for users (developer content moved to CONTRIBUTING.md)
+- [ ] Version bump to 1.6.0, PR to develop, then develop -> master, publish
+- [x] Decide whether `signatures/cla.json` belongs in the VSIX (add to `.vscodeignore`): excluded (F3)
+- [x] Pre-release fixes: load-robust tests (PG4 canonical compare, event-loop cadence, CPU-time budgets), handled shortcuts stopped before VS Code (capture phase), Word/Excel "Editor" names, F1 notices helper, F3 `.vscodeignore`, F4 corrupt-save hook gated by ExtensionMode, listing/README tidy
+- [ ] Lazy-load the Office/PDF providers (dynamic import on first open) to shrink `dist/extension.js` from 556 KB
+- [ ] CI: run `npm test` on Node >= 22.13 (PDF writer suites skip on older Node)
+- [ ] Fix the `npm run lint` configuration (it does not run cleanly today)
+- [ ] LanguageTool double-dispose on window reload (`LanguageToolDiagnosticsProvider.dispose`, pre-existing)
+- [ ] Graph leftovers: `vscodeMdEditor.toggleGraphMode` is a no-op and `vscodeMdEditor.graph.defaultMode` / `graph.localDepth` are read nowhere (removed from the README) — implement or remove from package.json
+- [ ] Markdown Edit (WYSIWYG) view: `[[` autocomplete only works in Raw/Split (Edit view has the Insert Link picker); decide whether to add it
+## 2026-11-21 PowerPoint viewer — spec and plan (feature/pptx-viewer-docs)
+
+View only, sequenced last (after the Office and PDF stacks). Spec: `docs/pptx-viewer-spec.md`; plan: `docs/pptx-viewer-plan.md`.
+
+- [x] Evaluate JS pptx renderers against an in-house renderer (scratch installs outside the repo; headless Edge runs under a strict CSP)
+- [x] Write `docs/pptx-viewer-spec.md`
+- [x] Write `docs/pptx-viewer-plan.md` (XWP-01…19, PR-X0…X5, Gates X0–X2)
+- [x] `.vscodeignore`: `docs/**`, `spike/**`
+- [ ] User: answer open questions Q1–Q4 (spec §15.2)
+- [ ] PR-X0 feature/pptx-viewer-docs → develop
+- [ ] Build (not before Office Gate R-final and PDF Gate P-final): Phase 0 XWP-01…03 → Gate X0
+- [ ] Phase 1 host core XWP-04…10 → Gate X1 (Fable independent review)
+- [ ] Phase 2 viewer XWP-11…19 → Gate X2 (human) → release

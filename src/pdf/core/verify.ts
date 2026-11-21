@@ -1,0 +1,1501 @@
+// Save verifier (spec §6.5 PV1–PV6, §12, §13.2; plan PWP-18).
+//
+// The bytes to be saved come from pdf.js running in the webview, so they are UNTRUSTED. Before anything is
+// written to disk the host proves, with its own strict reader (`reader.ts`) and nothing else, that the output
+// is the loaded file plus exactly one well-formed, minimal, inert revision that does what the edit state asked
+// for and nothing more:
+//
+//   PV1  prefix identity: the output is longer than the base and starts with every byte of it.
+//   PV2  revision structure: exactly one appended revision, chained to the base (/Prev, same /Root, /Info and
+//        first /ID), of an allowed cross-reference kind (`allowedAppendedKinds`), only allowed trailer keys,
+//        and every appended byte accounted for (objects, the section, `startxref N %%EOF`, whitespace); no shape
+//        pdf.js reads differently from the strict reader (a table subsection `1 N` starting free; a comment; text
+//        that pdf.js's recovery scan would take for an object boundary, `structureTokens`).
+//   PV3  entries: in-use entries point into the appended region; no object-stream entries; free entries are
+//        object 0 and exactly the annotations (and Popups) the request removes.
+//   PV4  object allow-list: new objects are Highlight/Ink/Popup annotations, their appearance form XObjects
+//        and the cross-reference stream, with listed keys and value shapes; what a new annotation shows is the
+//        request's (geometry, colour, opacity, flags, author, date, Popup; `annotDisplay`), and every new
+//        appearance stream draws with the operators pdf.js writes for its kind only (`CONTENT_OPERATORS`), inside a
+//        /BBox that is the annotation's /Rect (or the widget's size); superseded objects are pages
+//        (/Annots only, and exactly as expected), and the objects of requested fields by role (`FIELD_SUPERSEDE_KEYS`:
+//        /V /I /AS /AP /M /MK) — compared by DECODED value; the written /V, /AS and /I must state the requested
+//        value and a rewritten text/choice widget must have a fresh appearance of its own (PWP-28). Anything else
+//        (catalog, AcroForm, structure tree, streams, other fields ...) is refused.
+//   PV5  inert: no new object and no changed key of a superseded object carries an action, script or file.
+//   PV6  expectations: the writer's read-back (`observed`) has the base's page count, the expected annotation
+//        count per page and the requested field values; the appended size is within budget.
+//
+// Refuse rather than guess: anything outside the tables below fails. Findings carry check ids, codes, object
+// numbers and page indices only, never document content (they go into the diagnostics file of §6.5).
+// Work is lazy (spike S4): the cross-reference chains and the appended objects (plus their base versions and
+// the few base objects they point at) are read; the body of the base is never scanned.
+//
+// No `vscode` import, no npm package (core rule 1).
+
+import { timingSafeEqual } from 'node:crypto';
+import type { PdfFieldValue, PdfObserved } from '../protocol.js';
+import { findComment, openPdf, openPdfSync, PdfReadError, tokenise } from './reader.js';
+import type { PdfDict, PdfFile, PdfIndirectObject, PdfRevision, PdfStream, PdfToken, PdfValue, ReaderLimits, XrefKind } from './reader.js';
+import type { PdfEditableClassification } from './classify.js';
+import type { PdfEditState, PdfFieldSpec } from './state.js';
+import { canonicalFields, fieldValuesEqual, refKey } from './state.js';
+import type { PdfHighlightEntry, PdfInkEntry, PdfStorageContext, PdfStorageEntry } from './storageAdapter.js';
+import { expectedAnnotDelta, expectedFreed, isEditorKey, serialisedSize, toStorageEntries } from './storageAdapter.js';
+import { PDF_LIMITS } from './limits.js';
+
+// ================================================================ findings
+
+/** Every reason code, by check. The diagnostics of a failed save are made of these and object numbers. */
+export const VERIFY_CODES = {
+  PV1: [
+    'not-longer',            // the output is not longer than the base
+    'prefix-differs',        // a byte of the base was changed
+  ],
+  PV2: [
+    'base-unreadable',       // the strict reader refuses the base (the caller should never have offered editing)
+    'out-unreadable',        // the strict reader refuses the output's cross-reference chain or an appended object
+    'revision-count',        // not exactly one revision appended
+    'chain-mismatch',        // the older revisions of the output are not the base's
+    'prev-mismatch',         // the new trailer's /Prev is not the base's startxref
+    'startxref-outside-append', // the last startxref does not point into the appended region
+    'xref-kind',             // cross-reference kind not allowed for this base (`allowedAppendedKinds`)
+    'trailer-key',           // a trailer key outside `TRAILER_KEYS` (incl. /XRefStm)
+    'encrypt',               // the output declares encryption
+    'root-changed',
+    'info-changed',
+    'id-changed',            // the first /ID element differs from the base's
+    'id-malformed',          // /ID is not two strings, or appears although the base has none
+    'size-mismatch',         // /Size smaller than the base's, or larger than the objects written need
+    'stray-bytes',           // appended bytes that belong to no listed object and not to the section
+    'object-overlap',        // two listed objects (or an object and the section) overlap
+    'eof',                   // the file does not end with `startxref <offset> %%EOF` and an end of line
+    'xref-ambiguous',        // a table subsection `1 N` starting with a free entry: pdf.js renumbers it from 0
+    'xref-stream-number',    // the cross-reference stream is not a new object number listed (at its offset) by itself
+    'comment',               // a `%` comment in the appended region outside stream data and strings
+    'structure-token',       // `N G obj`, `endobj`, `xref`, `trailer<<` or `startxref` text away from its place
+  ],
+  PV3: [
+    'entry-target',          // an in-use entry does not point at its `N G obj` header
+    'entry-outside-append',  // an in-use entry points into the base (resurrecting an older version)
+    'objstm-entry',          // an object-stream (type 2) entry
+    'object-zero',           // object 0 is listed as in use
+    'new-gen',               // a new object number with a generation other than 0
+    'superseded-gen',        // a superseded object with a generation other than the base's
+    'superseded-missing',    // a number below the base's /Size that is not an object of the base
+    'free-unexpected',       // a free entry for an object the request does not remove
+    'free-missing',          // an object the request removes is not freed
+    'free-gen',              // a free entry whose generation is not the base's + 1
+  ],
+  PV4: [
+    'new-kind',              // a new object that is not on the allow-list
+    'new-key',               // a key outside the allow-list of its kind
+    'new-value',             // a value of the wrong shape (inline/indirect, type, range)
+    'ap-target',             // an /AP entry that does not point at an allowed appearance stream
+    'font-ref',              // an appearance font that is not a font of the base
+    'popup-link',            // a Popup and its parent do not point at each other
+    'orphan-object',         // a new appearance stream that nothing new or rewritten uses
+    'annot-unlinked',        // a new annotation listed on no page (or on several)
+    'annot-wrong-page',      // a new annotation listed on a page other than the requested one
+    'annot-unexpected',      // a new annotation that matches nothing the request adds
+    'annot-missing',         // an annotation the request adds is not in the output
+    'annot-mismatch',        // a new annotation (or its Popup) shows something the request does not say (quads, ink, width,
+                             // opacity, flags, rotation, border, author, date, Popup /Rect or /Open)
+    'bbox-mismatch',         // a new appearance's /BBox is not its annotation's /Rect (or [0 0 w h] of its widget)
+    'content-operator',      // an appearance stream operator (or operand) outside the allow-list for its kind
+    'content-structure',     // an appearance stream with PDF structure keywords (obj, stream, xref ...) or an inline image
+    'annots-mismatch',       // a page's /Annots is not "old minus removed plus added"
+    'annots-indirect',       // a rewritten page's /Annots is not an inline array
+    'page-unexpected',       // a page was rewritten although the request does not touch it
+    'page-missing',          // a page the request touches was not rewritten
+    'superseded-key',        // a superseded object changed a key its rule does not allow
+    'mk-changed',            // a widget's /MK changed beyond removing /R 0
+    'kind-changed',          // a superseded object changed between dictionary and stream
+    'field-unexpected',      // a field or widget the request does not set was rewritten
+    'value-mismatch',        // a requested field's written /V, /AS or /I does not state the requested value (button /V not a name)
+    'appearance-missing',    // a rewritten text/choice widget has no fresh /AP /N of its own (pdf.js could not draw the value)
+    'need-appearances',      // the AcroForm was superseded only to add /NeedAppearances true (same cause; §8.5)
+    'catalog-superseded', 'acroform-superseded', 'struct-superseded', 'info-superseded', 'pages-superseded',
+    'annot-superseded', 'stream-superseded', 'other-superseded',
+  ],
+  PV5: [
+    'action-introduced',     // an action, script, embedded file or file specification was introduced
+  ],
+  PV6: [
+    'growth-over-cap',       // output larger than the base + `maxWriteGrowthBytes` (spec §9.3)
+    'size-budget',           // appended bytes over 64 KB + 16 x the serialised size of the state
+    'page-count',            // observed page count differs from the base's
+    'annot-count',           // observed annotation count of a page differs from base + added - removed
+    'field-missing',         // a requested field was not read back
+    'field-value',           // a requested field read back a different value
+    'request-invalid',       // the edit state does not fit the classification (a host bug; never saved)
+  ],
+} as const;
+
+export type PdfVerifyCheck = keyof typeof VERIFY_CODES;
+export type PdfVerifyCode<C extends PdfVerifyCheck = PdfVerifyCheck> = (typeof VERIFY_CODES)[C][number];
+
+/** One reason a save was refused. Object numbers and page indices only — never document content. */
+export interface PdfVerifyFinding {
+  check: PdfVerifyCheck;
+  code: PdfVerifyCode;
+  /** The object the finding is about, when there is one. */
+  obj?: number;
+  /** The 0-based page index the finding is about, when there is one. */
+  page?: number;
+}
+
+export interface PdfVerifyStats {
+  appendedBytes: number;
+  budgetBytes: number;
+  newObjects: number;
+  supersededObjects: number;
+  freedObjects: number;
+}
+
+export interface PdfVerifyResult {
+  ok: boolean;
+  /** Empty when `ok`. The first finding is the first problem found; later ones may be consequences. */
+  findings: PdfVerifyFinding[];
+  /** Null when verification stopped before the appended revision was read. */
+  stats: PdfVerifyStats | null;
+}
+
+// ================================================================ input
+
+export interface PdfVerifyInput {
+  /** The bytes of this generation (`PdfDocument.base`). */
+  base: Uint8Array;
+  /** The writer's output (`pdfWriteResult.bytes`): untrusted. */
+  out: Uint8Array;
+  /** `classify(base)` — must be the editable result for exactly these base bytes. */
+  classification: PdfEditableClassification;
+  /** The edit state the writer was asked to serialise. */
+  state: PdfEditState;
+  /** The `annotationAuthor` the storage entries were built with (spec §8.2). */
+  author?: string;
+  /** The writer's read-back (`pdfWriteResult.observed`): untrusted, compared against expectations. */
+  observed: PdfObserved;
+  /** The base already opened by the strict reader (saves re-opening it). Must be of `base`. */
+  baseFile?: PdfFile;
+}
+
+export interface PdfVerifyOptions {
+  /** Strict-reader caps and yielding parameters. */
+  reader?: Partial<ReaderLimits>;
+  /** Spec §9.3: output larger than base + this fails. */
+  maxGrowthBytes?: number;
+  /** PV6 size budget: appended <= fixed + perStateByte x serialised size of the state. */
+  appendBudget?: { fixed: number; perStateByte: number };
+  /** Stop collecting after this many findings. */
+  maxFindings?: number;
+}
+
+export const APPEND_BUDGET = Object.freeze({ fixed: 64 * 1024, perStateByte: 16 });
+
+// ================================================================ policy tables
+
+/** The cross-reference kind of a base (its newest section, as the strict reader reports it). */
+export type BaseXrefKind = XrefKind;
+/** The kind of the appended section. */
+export type AppendedXrefKind = XrefKind;
+
+/**
+ * PV2: the kinds of cross-reference section pdf.js may append, as a function of the base's kind ("matches the
+ * base", spec §3.2, §6.5). Hybrid bases (/XRefStm, e.g. Word "Save as PDF"): pdf.js 6.5.438 appends a plain
+ * classic table WITHOUT /XRefStm (measured, `tests/pdf/hybridWrite.test.mjs`); an appended hybrid section is
+ * never allowed. A new base kind, or a different measurement after a pdf.js upgrade, is one row here.
+ */
+export const APPENDED_XREF_KINDS: Readonly<Record<BaseXrefKind, readonly AppendedXrefKind[]>> = Object.freeze({
+  table: ['table'],
+  stream: ['stream'],
+  hybrid: ['table'],
+});
+
+export function allowedAppendedKinds(base: BaseXrefKind): readonly AppendedXrefKind[] {
+  return APPENDED_XREF_KINDS[base];
+}
+
+export function baseXrefKind(file: PdfFile): BaseXrefKind {
+  return file.xrefKind;
+}
+
+/** PV2: keys the appended trailer (for a stream: the cross-reference stream's dictionary) may have. */
+export const TRAILER_KEYS: Readonly<Record<AppendedXrefKind, ReadonlySet<string>>> = Object.freeze({
+  table: new Set(['Size', 'Root', 'Info', 'ID', 'Prev']),
+  hybrid: new Set<string>(), // never appended (`APPENDED_XREF_KINDS`); every key is reported
+
+  stream: new Set(['Size', 'Root', 'Info', 'ID', 'Prev', 'Type', 'W', 'Index', 'Length', 'Filter']),
+});
+
+/** PV5: names that must not be introduced, as a key or as a name value, at any depth. */
+export const INERT_NAMES: ReadonlySet<string> = new Set([
+  'JS', 'JavaScript', 'Launch', 'URI', 'GoToR', 'GoToE', 'SubmitForm', 'ImportData', 'OpenAction', 'AA', 'A',
+  'EmbeddedFile', 'EmbeddedFiles', 'RichMedia', 'Filespec',
+]);
+
+/** The kinds of new object PV4 allows (spec §6.5 PV4 a–e). */
+export type NewObjectKind = 'highlight' | 'ink' | 'popup' | 'form' | 'xref';
+
+/** PV4: the keys each kind of new object may have (spike S3 lists, pdf.js 6.5.438). */
+export const NEW_OBJECT_KEYS: Readonly<Record<Exclude<NewObjectKind, 'xref'>, ReadonlySet<string>>> = Object.freeze({
+  highlight: new Set(['Type', 'Subtype', 'CreationDate', 'Rect', 'F', 'Border', 'Rotate', 'QuadPoints', 'C', 'CA', 'T', 'AP', 'Contents', 'Popup']),
+  ink: new Set(['Type', 'Subtype', 'CreationDate', 'Rect', 'F', 'Border', 'Rotate', 'InkList', 'BS', 'C', 'CA', 'T', 'AP', 'Contents', 'Popup']),
+  popup: new Set(['Type', 'Subtype', 'Open', 'Rect', 'Parent']),
+  form: new Set(['Type', 'Subtype', 'FormType', 'BBox', 'Length', 'Resources']),
+});
+
+/** What a new appearance stream belongs to (decides its operator allow-list and its /BBox). */
+export type AppearanceUse = 'highlight' | 'ink' | 'widget';
+
+/**
+ * PV4: content-stream operators a new appearance may use, by what it belongs to, with their operand shapes
+ * (`n` number, `N` resource name, `s` string, `t` the name /Tx). Measured on every pdf.js 6.5.438 output of the
+ * contract and form suites (tests/.out/pdf, 251 appearance streams, 2026-11-21): highlights fill outlines with a
+ * Multiply ExtGState; ink strokes curves; text and choice widgets draw a marked-content /Tx block with a background,
+ * border, clip and Tj lines. Anything else (images, XObjects, shadings, inline images, arrays, dictionaries, PDF
+ * structure keywords) is refused, so a new appearance cannot paint arbitrary content over the page.
+ */
+export const CONTENT_OPERATORS: Readonly<Record<AppearanceUse, Readonly<Record<string, string>>>> = Object.freeze({
+  highlight: { rg: 'nnn', gs: 'N', m: 'nn', l: 'nn', h: '', 'f*': '' },
+  ink: { w: 'n', J: 'n', j: 'n', RG: 'nnn', m: 'nn', l: 'nn', c: 'nnnnnn', S: '' },
+  widget: {
+    BMC: 't', EMC: '', q: '', Q: '', g: 'n', G: 'n', rg: 'nnn', RG: 'nnn', w: 'n', re: 'nnnn', f: '', S: '', W: '', n: '',
+    BT: '', ET: '', Tf: 'Nn', Tm: 'nnnnnn', Td: 'nn', Tj: 's',
+  },
+});
+
+/** Keywords that are PDF file structure, never content (`content-structure`), and the inline-image operators. */
+const STRUCTURE_KEYWORDS: ReadonlySet<string> = new Set(['obj', 'endobj', 'stream', 'endstream', 'trailer', 'xref', 'startxref', 'BI', 'ID', 'EI']);
+/** Operators per appearance, and nesting of q/BT/BMC, beyond these are refused. */
+const MAX_CONTENT_OPS = 100_000;
+const MAX_CONTENT_NESTING = 16;
+
+/** The kinds a superseded object can have, decided from its BASE version. */
+export type SupersededKind =
+  | 'page' | 'widget' | 'field' | 'acroform' | 'catalog' | 'struct' | 'info' | 'pages' | 'annot' | 'stream' | 'other';
+
+export interface SupersedeRule {
+  /** Keys whose decoded value may differ from the base version (added, changed or removed). */
+  keys: ReadonlySet<string>;
+}
+
+/**
+ * PV4, the AcroForm row: the AcroForm dictionary is never superseded. DECIDED (PWP-27/PWP-28, 2026-11-21): this
+ * stays `null`. pdf.js supersedes it only to add `/NeedAppearances true`, which it does when it could not draw a
+ * value — a text field with /AA format scripts (such fields are not fillable, classification `scripts`) or a value
+ * the field's font cannot encode (it then also drops the widget's /AP). Relying on readers to redraw is what spec
+ * §8.5 rules out, so such an output is refused; when the only change is that flag the finding is the specific
+ * `need-appearances` (with `appearance-missing` on the widget) and `verifyFailureMessage` explains it to the user.
+ */
+export const ACROFORM_SUPERSEDE_RULE: SupersedeRule | null = null;
+
+/** PV4: what a superseded object of each kind may change. `null` = never superseded (`<kind>-superseded`). */
+export const SUPERSEDE_RULES: Readonly<Record<SupersededKind, SupersedeRule | null>> = Object.freeze({
+  page: { keys: new Set(['Annots']) },
+  // A widget, or a merged field/widget: the outer bound; what a given widget may change is `FIELD_SUPERSEDE_KEYS`.
+  widget: { keys: new Set(['V', 'I', 'AS', 'AP', 'M', 'MK']) },
+  field: { keys: new Set(['V']) },
+  acroform: ACROFORM_SUPERSEDE_RULE,
+  catalog: null,
+  struct: null,
+  info: null,
+  pages: null,
+  annot: null,
+  stream: null,
+  other: null,
+});
+
+/**
+ * The role of a superseded object of a requested field (PWP-28): `merged` = a field/widget in one object (the request
+ * key itself); `widget` = a separate widget (the request key, whose /Parent holds the value); `field` = that terminal
+ * field node. Anything else of the field tree may not be rewritten (`field-unexpected`).
+ */
+export type FieldRole = 'merged' | 'widget' | 'field';
+
+const keys = (...k: string[]): ReadonlySet<string> => new Set(k);
+/**
+ * PV4 field rows, per role and field kind: the keys pdf.js 6.5.438 changes (measured, PWP-28 on `forms.pdf` and
+ * synthetic merged/separate fields). Text and choice widgets get a new appearance (/AP /N to a new form XObject);
+ * buttons only switch /AS (their /AP is never rewritten); the value (/V, and /I of a merged choice field that has
+ * one) lives on the merged object or the field node; /M is the rewrite time; /MK may only lose `/R 0`.
+ */
+export const FIELD_SUPERSEDE_KEYS: Readonly<Record<FieldRole, Readonly<Record<PdfFieldSpec['kind'], ReadonlySet<string>>>>> = Object.freeze({
+  merged: { text: keys('V', 'AP', 'M', 'MK'), choice: keys('V', 'I', 'AP', 'M', 'MK'), checkbox: keys('V', 'AS', 'M', 'MK'), radio: keys('V', 'AS', 'M', 'MK') },
+  widget: { text: keys('AP', 'M', 'MK'), choice: keys('AP', 'M', 'MK'), checkbox: keys('AS', 'M', 'MK'), radio: keys('AS', 'M', 'MK') },
+  field: { text: keys('V'), choice: keys('V'), checkbox: keys('V'), radio: keys('V') },
+});
+
+const SUPERSEDED_CODE: Readonly<Record<SupersededKind, PdfVerifyCode<'PV4'>>> = Object.freeze({
+  page: 'superseded-key', widget: 'superseded-key', field: 'superseded-key',
+  acroform: 'acroform-superseded', catalog: 'catalog-superseded', struct: 'struct-superseded', info: 'info-superseded',
+  pages: 'pages-superseded', annot: 'annot-superseded', stream: 'stream-superseded', other: 'other-superseded',
+});
+
+const STRUCT_TYPES: ReadonlySet<string> = new Set(['StructTreeRoot', 'StructElem', 'MCR', 'OBJR']);
+
+/** Tolerances: pdf.js writes numbers with `toFixed(10)`; rectangles and colours are matched loosely. */
+const NUM_EPS = 1e-9;
+const RECT_EPS = 0.01;
+const COLOR_EPS = 1.5 / 255;
+/** Appearance colours and widths: pdf.js writes them with two decimals. */
+const PAINT_EPS = 0.006;
+/** /Parent hops followed when collecting the fields a request may rewrite. */
+const MAX_FIELD_DEPTH = 64;
+/** Prefix compared per slice by the async verifier. */
+const COMPARE_SLICE = 4 * 1024 * 1024;
+
+// ================================================================ entry points
+
+/**
+ * Verify a writer output against the base and the request. Never rejects: every failure is a finding.
+ * Yields to the event loop while comparing the prefix and opening large files.
+ */
+export async function verifySave(input: PdfVerifyInput, options: PdfVerifyOptions = {}): Promise<PdfVerifyResult> {
+  const v = new Verifier(input, options);
+  try {
+    if (!v.preflight()) return v.result();
+    if (!(await prefixEqualAsync(input.base, input.out, options.reader?.yieldIntervalMs ?? PDF_LIMITS.yieldIntervalMs))) {
+      v.add('PV1', 'prefix-differs');
+      return v.result();
+    }
+    if (!v.budget()) return v.result();
+    const bf = input.baseFile ?? await openOr(v, 'base', () => openPdf(input.base, options.reader));
+    if (!bf) return v.result();
+    const of = await openOr(v, 'out', () => openPdf(input.out, options.reader));
+    if (!of) return v.result();
+    v.check(bf, of);
+  } catch (e) {
+    v.internal(e);
+  }
+  return v.result();
+}
+
+/** `verifySave` without yielding (small files, tests). */
+export function verifySaveSync(input: PdfVerifyInput, options: PdfVerifyOptions = {}): PdfVerifyResult {
+  const v = new Verifier(input, options);
+  try {
+    if (!v.preflight()) return v.result();
+    if (!prefixEqual(input.base, input.out, 0, input.base.length)) {
+      v.add('PV1', 'prefix-differs');
+      return v.result();
+    }
+    if (!v.budget()) return v.result();
+    const bf = input.baseFile ?? openOrSync(v, 'base', () => openPdfSync(input.base, options.reader));
+    if (!bf) return v.result();
+    const of = openOrSync(v, 'out', () => openPdfSync(input.out, options.reader));
+    if (!of) return v.result();
+    v.check(bf, of);
+  } catch (e) {
+    v.internal(e);
+  }
+  return v.result();
+}
+
+/** The message of a refused save (spec §6.5 step 4). */
+export const SAVE_REFUSED_MESSAGE = 'Save failed an internal consistency check — your file on disk was not changed.';
+/**
+ * The message when a form value could not be drawn (spec §8.5, PWP-28): pdf.js cannot encode some character of a
+ * text or choice value in the field's font, so it writes the value without an appearance (and asks readers to redraw
+ * with /NeedAppearances when the AcroForm is an indirect object). Neither is accepted, so the save is refused with
+ * this sentence instead of the generic one. The `appearance-missing` findings carry the widget's object number.
+ */
+export const FIELD_APPEARANCE_MESSAGE = 'Couldn\'t save: a form field contains characters its font can\'t display '
+  + '(for example letters from another script, or emoji). Remove those characters and save again. Your file on disk was not changed.';
+
+/** The user-facing sentence for a failed verification. */
+export function verifyFailureMessage(result: PdfVerifyResult): string {
+  return result.findings.some((f) => f.code === 'appearance-missing' || f.code === 'need-appearances')
+    ? FIELD_APPEARANCE_MESSAGE : SAVE_REFUSED_MESSAGE;
+}
+
+/** One line per finding ("PV4 new-key obj 12"), for the "Save a copy of diagnostics" file. No document content. */
+export function formatFindings(result: PdfVerifyResult): string {
+  const lines = result.findings.map((f) =>
+    `${f.check} ${f.code}${f.obj !== undefined ? ` obj ${f.obj}` : ''}${f.page !== undefined ? ` page ${f.page + 1}` : ''}`);
+  if (result.stats) {
+    const s = result.stats;
+    lines.push(`appended ${s.appendedBytes} budget ${s.budgetBytes} new ${s.newObjects} superseded ${s.supersededObjects} freed ${s.freedObjects}`);
+  }
+  return lines.join('\n');
+}
+
+/** What a writer that did exactly what was asked reads back (tests and fake writers). */
+export function expectedObserved(classification: PdfEditableClassification, state: PdfEditState): PdfObserved {
+  const delta = expectedAnnotDelta(state, storageContext(classification));
+  return {
+    pageCount: classification.pages.length,
+    annotsPerPage: classification.pages.map((p, i) => p.annots.length + (delta.get(i) ?? 0)),
+    fields: canonicalFields(state),
+  };
+}
+
+// ================================================================ opening and the prefix
+
+function readerFinding(e: PdfReadError, which: 'base' | 'out'): [PdfVerifyCheck, PdfVerifyCode] {
+  if (which === 'base') return ['PV2', 'base-unreadable'];
+  if (e.code === 'encrypted') return ['PV2', 'encrypt'];
+  if (e.code === 'hybrid') return ['PV2', 'xref-kind'];
+  if (e.code === 'ambiguous-xref') return ['PV2', 'xref-ambiguous'];
+  // The reader checks every in-use entry against its `N G obj` header while opening; those refusals are PV3.
+  // (Matched on the reader's own messages, `reader.ts` tableSection/streamSection.)
+  if (e.code === 'bad-xref' && /does not point at its header|object stream number invalid/.test(e.message)) return ['PV3', 'entry-target'];
+  return ['PV2', 'out-unreadable'];
+}
+
+async function openOr(v: Verifier, which: 'base' | 'out', open: () => Promise<PdfFile>): Promise<PdfFile | null> {
+  try { return await open(); } catch (e) {
+    if (!(e instanceof PdfReadError)) throw e;
+    const [c, code] = readerFinding(e, which);
+    v.add(c, code);
+    return null;
+  }
+}
+
+function openOrSync(v: Verifier, which: 'base' | 'out', open: () => PdfFile): PdfFile | null {
+  try { return open(); } catch (e) {
+    if (!(e instanceof PdfReadError)) throw e;
+    const [c, code] = readerFinding(e, which);
+    v.add(c, code);
+    return null;
+  }
+}
+
+function prefixEqual(base: Uint8Array, out: Uint8Array, from: number, to: number): boolean {
+  if (to <= from) return true;
+  return timingSafeEqual(base.subarray(from, to), out.subarray(from, to));
+}
+
+async function prefixEqualAsync(base: Uint8Array, out: Uint8Array, yieldMs: number): Promise<boolean> {
+  let slice = performance.now();
+  for (let at = 0; at < base.length; at += COMPARE_SLICE) {
+    if (!prefixEqual(base, out, at, Math.min(base.length, at + COMPARE_SLICE))) return false;
+    if (performance.now() - slice >= yieldMs) {
+      await new Promise<void>((r) => setImmediate(r));
+      slice = performance.now();
+    }
+  }
+  return true;
+}
+
+function storageContext(c: PdfEditableClassification, author?: string): PdfStorageContext {
+  const ctx: PdfStorageContext = { deletable: c.context.deletable, pages: c.context.pages };
+  if (author) ctx.author = author;
+  return ctx;
+}
+
+// ================================================================ value helpers
+
+type Val = PdfValue | PdfStream | null | undefined;
+
+const isDict = (v: Val): v is PdfDict => !!v && v.kind === 'dict';
+const nameOf = (v: Val): string | null => (v && v.kind === 'name' ? v.value : null);
+const isNum = (v: Val): boolean => !!v && v.kind === 'number' && Number.isFinite(v.value);
+const isInt = (v: Val): boolean => !!v && v.kind === 'number' && v.integer;
+const isStr = (v: Val): boolean => !!v && v.kind === 'string';
+const isBool = (v: Val): boolean => !!v && v.kind === 'bool';
+const nums = (v: Val): number[] | null => {
+  if (!v || v.kind !== 'array') return null;
+  const out: number[] = [];
+  for (const it of v.items) { if (it.kind !== 'number' || !Number.isFinite(it.value)) return null; out.push(it.value); }
+  return out;
+};
+const dictOf = (v: Val): PdfDict | null => (!v ? null : v.kind === 'dict' ? v : v.kind === 'stream' ? v.dict : null);
+
+/** PDFDocEncoding code points for 0x18–0x1F and 0x80–0xA0 (ISO 32000-1 Annex D); the rest is Latin-1. */
+const PDFDOC_18 = [0x02D8, 0x02C7, 0x02C6, 0x02D9, 0x02DD, 0x02DB, 0x02DA, 0x02DC];
+const PDFDOC_80 = [
+  0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x0192, 0x2044, 0x2039, 0x203A, 0x2212, 0x2030, 0x201E, 0x201C,
+  0x201D, 0x2018, 0x2019, 0x201A, 0x2122, 0xFB01, 0xFB02, 0x0141, 0x0152, 0x0160, 0x0178, 0x017D, 0x0131, 0x0142,
+  0x0153, 0x0161, 0x017E, 0xFFFD, 0x20AC,
+];
+
+/** A PDF string as text: UTF-16BE or UTF-8 with a byte-order mark, otherwise PDFDocEncoding. */
+export function decodeTextString(b: Uint8Array): string {
+  if (b.length >= 2 && b[0] === 0xFE && b[1] === 0xFF) {
+    let s = '';
+    for (let i = 2; i + 1 < b.length; i += 2) s += String.fromCharCode((b[i] << 8) | b[i + 1]);
+    return b.length % 2 ? s + '�' : s;
+  }
+  if (b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) return new TextDecoder('utf-8').decode(b.subarray(3));
+  let s = '';
+  for (const c of b) {
+    s += String.fromCharCode(c >= 0x18 && c <= 0x1F ? PDFDOC_18[c - 0x18] : c >= 0x80 && c <= 0xA0 ? PDFDOC_80[c - 0x80] : c);
+  }
+  return s;
+}
+
+function numEqual(a: number, b: number): boolean {
+  return a === b || Math.abs(a - b) <= NUM_EPS * Math.max(1, Math.abs(a), Math.abs(b));
+}
+
+/**
+ * Equality by DECODED value (spec §6.5 PV4): names and strings after decoding (a string compares as text, so
+ * hexadecimal/literal, escapes and PDFDocEncoding/UTF-16BE forms of the same text are equal), numbers by value,
+ * references by number and generation, dictionaries ignoring key order and keys whose value is null.
+ */
+export function equalValues(a: Val, b: Val): boolean {
+  const an = !a || a.kind === 'null', bn = !b || b.kind === 'null';
+  if (an || bn) return an && bn;
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case 'bool': return a.value === (b as typeof a).value;
+    case 'number': return numEqual(a.value, (b as typeof a).value);
+    case 'name': return a.value === (b as typeof a).value;
+    case 'ref': return a.num === (b as typeof a).num && a.gen === (b as typeof a).gen;
+    case 'string': {
+      const bb = (b as typeof a).bytes;
+      if (a.bytes.length === bb.length && a.bytes.every((x, i) => x === bb[i])) return true;
+      return decodeTextString(a.bytes) === decodeTextString(bb);
+    }
+    case 'array': {
+      const bi = (b as typeof a).items;
+      if (a.items.length !== bi.length) return false;
+      for (let i = 0; i < bi.length; i++) if (!equalValues(a.items[i], bi[i])) return false;
+      return true;
+    }
+    case 'dict': return dictDiff(a, b as PdfDict).length === 0;
+    case 'stream': return false; // streams are never compared: a superseded stream is refused outright
+  }
+  return false;
+}
+
+/** Keys whose decoded values differ (null-valued keys count as absent). */
+function dictDiff(a: PdfDict, b: PdfDict): string[] {
+  const out: string[] = [];
+  const keys = new Set([...a.entries.keys(), ...b.entries.keys()]);
+  for (const k of keys) if (!equalValues(a.entries.get(k), b.entries.get(k))) out.push(k);
+  return out;
+}
+
+/** PV5: does `v` contain an inert-breaking name (as a key or a name value), at any depth? */
+function hasInertName(v: Val): boolean {
+  if (!v) return false;
+  switch (v.kind) {
+    case 'name': return INERT_NAMES.has(v.value);
+    case 'array': return v.items.some(hasInertName);
+    case 'dict':
+      for (const [k, x] of v.entries) if (INERT_NAMES.has(k) || hasInertName(x)) return true;
+      return false;
+    case 'stream': return hasInertName(v.dict);
+    default: return false;
+  }
+}
+
+const WS = new Uint8Array(256);
+for (const c of [0, 9, 10, 12, 13, 32]) WS[c] = 1;
+function skipWs(b: Uint8Array, p: number, end = b.length): number { while (p < end && WS[b[p]]) p++; return p; }
+function matchAt(b: Uint8Array, p: number, s: string): boolean {
+  if (p + s.length > b.length) return false;
+  for (let i = 0; i < s.length; i++) if (b[p + i] !== s.charCodeAt(i)) return false;
+  return true;
+}
+
+// ================================================================ the verifier
+
+interface NewObject { num: number; kind: NewObjectKind | null; obj: PdfIndirectObject; dict: PdfDict | null }
+/** What a new appearance stream must draw: its kind, /BBox, and for markup the colour (/C) and line width (/BS /W). */
+interface FormUse { use: AppearanceUse; bbox: number[] | null; color?: number[] | null; width?: number | null }
+type AddedEntry = PdfHighlightEntry | PdfInkEntry;
+
+class Verifier {
+  readonly findings: PdfVerifyFinding[] = [];
+  stats: PdfVerifyStats | null = null;
+  private readonly max: number;
+  private entries: PdfStorageEntry[] = [];
+  private budgetBytes = 0;
+  /** Field objects the request may rewrite ("num gen" -> role and the field's spec). */
+  private readonly roles = new Map<string, { role: FieldRole; spec: Readonly<PdfFieldSpec> }>();
+  /** How often each new appearance stream is referenced from an /AP (each may be used once). */
+  private readonly apUses = new Map<number, number>();
+  /** What each referenced new appearance stream belongs to, and the /BBox it must have. */
+  private readonly formUse = new Map<number, FormUse>();
+
+  constructor(readonly input: PdfVerifyInput, readonly options: PdfVerifyOptions) {
+    this.max = options.maxFindings ?? 100;
+  }
+
+  add<C extends PdfVerifyCheck>(check: C, code: PdfVerifyCode<C>, obj?: number, page?: number): void {
+    if (this.findings.length >= this.max) return;
+    const f: PdfVerifyFinding = { check, code };
+    if (obj !== undefined) f.obj = obj;
+    if (page !== undefined) f.page = page;
+    this.findings.push(f);
+  }
+
+  /** A bug or an input the code did not anticipate: refusing the save is the safe failure. */
+  internal(_e: unknown): void {
+    this.add('PV2', 'out-unreadable');
+  }
+
+  result(): PdfVerifyResult {
+    return { ok: this.findings.length === 0, findings: this.findings, stats: this.stats };
+  }
+
+  /** Cheap checks before anything is parsed: growth cap, length, request consistency. */
+  preflight(): boolean {
+    const { base, out } = this.input;
+    if (out.length > base.length + (this.options.maxGrowthBytes ?? PDF_LIMITS.maxWriteGrowthBytes)) {
+      this.add('PV6', 'growth-over-cap');
+      return false;
+    }
+    if (!(out.length > base.length)) {
+      this.add('PV1', 'not-longer');
+      return false;
+    }
+    try {
+      this.entries = toStorageEntries(this.input.state, storageContext(this.input.classification, this.input.author));
+    } catch {
+      this.add('PV6', 'request-invalid');
+      return false;
+    }
+    if (!this.fieldRoles()) {
+      this.add('PV6', 'request-invalid');
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * The field objects the request may rewrite, by role (`FIELD_SUPERSEDE_KEYS`). Every requested field must be a
+   * fillable widget of THIS classification (classified with forms on), with a value its rule accepts; otherwise the
+   * request is invalid (a host bug: the state should never have accepted it).
+   */
+  private fieldRoles(): boolean {
+    const rules = this.input.classification.context.fields;
+    for (const [k, value] of this.input.state.fields) {
+      const rule = rules.get(k);
+      if (!rule || !rule.spec || rule.field === undefined || (rule.check && rule.check(value) !== null)) return false;
+      if (rule.spec.kind === 'text' ? typeof value !== 'string' : rule.spec.kind === 'choice'
+        ? !(typeof value === 'string' || Array.isArray(value)) : typeof value !== 'boolean') return false;
+      const merged = rule.field === k;
+      const prev = this.roles.get(k);
+      if (prev && prev.role !== (merged ? 'merged' : 'widget')) return false;
+      this.roles.set(k, { role: merged ? 'merged' : 'widget', spec: rule.spec });
+      if (!merged) {
+        const f = this.roles.get(rule.field);
+        if (f && (f.role !== 'field' || f.spec.kind !== rule.spec.kind)) return false;
+        this.roles.set(rule.field, { role: 'field', spec: rule.spec });
+      }
+    }
+    return true;
+  }
+
+  /** PV6 size budget, before the appended region is parsed (bounds all later work). */
+  budget(): boolean {
+    const b = this.options.appendBudget ?? APPEND_BUDGET;
+    this.budgetBytes = b.fixed + b.perStateByte * serialisedSize(this.entries);
+    if (this.input.out.length - this.input.base.length > this.budgetBytes) {
+      this.add('PV6', 'size-budget');
+      return false;
+    }
+    return true;
+  }
+
+  check(bf: PdfFile, of: PdfFile): void {
+    const rev = this.structure(bf, of);
+    if (!rev) return;
+    const objs = this.entriesAndObjects(bf, of, rev);
+    if (!objs) return;
+    this.objects(bf, of, rev, objs);
+    this.observed();
+  }
+
+  // ---------------------------------------------------------------- PV2
+
+  private structure(bf: PdfFile, of: PdfFile): PdfRevision | null {
+    const { base } = this.input;
+    const nb = bf.revisions.length;
+    if (of.revisions.length !== nb + 1) {
+      // Name the more specific cause when the newest section is at least chained elsewhere.
+      const last = of.revisions[of.revisions.length - 1];
+      if (last.startxref >= base.length && last.prev !== bf.startxref) this.add('PV2', 'prev-mismatch');
+      this.add('PV2', 'revision-count');
+      return null;
+    }
+    const rev = of.revisions[nb];
+    if (rev.startxref < base.length) { this.add('PV2', 'startxref-outside-append'); return null; }
+    if (rev.prev !== bf.startxref) { this.add('PV2', 'prev-mismatch'); return null; }
+    for (let i = 0; i < nb; i++) {
+      if (of.revisions[i].startxref !== bf.revisions[i].startxref) { this.add('PV2', 'chain-mismatch'); return null; }
+    }
+    if (!allowedAppendedKinds(baseXrefKind(bf)).includes(rev.kind)) this.add('PV2', 'xref-kind');
+    if (rev.kind === 'stream') {
+      // pdf.js gives its cross-reference stream a fresh number and lists it, at its own offset, in itself.
+      const n = rev.xrefStreamNum;
+      const e = n === null ? undefined : rev.entry(n);
+      if (n === null || n < bf.size || !e || e.type !== 'offset' || e.offset !== rev.startxref) this.add('PV2', 'xref-stream-number', n ?? undefined);
+    }
+
+    const t = rev.trailer.entries;
+    const bt = bf.trailer.entries;
+    const allowed = TRAILER_KEYS[rev.kind];
+    for (const k of t.keys()) {
+      if (k === 'Encrypt') this.add('PV2', 'encrypt');
+      else if (!allowed.has(k)) this.add('PV2', 'trailer-key');
+    }
+    const root = t.get('Root');
+    if (!root || root.kind !== 'ref' || !equalValues(root, bt.get('Root'))) this.add('PV2', 'root-changed');
+    if (!equalValues(t.get('Info'), bt.get('Info'))) this.add('PV2', 'info-changed');
+    this.checkId(bt.get('ID'), t.get('ID'));
+    return rev;
+  }
+
+  private checkId(baseId: PdfValue | undefined, id: PdfValue | undefined): void {
+    const pair = (v: PdfValue | undefined) =>
+      v && v.kind === 'array' && v.items.length === 2 && v.items[0].kind === 'string' && v.items[1].kind === 'string' ? v.items : null;
+    if (baseId === undefined || baseId.kind === 'null') {
+      if (id !== undefined && id.kind !== 'null') this.add('PV2', 'id-malformed');
+      return;
+    }
+    const p = pair(id);
+    if (!p) { this.add('PV2', 'id-malformed'); return; }
+    const b0 = baseId.kind === 'array' && baseId.items[0]?.kind === 'string' ? baseId.items[0].bytes : null;
+    const o0 = (p[0] as { bytes: Uint8Array }).bytes;
+    // pdf.js keeps the base's first element; only an empty or invalid one is replaced (`fileIds[0] || md5`).
+    if (b0 && b0.length > 0 && !(b0.length === o0.length && b0.every((x, i) => x === o0[i]))) this.add('PV2', 'id-changed');
+  }
+
+  // ---------------------------------------------------------------- PV3 + reading the appended objects
+
+  private entriesAndObjects(bf: PdfFile, of: PdfFile, rev: PdfRevision): Map<number, PdfIndirectObject> | null {
+    const { base, out, state } = this.input;
+    const freed = new Map<number, number>(); // expected freed num -> base gen
+    for (const r of expectedFreed(state, storageContext(this.input.classification))) freed.set(r.num, r.gen);
+    const seenFree = new Set<number>();
+    const inUse: Array<{ num: number; gen: number; offset: number }> = [];
+    let maxNum = -1;
+    for (const e of rev.entries()) {
+      maxNum = Math.max(maxNum, e.num);
+      if (e.type === 'objstm') { this.add('PV3', 'objstm-entry', e.num); continue; }
+      if (e.type === 'free') {
+        if (e.num === 0) continue;
+        const bg = freed.get(e.num);
+        if (bg === undefined) { this.add('PV3', 'free-unexpected', e.num); continue; }
+        if (e.gen !== Math.min(bg + 1, 0xFFFF)) this.add('PV3', 'free-gen', e.num);
+        seenFree.add(e.num);
+        continue;
+      }
+      if (e.num === 0) { this.add('PV3', 'object-zero', 0); continue; }
+      if (e.offset < base.length) { this.add('PV3', 'entry-outside-append', e.num); continue; }
+      if (e.num >= bf.size) {
+        if (e.gen !== 0) this.add('PV3', 'new-gen', e.num);
+      } else {
+        const be = bf.entry(e.num);
+        if (!be || be.type === 'free') this.add('PV3', 'superseded-missing', e.num);
+        else if (be.gen !== e.gen) this.add('PV3', 'superseded-gen', e.num);
+      }
+      inUse.push({ num: e.num, gen: e.gen, offset: e.offset });
+    }
+    for (const n of freed.keys()) if (!seenFree.has(n)) this.add('PV3', 'free-missing', n);
+    if (rev.size < bf.size || rev.size > Math.max(bf.size, maxNum + 1)) this.add('PV2', 'size-mismatch');
+
+    // Read every appended object (the reader checks its framing, /Length and endstream) and tile the region.
+    const objs = new Map<number, PdfIndirectObject>();
+    const tiles: Array<{ start: number; end: number }> = [];
+    const headers = new Set<number>(); const endobjs = new Set<number>();
+    for (const u of inUse) {
+      let o: PdfIndirectObject | null;
+      try { o = of.resolve(u.num, u.gen); } catch (e) {
+        if (!(e instanceof PdfReadError)) throw e;
+        this.add('PV2', 'out-unreadable', u.num);
+        return null;
+      }
+      if (!o || o.location.kind !== 'offset' || o.location.offset !== u.offset) { this.add('PV3', 'entry-target', u.num); return null; }
+      const end = objectEnd(out, o);
+      if (end < 0) { this.add('PV2', 'out-unreadable', u.num); return null; }
+      objs.set(u.num, o);
+      headers.add(u.offset); endobjs.add(end - 6);
+      if (u.offset !== rev.startxref) tiles.push({ start: u.offset, end });
+      if (this.hasComment(o, u.offset, end)) this.add('PV2', 'comment', u.num);
+    }
+    tiles.push({ start: rev.startxref, end: rev.sectionEnd });
+    if (rev.kind !== 'stream' && this.commentIn(rev.startxref, rev.sectionEnd)) this.add('PV2', 'comment');
+    this.tiling(tiles, rev);
+    this.structureTokens(rev, headers, endobjs);
+    return objs;
+  }
+
+  /** PV2: a `%` comment in an appended object outside its stream data and strings (pdf.js never writes one). */
+  private hasComment(o: PdfIndirectObject, start: number, end: number): boolean {
+    const v = o.value;
+    if (v.kind === 'stream') return this.commentIn(start, v.dataStart) || this.commentIn(v.dataEnd, end);
+    return this.commentIn(start, end);
+  }
+
+  private commentIn(start: number, end: number): boolean {
+    try { return findComment(this.input.out, start, end, this.options.reader) >= 0; } catch (e) {
+      if (e instanceof PdfReadError) return true; // already parsed once; a lexical error here is not pdf.js's output
+      throw e;
+    }
+  }
+
+  /**
+   * PV2: the text pdf.js's recovery scan (`XRef.indexObjects`) takes for object and section boundaries — `N G obj`,
+   * `endobj`, `xref`, `trailer<<`, `startxref`, matched as its regular expressions do, inside strings and stream
+   * data too — appears in the appended region only where this revision really has them. pdf.js rescans the file
+   * when its normal reading fails; with such text planted (in an appearance stream, a string, a dictionary), the
+   * rescan would find objects the strict reader never saw, with the last `N G obj` winning (the B1 bypass).
+   * Residual, accepted: a comment or field text the user typed that contains such a word refuses the save.
+   */
+  private structureTokens(rev: PdfRevision, headers: ReadonlySet<number>, endobjs: ReadonlySet<number>): void {
+    const { base, out } = this.input;
+    const text = latin1Of(out, base.length, out.length);
+    const re = /\b(endobj|\d+\s+\d+\s+obj|xref|trailer\s*<<|startxref)\b/g;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const at = base.length + m.index;
+      const t = m[1];
+      const ok = t === 'endobj' ? endobjs.has(at)
+        : t === 'xref' ? rev.kind !== 'stream' && at === rev.startxref
+        : t === 'startxref' ? at >= rev.sectionEnd
+        : t.startsWith('trailer') ? rev.kind !== 'stream' && at > rev.startxref && at < rev.sectionEnd
+        : headers.has(at);
+      if (!ok) { this.add('PV2', 'structure-token'); return; }
+    }
+  }
+
+  /** PV2: the appended region is exactly the listed objects, the section and the `startxref` tail. */
+  private tiling(tiles: Array<{ start: number; end: number }>, rev: PdfRevision): void {
+    const { base, out } = this.input;
+    tiles.sort((a, b) => a.start - b.start);
+    let p = base.length;
+    for (const t of tiles) {
+      if (t.start < p) { this.add('PV2', 'object-overlap'); return; }
+      if (skipWs(out, p, t.start) !== t.start) { this.add('PV2', 'stray-bytes'); return; }
+      p = t.end;
+    }
+    p = skipWs(out, p);
+    if (!matchAt(out, p, 'startxref')) { this.add('PV2', 'stray-bytes'); return; }
+    let q = skipWs(out, p + 9);
+    if (q === p + 9) { this.add('PV2', 'eof'); return; }
+    let n = 0; const d0 = q;
+    while (q < out.length && out[q] >= 0x30 && out[q] <= 0x39 && q - d0 < 16) n = n * 10 + (out[q++] - 0x30);
+    if (q === d0 || n !== rev.startxref) { this.add('PV2', 'eof'); return; }
+    q = skipWs(out, q);
+    if (!matchAt(out, q, '%%EOF')) { this.add('PV2', 'eof'); return; }
+    q += 5;
+    while (q < out.length && (out[q] === 10 || out[q] === 13)) q++;
+    if (q !== out.length) this.add('PV2', 'eof');
+  }
+
+  // ---------------------------------------------------------------- PV4 / PV5
+
+  private objects(bf: PdfFile, of: PdfFile, rev: PdfRevision, objs: Map<number, PdfIndirectObject>): void {
+    const cls = this.input.classification;
+    const pageIndex = new Map<string, number>();
+    cls.pages.forEach((p, i) => pageIndex.set(refKey(p.ref), i));
+
+    const news = new Map<number, NewObject>();
+    const superseded: PdfIndirectObject[] = [];
+    for (const [num, o] of objs) {
+      if (num >= bf.size) news.set(num, { num, kind: newKindOf(o, rev), obj: o, dict: dictOf(o.value) });
+      else superseded.push(o);
+    }
+
+    // New objects: inert, kind, keys, shapes.
+    const formRefs = new Set<number>();
+    for (const n of news.values()) {
+      if (hasInertName(n.obj.value)) this.add('PV5', 'action-introduced', n.num);
+      if (!n.kind) { this.add('PV4', 'new-kind', n.num); continue; }
+      if (n.kind === 'xref') continue; // its dictionary is the trailer (PV2)
+      this.newShape(bf, n, news, formRefs);
+    }
+
+    // Superseded objects.
+    const links = new Map<number, number>(); // new annotation num -> page listing it
+    const rewrittenPages = new Set<number>();
+    const ctx = { bf, news, formRefs, links, rewrittenPages, pageIndex };
+    for (const o of superseded) this.supersede(o, ctx);
+
+    // Requested field values as written (trusted bytes, not the read-back), and their appearances.
+    this.fieldValues(bf, of, news, new Set(superseded.map((o) => o.num)));
+    for (const [num, uses] of this.apUses) if (uses > 1) this.add('PV4', 'ap-target', num);
+
+    // Pages the request touches must have been rewritten.
+    const expectedPages = this.expectedPages();
+    for (const p of expectedPages) if (!rewrittenPages.has(p)) this.add('PV4', 'page-missing', cls.pages[p].ref.num, p);
+    for (const p of rewrittenPages) if (!expectedPages.has(p)) this.add('PV4', 'page-unexpected', cls.pages[p].ref.num, p);
+
+    // Every new appearance stream is used, by one thing, and draws only what its kind draws.
+    for (const n of news.values()) if (n.kind === 'form' && !formRefs.has(n.num)) this.add('PV4', 'orphan-object', n.num);
+    for (const [num, use] of this.formUse) {
+      const n = news.get(num);
+      if (n) this.appearance(of, n, use);
+    }
+
+    this.matchAnnotations(news, links);
+
+    this.stats = {
+      appendedBytes: this.input.out.length - this.input.base.length,
+      budgetBytes: this.budgetBytes,
+      newObjects: [...news.values()].filter((n) => n.kind !== 'xref').length,
+      supersededObjects: superseded.length,
+      freedObjects: expectedFreed(this.input.state, storageContext(cls)).length,
+    };
+  }
+
+  /** PV4 a–d: keys and value shapes of one new object. */
+  private newShape(bf: PdfFile, n: NewObject, news: Map<number, NewObject>, formRefs: Set<number>): void {
+    const d = n.dict!;
+    const kind = n.kind as Exclude<NewObjectKind, 'xref'>;
+    const keys = NEW_OBJECT_KEYS[kind];
+    const bad = () => this.add('PV4', 'new-value', n.num);
+    for (const [k, v] of d.entries) {
+      if (!keys.has(k)) { this.add('PV4', 'new-key', n.num); continue; }
+      switch (k) {
+        case 'Type': if (nameOf(v) !== (kind === 'form' ? 'XObject' : 'Annot')) bad(); break;
+        case 'Subtype': break; // decided the kind
+        case 'CreationDate': case 'T': case 'Contents': if (!isStr(v)) bad(); break;
+        case 'Rect': case 'BBox': if (nums(v)?.length !== 4) bad(); break;
+        case 'F': case 'FormType': if (!isInt(v)) bad(); break;
+        case 'Rotate': case 'CA': if (!isNum(v)) bad(); break;
+        case 'Border': { const a = nums(v); if (!a || a.length > 4) bad(); break; }
+        case 'C': { const a = nums(v); if (!a || ![0, 1, 3, 4].includes(a.length)) bad(); break; }
+        case 'QuadPoints': { const a = nums(v); if (!a || a.length === 0 || a.length % 8 !== 0) bad(); break; }
+        case 'InkList': {
+          if (v.kind !== 'array' || v.items.length === 0) { bad(); break; }
+          for (const s of v.items) { const a = nums(s); if (!a || a.length < 2 || a.length % 2 !== 0) { bad(); break; } }
+          break;
+        }
+        case 'BS': {
+          if (!isDict(v)) { bad(); break; }
+          for (const [bk, bv] of v.entries) if (bk !== 'W' || !isNum(bv)) bad();
+          break;
+        }
+        case 'Open': if (!isBool(v)) bad(); break;
+        case 'Length': if (v.kind !== 'number' || !v.integer || v.value < 0) bad(); break;
+        case 'AP': {
+          // /AP << /N ref-to-a-new-form >> and nothing else.
+          if (!isDict(v) || v.entries.size !== 1) { this.add('PV4', 'ap-target', n.num); break; }
+          const nv = v.entries.get('N');
+          const target = nv && nv.kind === 'ref' && nv.gen === 0 ? news.get(nv.num) : undefined;
+          if (!target || target.kind !== 'form' || (kind !== 'highlight' && kind !== 'ink')) this.add('PV4', 'ap-target', n.num);
+          else {
+            formRefs.add(target.num); this.useAp(target.num);
+            const bs = d.entries.get('BS'); const w = isDict(bs) ? bs.entries.get('W') : undefined;
+            this.formUse.set(target.num, { use: kind, bbox: nums(d.entries.get('Rect')), color: nums(d.entries.get('C')),
+              width: w && w.kind === 'number' ? w.value : null });
+          }
+          break;
+        }
+        case 'Popup': {
+          const t = v.kind === 'ref' && v.gen === 0 ? news.get(v.num) : undefined;
+          const back = t?.dict?.entries.get('Parent');
+          if (!t || t.kind !== 'popup' || !back || back.kind !== 'ref' || back.num !== n.num) this.add('PV4', 'popup-link', n.num);
+          break;
+        }
+        case 'Parent': {
+          const t = v.kind === 'ref' && v.gen === 0 ? news.get(v.num) : undefined;
+          const back = t?.dict?.entries.get('Popup');
+          if (!t || (t.kind !== 'highlight' && t.kind !== 'ink') || !back || back.kind !== 'ref' || back.num !== n.num) this.add('PV4', 'popup-link', n.num);
+          break;
+        }
+        case 'Resources': this.resources(bf, n.num, v); break;
+      }
+    }
+    if (kind !== 'form' && nums(d.entries.get('Rect'))?.length !== 4) bad();
+    if (kind === 'popup' && !d.entries.has('Parent')) this.add('PV4', 'popup-link', n.num);
+  }
+
+  /** PV4 d: inline /Resources with only an inline Multiply ExtGState and references to fonts of the base. */
+  private resources(bf: PdfFile, num: number, v: PdfValue): void {
+    if (!isDict(v)) { this.add('PV4', 'new-value', num); return; }
+    for (const [rk, rv] of v.entries) {
+      if (rk === 'ExtGState') {
+        if (!isDict(rv)) { this.add('PV4', 'new-value', num); continue; }
+        for (const gs of rv.entries.values()) {
+          if (!isDict(gs) || nameOf(gs.entries.get('BM')) !== 'Multiply') { this.add('PV4', 'new-value', num); continue; }
+          for (const [gk, gv] of gs.entries) {
+            const ok = gk === 'BM' || (gk === 'Type' && nameOf(gv) === 'ExtGState') || ((gk === 'CA' || gk === 'ca') && isNum(gv));
+            if (!ok) this.add('PV4', 'new-value', num);
+          }
+        }
+      } else if (rk === 'Font') {
+        if (!isDict(rv)) { this.add('PV4', 'new-value', num); continue; }
+        for (const f of rv.entries.values()) {
+          const fd = f.kind === 'ref' && f.num < bf.size ? safeDeref(bf, f) : null;
+          if (!fd || !isDict(fd) || nameOf(fd.entries.get('Type')) !== 'Font') this.add('PV4', 'font-ref', num);
+        }
+      } else this.add('PV4', 'new-value', num);
+    }
+  }
+
+  private useAp(num: number): void {
+    this.apUses.set(num, (this.apUses.get(num) ?? 0) + 1);
+  }
+
+  /**
+   * PV4 field rows, values (PWP-28): each requested field's value as the OUTPUT states it — /V on the terminal field
+   * (inherited for buttons), /AS of the widget, /I of a merged choice field — must be the requested one, decided from
+   * the bytes rather than from the untrusted read-back; a rewritten text or choice widget must carry its own fresh
+   * appearance (`/AP << /N new-form >>`), otherwise pdf.js could not draw the value (`appearance-missing`).
+   */
+  private fieldValues(bf: PdfFile, of: PdfFile, news: Map<number, NewObject>, rewritten: Set<number>): void {
+    const rules = this.input.classification.context.fields;
+    for (const [k, value] of this.input.state.fields) {
+      const rule = rules.get(k)!;
+      const spec = rule.spec!;
+      const fieldKey = rule.field!;
+      const wNum = Number(k.slice(0, k.indexOf(' ')));
+      const fNum = Number(fieldKey.slice(0, fieldKey.indexOf(' ')));
+      const wOut = dictOf(safeResolve(of, k)?.value);
+      const fOut = fieldKey === k ? wOut : dictOf(safeResolve(of, fieldKey)?.value);
+      if (!wOut || !fOut) { this.add('PV4', 'value-mismatch', wNum); continue; }
+      const mismatch = () => this.add('PV4', 'value-mismatch', wNum);
+      const own = (name: string): PdfValue | undefined => {
+        const raw = fOut.entries.get(name);
+        return raw ? safeDerefValue(of, raw) ?? undefined : undefined;
+      };
+      switch (spec.kind) {
+        case 'text': {
+          const v = own('V');
+          if (!v || v.kind !== 'string' || decodeTextString(v.bytes) !== value) mismatch();
+          break;
+        }
+        case 'choice': {
+          const want = Array.isArray(value) ? value : [value as string];
+          const got = choiceValues(own('V'));
+          if (!got || got.length !== want.length || got.some((s, i) => s !== want[i])) mismatch();
+          const idx = own('I');
+          if (idx !== undefined && idx.kind !== 'null') {
+            const expected = want.map((s) => spec.options.indexOf(s)).filter((i) => i >= 0).sort((a, b) => a - b);
+            const written = nums(idx);
+            if (!written || written.length !== expected.length || written.some((n, i) => n !== expected[i])) mismatch();
+          }
+          break;
+        }
+        case 'checkbox': case 'radio': {
+          const on = onStateOf(bf, dictOf(safeResolve(bf, k)?.value));
+          if (!on) { mismatch(); break; }
+          const as = wOut.entries.has('AS') ? nameOf(wOut.entries.get('AS')) : 'Off';
+          const v = inheritedV(of, fieldKey);
+          // A button's /V is a name or absent (pdf.js writes a name); anything else is not a value readers agree on.
+          const vName = v === undefined ? 'Off' : nameOf(v);
+          if (vName === null) { mismatch(); break; }
+          if (value === true ? as !== on || vName !== on : as !== 'Off' || vName === on) mismatch();
+          break;
+        }
+      }
+      if (spec.kind === 'text' || spec.kind === 'choice') {
+        if (!rewritten.has(wNum) && !rewritten.has(fNum)) continue; // not written: the base value is the value
+        const ap = rewritten.has(wNum) ? wOut.entries.get('AP') : undefined;
+        const n = ap && isDict(ap) && ap.entries.size === 1 ? ap.entries.get('N') : undefined;
+        const target = n && n.kind === 'ref' && n.gen === 0 && n.num >= bf.size ? news.get(n.num) : undefined;
+        if (!target || target.kind !== 'form') this.add('PV4', 'appearance-missing', wNum);
+      }
+    }
+  }
+
+  private supersededKind(bf: PdfFile, o: PdfIndirectObject, pageIndex: Map<string, number>): SupersededKind {
+    const key = refKey(o);
+    const ref = (v: PdfValue | undefined) => (v && v.kind === 'ref' ? refKey(v) : null);
+    const root = ref(bf.trailer.entries.get('Root'));
+    if (key === root) return 'catalog';
+    if (key === ref(bf.trailer.entries.get('Info'))) return 'info';
+    const catalog = root ? dictOf(safeResolve(bf, root)?.value) : null;
+    if (catalog && key === ref(catalog.entries.get('AcroForm'))) return 'acroform';
+    if (catalog && key === ref(catalog.entries.get('StructTreeRoot'))) return 'struct';
+    if (pageIndex.has(key)) return 'page';
+    if (o.value.kind === 'stream') return 'stream';
+    const d = dictOf(o.value);
+    if (!d) return 'other';
+    const type = nameOf(d.entries.get('Type'));
+    if (type && STRUCT_TYPES.has(type)) return 'struct';
+    if (type === 'Catalog') return 'catalog';
+    if (type === 'Pages') return 'pages';
+    if (type === 'Page') return 'other'; // a page object outside the page tree
+    const sub = nameOf(d.entries.get('Subtype'));
+    if (sub === 'Widget') return 'widget';
+    if (sub) return 'annot';
+    if (d.entries.has('FT') || d.entries.has('T') || d.entries.has('Kids')) return 'field';
+    if (d.entries.has('Fields')) return 'acroform';
+    return 'other';
+  }
+
+  private supersede(o: PdfIndirectObject, c: {
+    bf: PdfFile; news: Map<number, NewObject>; formRefs: Set<number>; links: Map<number, number>;
+    rewrittenPages: Set<number>; pageIndex: Map<string, number>;
+  }): void {
+    const before = safeResolve(c.bf, refKey(o));
+    if (!before) { this.add('PV3', 'superseded-missing', o.num); return; }
+    const kind = this.supersededKind(c.bf, before, c.pageIndex);
+    const rule = SUPERSEDE_RULES[kind];
+    const bd = dictOf(before.value), od = dictOf(o.value);
+    const changed = bd && od ? dictDiff(bd, od) : [];
+    // PV5 on changed keys (an unchanged /A or /AA carried over by a rewrite is not a finding).
+    if (od) for (const k of changed) if (INERT_NAMES.has(k) || hasInertName(od.entries.get(k))) { this.add('PV5', 'action-introduced', o.num); break; }
+    if (!rule) {
+      // pdf.js asking readers to redraw a value it could not draw (spec §8.5): named, so the user is told why.
+      const na = od?.entries.get('NeedAppearances');
+      const onlyNeedAppearances = kind === 'acroform' && changed.length === 1 && changed[0] === 'NeedAppearances'
+        && !!na && na.kind === 'bool' && na.value;
+      this.add('PV4', onlyNeedAppearances ? 'need-appearances' : SUPERSEDED_CODE[kind], o.num);
+      return;
+    }
+    if (before.value.kind === 'stream' || o.value.kind === 'stream' || !bd || !od) { this.add('PV4', 'kind-changed', o.num); return; }
+    // A requested field's objects change only what their role allows; other field objects are unexpected.
+    const role = kind === 'widget' || kind === 'field' ? this.roles.get(refKey(o)) : undefined;
+    const allowed = role ? FIELD_SUPERSEDE_KEYS[role.role][role.spec.kind] : rule.keys;
+    for (const k of changed) if (!allowed.has(k)) this.add('PV4', 'superseded-key', o.num);
+    if (changed.includes('M') && !isStr(od.entries.get('M'))) this.add('PV4', 'superseded-key', o.num);
+
+    if (kind === 'page') {
+      const p = c.pageIndex.get(refKey(o))!;
+      c.rewrittenPages.add(p);
+      this.pageAnnots(c.bf, o.num, p, bd, od, c.news, c.links);
+      return;
+    }
+    // widget / field
+    if (!role) this.add('PV4', 'field-unexpected', o.num);
+    if (changed.includes('MK')) {
+      const a = bd.entries.get('MK'), b = od.entries.get('MK');
+      const r = isDict(a) ? a.entries.get('R') : undefined;
+      const stripped = isDict(a) && r && r.kind === 'number' && r.value === 0
+        ? { ...a, entries: new Map([...a.entries].filter(([k]) => k !== 'R')) } : a;
+      if (!equalValues(stripped, b)) this.add('PV4', 'mk-changed', o.num);
+    }
+    if (changed.includes('AP') && od.entries.has('AP')) this.widgetAp(o.num, od.entries.get('AP')!, od, c.news, c.formRefs);
+  }
+
+  /**
+   * A rewritten widget's /AP: exactly `<< /N new-form >>`, what pdf.js writes for a text or choice value (it replaces
+   * the whole appearance dictionary; buttons never change theirs). The form must be [0 0 w h] of the widget's /Rect.
+   */
+  private widgetAp(num: number, ap: PdfValue, od: PdfDict, news: Map<number, NewObject>, formRefs: Set<number>): void {
+    const v = isDict(ap) && ap.entries.size === 1 ? ap.entries.get('N') : undefined;
+    const t = v && v.kind === 'ref' && v.gen === 0 ? news.get(v.num) : undefined;
+    if (!t || t.kind !== 'form') { this.add('PV4', 'ap-target', num); return; }
+    formRefs.add(t.num);
+    this.useAp(t.num);
+    const r = nums(od.entries.get('Rect'));
+    this.formUse.set(t.num, { use: 'widget', bbox: r && r.length === 4 ? [0, 0, Math.abs(r[2] - r[0]), Math.abs(r[3] - r[1])] : null });
+  }
+
+  /**
+   * PV4: one new appearance stream, by what uses it: /BBox as expected (`bbox-mismatch`), and a content stream made
+   * only of the operators of `CONTENT_OPERATORS[use]` with their operand shapes, names that are keys of its own
+   * /Resources, balanced q/Q, BT/ET and BMC/EMC (`content-operator`), and no structure keyword or inline image
+   * (`content-structure`). The data is read raw: pdf.js writes appearances unfiltered (/Filter is not an allowed key).
+   * Markup draws what its annotation says (`annot-mismatch`): a highlight fills with its /C through the Multiply
+   * ExtGState (`gs` before the first fill, so text stays readable); ink strokes with its /C and /BS /W. pdf.js writes
+   * these colours rounded to two decimals. Residual: path coordinates are not compared with /QuadPoints or /InkList
+   * (they are clipped to the /BBox, i.e. the requested /Rect), and a widget's drawn text is not compared with /V.
+   */
+  private appearance(of: PdfFile, n: NewObject, fu: FormUse): void {
+    const { use, bbox } = fu;
+    const v = n.obj.value;
+    if (v.kind !== 'stream') return; // newKindOf: a form is a stream
+    const box = nums(v.dict.entries.get('BBox'));
+    if (!bbox || !box || box.length !== 4 || box.some((x, i) => Math.abs(x - bbox[i]) > RECT_EPS)) this.add('PV4', 'bbox-mismatch', n.num);
+    const res = v.dict.entries.get('Resources');
+    const resKeys = (k: string): ReadonlySet<string> => {
+      const d = isDict(res) ? res.entries.get(k) : undefined;
+      return new Set(isDict(d) ? d.entries.keys() : []);
+    };
+    const gsNames = resKeys('ExtGState'), fontNames = resKeys('Font');
+    const allowed = CONTENT_OPERATORS[use];
+    let data: Uint8Array;
+    try { data = of.decodeStream(v, this.budgetBytes); } catch (e) {
+      if (!(e instanceof PdfReadError)) throw e;
+      this.add('PV4', 'content-operator', n.num); return;
+    }
+    const operands: PdfToken[] = [];
+    const depth = { q: 0, BT: 0, BMC: 0 };
+    let ops = 0;
+    let blended = false, paintOk = true;
+    const close2 = (t: readonly PdfToken[], want: number[] | null | undefined) =>
+      !!want && want.length === t.length && t.every((x, i) => x.type === 'number' && Math.abs(x.value - want[i]) <= PAINT_EPS);
+    try {
+      for (const t of tokenise(data, 0, data.length, this.options.reader)) {
+        if (t.type !== 'keyword') {
+          if (t.type === 'punct') { this.add('PV4', 'content-operator', n.num); return; } // arrays, dictionaries
+          if (operands.length >= 8) { this.add('PV4', 'content-operator', n.num); return; }
+          operands.push(t);
+          continue;
+        }
+        if (STRUCTURE_KEYWORDS.has(t.value)) { this.add('PV4', 'content-structure', n.num); return; }
+        const shape = allowed[t.value];
+        if (shape === undefined || ++ops > MAX_CONTENT_OPS || !operandsFit(shape, operands, t.value === 'gs' ? gsNames : fontNames)) {
+          this.add('PV4', 'content-operator', n.num); return;
+        }
+        if (use === 'highlight') {
+          if (t.value === 'gs') blended = true;
+          else if (t.value === 'rg' && !close2(operands, fu.color)) paintOk = false;
+          else if (t.value === 'f*' && !blended) paintOk = false;
+        } else if (use === 'ink') {
+          if (t.value === 'RG' && !close2(operands, fu.color)) paintOk = false;
+          else if (t.value === 'w' && !close2(operands, fu.width === null || fu.width === undefined ? null : [fu.width])) paintOk = false;
+        }
+        operands.length = 0;
+        const open = t.value === 'q' ? 'q' : t.value === 'BT' ? 'BT' : t.value === 'BMC' ? 'BMC' : null;
+        const close = t.value === 'Q' ? 'q' : t.value === 'ET' ? 'BT' : t.value === 'EMC' ? 'BMC' : null;
+        if (open && ++depth[open] > (open === 'BT' ? 1 : MAX_CONTENT_NESTING)) { this.add('PV4', 'content-operator', n.num); return; }
+        if (close && --depth[close] < 0) { this.add('PV4', 'content-operator', n.num); return; }
+      }
+    } catch (e) {
+      if (!(e instanceof PdfReadError)) throw e;
+      this.add('PV4', 'content-operator', n.num); return;
+    }
+    if (operands.length || depth.q || depth.BT || depth.BMC) this.add('PV4', 'content-operator', n.num);
+    else if (!paintOk) this.add('PV4', 'annot-mismatch', n.num);
+  }
+
+  /** PV4 page row: /Annots is an inline array equal to "old minus removed, plus the new annotations". */
+  private pageAnnots(bf: PdfFile, num: number, page: number, bd: PdfDict, od: PdfDict, news: Map<number, NewObject>, links: Map<number, number>): void {
+    const raw = od.entries.get('Annots');
+    if (raw !== undefined && raw.kind !== 'array') { this.add('PV4', 'annots-indirect', num, page); return; }
+    const freed = new Set(expectedFreed(this.input.state, storageContext(this.input.classification)).map(refKey));
+    const oldVal = bd.entries.get('Annots');
+    const old = oldVal ? safeDerefValue(bf, oldVal) : null;
+    const oldItems = old && old.kind === 'array' ? old.items : [];
+    const keep = oldItems.filter((it) => !(it.kind === 'ref' && freed.has(refKey(it))));
+    const items = raw ? raw.items : [];
+    const kept: PdfValue[] = [];
+    let added = false;
+    for (const it of items) {
+      // pdf.js appends new annotations after the kept ones; one in front would change the drawing order.
+      if (added && !(it.kind === 'ref' && it.num >= bf.size)) { this.add('PV4', 'annots-mismatch', num, page); added = false; }
+      if (it.kind === 'ref' && it.num >= bf.size) {
+        added = true;
+        const t = news.get(it.num);
+        if (!t || it.gen !== 0 || (t.kind !== 'highlight' && t.kind !== 'ink' && t.kind !== 'popup')) { this.add('PV4', 'annots-mismatch', num, page); continue; }
+        if (links.has(it.num)) { this.add('PV4', 'annot-unlinked', it.num); continue; }
+        links.set(it.num, page);
+      } else kept.push(it);
+    }
+    if (kept.length !== keep.length || kept.some((it, i) => !equalValues(it, keep[i]))) this.add('PV4', 'annots-mismatch', num, page);
+  }
+
+  /** Pages the request adds annotations to or removes annotations from. */
+  private expectedPages(): Set<number> {
+    const out = new Set<number>();
+    for (const r of this.input.state.added.values()) out.add(r.spec.page);
+    for (const k of this.input.state.removed) {
+      const f = this.input.classification.context.deletable.get(k);
+      if (f) out.add(f.page);
+    }
+    return out;
+  }
+
+  /** PV4: each new Highlight/Ink is one of the requested annotations, on its page; Popups sit with their parent. */
+  private matchAnnotations(news: Map<number, NewObject>, links: Map<number, number>): void {
+    const wanted: Array<{ e: AddedEntry; used: boolean }> = [];
+    for (const [k, v] of this.entries) {
+      if (isEditorKey(k) && !('deleted' in v)) wanted.push({ e: v as AddedEntry, used: false });
+    }
+    const markup = [...news.values()].filter((n) => n.kind === 'highlight' || n.kind === 'ink').sort((a, b) => a.num - b.num);
+    const matched = new Map<number, AddedEntry>();
+    for (const n of markup) {
+      const page = links.get(n.num);
+      if (page === undefined) { this.add('PV4', 'annot-unlinked', n.num); continue; }
+      const hit = wanted.find((w) => !w.used && w.e.pageIndex === page && annotMatches(n, w.e));
+      if (hit) {
+        hit.used = true; matched.set(n.num, hit.e);
+        if (!annotDisplayMatches(n.dict!, hit.e)) this.add('PV4', 'annot-mismatch', n.num, page);
+        continue;
+      }
+      if (wanted.some((w) => !w.used && annotMatches(n, w.e))) this.add('PV4', 'annot-wrong-page', n.num, page);
+      else this.add('PV4', 'annot-unexpected', n.num, page);
+    }
+    for (const w of wanted) if (!w.used) this.add('PV4', 'annot-missing', undefined, w.e.pageIndex);
+    for (const n of news.values()) {
+      if (n.kind !== 'popup') continue;
+      const page = links.get(n.num);
+      if (page === undefined) { this.add('PV4', 'annot-unlinked', n.num); continue; }
+      const parent = n.dict?.entries.get('Parent');
+      if (parent && parent.kind === 'ref' && links.has(parent.num) && links.get(parent.num) !== page) this.add('PV4', 'annot-wrong-page', n.num, page);
+      // What the Popup shows: the requested rectangle, closed.
+      const e = parent && parent.kind === 'ref' ? matched.get(parent.num) : undefined;
+      if (e && !popupMatches(n.dict!, e)) this.add('PV4', 'annot-mismatch', n.num, page);
+    }
+  }
+
+  // ---------------------------------------------------------------- PV6
+
+  private observed(): void {
+    const { observed, classification: cls, state } = this.input;
+    if (observed.pageCount !== cls.pages.length) this.add('PV6', 'page-count');
+    const delta = expectedAnnotDelta(state, storageContext(cls));
+    if (observed.annotsPerPage.length !== cls.pages.length) this.add('PV6', 'annot-count');
+    else {
+      for (let p = 0; p < cls.pages.length; p++) {
+        if (observed.annotsPerPage[p] !== cls.pages[p].annots.length + (delta.get(p) ?? 0)) this.add('PV6', 'annot-count', cls.pages[p].ref.num, p);
+      }
+    }
+    const read = new Map<string, PdfObserved['fields'][number]>();
+    for (const f of observed.fields) { const k = refKey(f.ref); if (!read.has(k)) read.set(k, f); }
+    for (const { ref, value } of canonicalFields(state)) {
+      const got = read.get(refKey(ref));
+      if (!got) this.add('PV6', 'field-missing', ref.num);
+      else if (!fieldValuesEqual(got.value, value)) this.add('PV6', 'field-value', ref.num);
+    }
+  }
+}
+
+// ================================================================ helpers outside the class
+
+/** The new-object kind of an appended object, or null when it is not on the allow-list. */
+function newKindOf(o: PdfIndirectObject, rev: PdfRevision): NewObjectKind | null {
+  const v = o.value;
+  if (v.kind === 'stream') {
+    const type = nameOf(v.dict.entries.get('Type'));
+    if (type === 'XRef') return rev.kind === 'stream' && o.num === rev.xrefStreamNum ? 'xref' : null;
+    if (nameOf(v.dict.entries.get('Subtype')) === 'Form' && (type === null || type === 'XObject')) return 'form';
+    return null;
+  }
+  if (v.kind !== 'dict') return null;
+  const type = nameOf(v.entries.get('Type'));
+  if (type !== null && type !== 'Annot') return null;
+  switch (nameOf(v.entries.get('Subtype'))) {
+    case 'Highlight': return 'highlight';
+    case 'Ink': return 'ink';
+    case 'Popup': return 'popup';
+    default: return null;
+  }
+}
+
+/** Does new annotation `n` look like the requested entry: subtype, rectangle, colour and comment? */
+function annotMatches(n: NewObject, e: AddedEntry): boolean {
+  const d = n.dict!;
+  if ((n.kind === 'highlight') !== (e.annotationType === 9)) return false;
+  const rect = nums(d.entries.get('Rect'));
+  if (!rect || rect.length !== 4 || rect.some((x, i) => Math.abs(x - e.rect[i]) > RECT_EPS)) return false;
+  const c = nums(d.entries.get('C'));
+  if (!c || c.length !== 3 || c.some((x, i) => Math.abs(x - e.color[i] / 255) > COLOR_EPS)) return false;
+  const contents = d.entries.get('Contents');
+  const text = contents && contents.kind === 'string' ? decodeTextString(contents.bytes) : '';
+  if (text !== (e.popup?.contents ?? '')) return false;
+  return d.entries.has('Popup') === !!e.popup;
+}
+
+/** Do the operands before an operator fit its shape (`CONTENT_OPERATORS`)? `N` names must be in `names`. */
+function operandsFit(shape: string, operands: readonly PdfToken[], names: ReadonlySet<string>): boolean {
+  if (operands.length !== shape.length) return false;
+  for (let i = 0; i < shape.length; i++) {
+    const t = operands[i];
+    switch (shape[i]) {
+      case 'n': if (t.type !== 'number' || !Number.isFinite(t.value)) return false; break;
+      case 'N': if (t.type !== 'name' || !names.has(t.value)) return false; break;
+      case 't': if (t.type !== 'name' || t.value !== 'Tx') return false; break;
+      case 's': if (t.type !== 'string') return false; break;
+      default: return false;
+    }
+  }
+  return true;
+}
+
+/** pdf.js's PDF date for an ISO time (`getModificationDate`, UTC): `D:YYYYMMDDHHmmss`. */
+export function pdfDate(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `D:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+}
+
+function numsClose(v: Val, want: readonly number[], eps = RECT_EPS): boolean {
+  const a = nums(v);
+  return !!a && a.length === want.length && a.every((x, i) => Math.abs(x - want[i]) <= eps);
+}
+
+/**
+ * S2: the parts of a matched new annotation that decide what it shows, against the request: highlight /QuadPoints,
+ * ink /InkList and /BS /W, /CA 1, /F 4 (print, nothing hidden), /Rotate 0 or absent, /Border [0 0 0] or absent,
+ * /T the author (absent without one) and /CreationDate the state's date. (Rect, colour, comment: `annotMatches`.)
+ */
+function annotDisplayMatches(d: PdfDict, e: AddedEntry): boolean {
+  const g = (k: string) => d.entries.get(k);
+  if (e.annotationType === 9) {
+    if (!numsClose(g('QuadPoints'), e.quadPoints)) return false;
+  } else {
+    const ink = g('InkList');
+    if (!ink || ink.kind !== 'array' || ink.items.length !== e.paths.points.length) return false;
+    if (ink.items.some((s, i) => !numsClose(s, e.paths.points[i]))) return false;
+    const bs = g('BS');
+    const w = isDict(bs) ? bs.entries.get('W') : undefined;
+    if (!w || w.kind !== 'number' || Math.abs(w.value - e.thickness) > NUM_EPS * Math.max(1, e.thickness)) return false;
+  }
+  const ca = g('CA'); if (ca !== undefined && !(ca.kind === 'number' && numEqual(ca.value, e.opacity))) return false;
+  const f = g('F'); if (!f || f.kind !== 'number' || f.value !== 4) return false;
+  const rot = g('Rotate'); if (rot !== undefined && !(rot.kind === 'number' && rot.value === 0)) return false;
+  const border = g('Border'); if (border !== undefined && !numsClose(border, [0, 0, 0], 0)) return false;
+  const t = g('T');
+  const user = e.user;
+  if (user === undefined ? t !== undefined : !(t && t.kind === 'string' && decodeTextString(t.bytes) === user)) return false;
+  const cd = g('CreationDate');
+  if (!cd || cd.kind !== 'string' || decodeTextString(cd.bytes) !== pdfDate(e.date)) return false;
+  return true;
+}
+
+/** S2: a new Popup has the requested rectangle and is closed (/Open false or absent). */
+function popupMatches(d: PdfDict, e: AddedEntry): boolean {
+  if (!e.popup || !numsClose(d.entries.get('Rect'), e.popup.rect)) return false;
+  const open = d.entries.get('Open');
+  return open === undefined || (open.kind === 'bool' && !open.value);
+}
+
+function latin1Of(b: Uint8Array, start: number, end: number): string {
+  let s = '';
+  for (let i = start; i < end; i += 8192) s += String.fromCharCode(...b.subarray(i, Math.min(end, i + 8192)));
+  return s;
+}
+
+/** A choice field's /V as a list of texts (a string, or an array of strings), or null for anything else. */
+function choiceValues(v: PdfValue | undefined): string[] | null {
+  if (!v) return null;
+  if (v.kind === 'string') return [decodeTextString(v.bytes)];
+  if (v.kind !== 'array') return null;
+  const out: string[] = [];
+  for (const it of v.items) { if (it.kind !== 'string') return null; out.push(decodeTextString(it.bytes)); }
+  return out;
+}
+
+/** A button widget's single on-state (its /AP /N names other than Off), as classification requires; else null. */
+function onStateOf(f: PdfFile, w: PdfDict | null): string | null {
+  const ref = (v: PdfValue | undefined) => (v ? safeDeref(f, v) : null);
+  const ap = ref(w?.entries.get('AP'));
+  const n = ap && isDict(ap) ? ref(ap.entries.get('N')) : null;
+  if (!n || !isDict(n)) return null;
+  const on = [...n.entries.keys()].filter((k) => k !== 'Off');
+  return on.length === 1 ? on[0] : null;
+}
+
+/** /V of a field node in `f`, inherited up /Parent as readers resolve it; undefined when no node has one. */
+function inheritedV(f: PdfFile, key: string): PdfValue | undefined {
+  let d = dictOf(safeResolve(f, key)?.value);
+  for (let i = 0; d && i < MAX_FIELD_DEPTH; i++) {
+    const raw = d.entries.get('V');
+    const v = raw ? safeDerefValue(f, raw) ?? undefined : undefined;
+    if (v !== undefined && v.kind !== 'null') return v;
+    const p = d.entries.get('Parent');
+    if (!p || p.kind !== 'ref') return undefined;
+    d = dictOf(safeResolve(f, refKey(p))?.value);
+  }
+  return undefined;
+}
+
+/** End of an appended object (after `endobj`), or -1 when `endobj` does not follow its value. */
+function objectEnd(out: Uint8Array, o: PdfIndirectObject): number {
+  const v = o.value;
+  const p = skipWs(out, v.end);
+  if (!matchAt(out, p, 'endobj')) return -1;
+  return p + 6;
+}
+
+function safeResolve(f: PdfFile, key: string): PdfIndirectObject | null {
+  const sp = key.indexOf(' ');
+  try { return f.resolve(Number(key.slice(0, sp)), Number(key.slice(sp + 1))); } catch (e) {
+    if (e instanceof PdfReadError) return null;
+    throw e;
+  }
+}
+
+function safeDeref(f: PdfFile, v: PdfValue): PdfValue | PdfStream | null {
+  try { return f.deref(v); } catch (e) {
+    if (e instanceof PdfReadError) return null;
+    throw e;
+  }
+}
+
+function safeDerefValue(f: PdfFile, v: PdfValue): PdfValue | null {
+  const d = safeDeref(f, v);
+  return d && d.kind !== 'stream' ? d : null;
+}

@@ -19,3 +19,10 @@ gltf-test-server.html
 # OS files
 .DS_Store
 Thumbs.db
+
+# Office viewers: test bundle, test outputs, throwaway spikes
+tests/.build/
+tests/.out/
+spike/
+scripts/validate-openxml/bin/
+scripts/validate-openxml/obj/

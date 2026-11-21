@@ -6,6 +6,8 @@ src/**
 tests/**
 node_modules/**
 scripts/**
+docs/**
+spike/**
 tsconfig.json
 esbuild.js
 .eslintrc.json
@@ -18,6 +20,7 @@ esbuild.js
 CLAUDE.md
 CONTRIBUTING.md
 CLA.md
+signatures/**
 log.md
 todo.md
 serve-test.js

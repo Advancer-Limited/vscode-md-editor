@@ -1,171 +1,180 @@
-# VS Code MD Editor
+# MD Editor & Office Viewer: Markdown, Word, Excel, PDF
 
-A rich Markdown editor extension for Visual Studio Code with split preview, [[wikilinks]], Mermaid diagrams, task checklists, a force-directed link graph, version diff, and LanguageTool grammar checking.
+One extension for the documents you work with every day. Write rich **Markdown**, edit **Word** and **Excel** files, and read **PDFs** without leaving VS Code, with Mermaid diagrams, a 3D model viewer, grammar checking and a link graph built in.
 
-## Features
+## Highlights
 
-- **WYSIWYG Editing** — Edit markdown in a rich preview with contenteditable, or switch to split view or raw markdown mode.
-- **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode). A dedicated split-view editor opens `.mmd`/`.mermaid` files directly, with **syntax highlighting**, **error-line marking**, **zoom and pan**, **PNG / print (Save as PDF) export**, and **authoring help** (template gallery, snippet palette, and node-ID completions) — all themed to match VS Code's light or dark theme.
-- **3D Model Viewer** — open a `.gltf` file to get its JSON source alongside a live 3D preview rendered with three.js, with orbit, pan and zoom. The preview updates as you edit and keeps your camera position.
-- **Task Checklists** — GFM `- [ ] task` / `- [x] task` checkboxes render as clickable checkboxes in the preview and toggle directly in the markdown source. Handy for spec-driven workflows (e.g. GitHub Spec Kit `tasks.md` files).
-- **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
-- **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
-- **Markdown Links Sidebar** — File list showing all markdown files with their incoming/outgoing links, plus a "Show Graph" button.
-- **Interactive Link Graph** — Full-screen force-directed graph with Obsidian-style controls (filters, display options, force tuning), drag-to-pin, and zoom.
-- **LanguageTool Integration** — Grammar and spelling checking powered by LanguageTool, with inline highlights and quick-fix suggestions. Works with the free API or a Premium account.
-- **Version Diff** — Compare your markdown file against previous git commits in a rendered diff viewer with green/red change highlighting. Fenced code blocks (including Mermaid diagrams) always diff as a whole block, never split mid-fence.
-- **Rename Propagation** — Renaming a `.md`/`.markdown` file automatically updates all wikilink references across your workspace.
+- **Markdown, the way you want to work.** Edit in a rich WYSIWYG view, a split preview, or plain raw Markdown, with a formatting toolbar, task checklists, find and replace, and print to PDF.
+- **Word documents (`.docx`).** View documents as pages, then edit text in paragraphs and table cells, apply bold, italic, underline, headings, lists and indentation, and save. Everything you do not touch stays exactly as it was.
+- **Excel workbooks (`.xlsx`).** A real spreadsheet grid with sheet tabs and a formula bar. Edit cells, keep your formulas (with their saved results), enter dates, copy and paste, insert and delete rows and columns, and add, rename or delete sheets.
+- **PDF viewer (`.pdf`).** Smooth scrolling, zoom, thumbnails, bookmarks, attachments, find, copy, password-protected files and document properties.
+- **Mermaid diagrams.** Live diagrams inside Markdown, plus a dedicated editor for `.mmd` files with syntax highlighting, templates, zoom and PNG export.
+- **3D models (`.gltf`).** Source on one side, an interactive 3D preview on the other.
+- **Grammar and spelling.** Inline checking and one-click fixes, powered by LanguageTool.
+- **Wikilinks and a link graph.** Link notes with `[[double brackets]]`, see backlinks, and explore your notes as an interactive graph.
+- **Version comparison.** See what changed in a Markdown file against earlier Git versions.
 
-## Installation
+## Getting started
 
-### From VS Code Marketplace
+1. Install the extension from the VS Code Marketplace, or run `code --install-extension advancer-limited.vscode-md-editor`.
+2. Open a file. `.md`, `.markdown`, `.mmd`, `.mermaid`, `.gltf`, `.docx`, `.xlsx` and `.pdf` files open in this extension's editors automatically.
+3. Word and Excel files open in **View** mode so that looking at a file never changes it. Click **Edit** in the toolbar (or press **Ctrl+E**, **Cmd+E** on macOS) to start editing, then save as usual with Ctrl+S.
 
-Search for **VS Code MD Editor** in the Extensions panel, or install from the command line:
+The Activity Bar icon (the Advancer "A") opens the **MD & MMD Editor** sidebar, which lists your Markdown and Mermaid files, with backlinks and a button for the link graph.
 
+**Requires VS Code 1.95 or newer.**
+
+## How to use
+
+### Markdown
+
+Open any `.md` file. Use the toolbar for bold, italic, headings, links, images, code, lists and quotes, and switch between **Edit** (rich view), **Split** and **Raw** at any time.
+
+- **Find and replace:** Ctrl+F to find, Ctrl+H to replace (Cmd on macOS), with a case-sensitive option, match count and Enter / Shift+Enter / F3 to step through matches.
+- **Task checklists:** `- [ ]` and `- [x]` lines show as checkboxes. Click one to tick it; the Markdown is updated for you.
+- **Print or save as PDF:** use the Print button on the toolbar.
+- **Compare versions:** right-click a Markdown file in the Explorer, or use the Command Palette, and choose **Compare with Previous Version**, **Compare with Commit...** or **Compare with Saved**. Changes are highlighted in green and red on the rendered page.
+
+### Wikilinks and the link graph
+
+In the **Raw** or **Split** view, type `[[` to link to another Markdown file and pick it from the autocomplete list. In the **Edit** view, use the **Insert Link** button on the toolbar to choose the file. Use `[[file|display text]]` to show different text. Renaming a file updates its links across your workspace.
+
+The **MD & MMD Editor** sidebar lists your Markdown files (with their incoming and outgoing links) and your Mermaid files. Its **Show Graph** button, or the **Open Full Graph** command, opens an interactive link graph with filters, display options and drag-to-pin.
+
+### Word documents
+
+Word files open as pages. Zoom from 50% to 200% (Ctrl+= and Ctrl+-, or Fit width), search with Ctrl+F, and click links to open them. Press **Edit** (Ctrl+E) to change the document:
+
+- Click a paragraph, or a paragraph inside a table cell, and type.
+- Ctrl+B, Ctrl+I and Ctrl+U for bold, italic and underline.
+- Ctrl+Alt+1 to 6 for Heading 1 to 6, Ctrl+Alt+0 for normal text.
+- Ctrl+Shift+8 for a bullet list, Ctrl+Shift+7 for a numbered list. Tab and Shift+Tab at the start of a list item change its level; in a table they move to the next or previous cell.
+- Enter splits a paragraph; Shift+Enter inserts a line break.
+- Undo and redo (Ctrl+Z, Ctrl+Y) work as they do anywhere else in VS Code.
+
+Some parts of a document are shown but cannot be edited here: table structure, text boxes, headers and footers, footnotes, and hyperlink text. They are left untouched in the file. Content that cannot be drawn (such as charts, SmartArt and equations) is listed in a notice at the top, and it is always kept when you save. Use **Open in Word** for anything the editor cannot do.
+
+### Excel workbooks
+
+Workbooks open in a spreadsheet grid with sheet tabs, a formula bar, and the file's own fonts, colours, borders, merged cells and number, date and currency formats. Select cells to see Sum, Average and Count in the status bar. Press **Edit** (Ctrl+E) to change the workbook:
+
+- Press F2, Enter, or just start typing to edit a cell. Enter and Tab commit and move; Esc cancels; Delete clears.
+- Formulas stay formulas and keep their last calculated result. Type a date and it is stored as a real date.
+- Copy and paste between cells and other applications (Ctrl+C, Ctrl+V).
+- Right-click a row or column header to insert or delete rows and columns. Right-click a sheet tab to add, rename or delete a sheet.
+- Ctrl+F searches the current sheet or all sheets. Ctrl+PageUp and Ctrl+PageDown switch sheets.
+
+When you insert or delete rows, columns or sheets, the extension asks before making a change that cannot fully update everything that refers to it, such as charts and pivot tables. You can turn this prompt off in Settings. Deleting a sheet always asks.
+
+Formulas are not recalculated here, so open the file in Excel to refresh results after changing values that formulas depend on.
+
+### PDF files
+
+PDFs open in a viewer that scrolls continuously and follows your VS Code theme.
+
+- **Zoom** from 25% to 500%, Fit width, Fit page and Actual size (Ctrl+wheel, Ctrl+=, Ctrl+-, Ctrl+0).
+- **Go to a page** with the page box (Ctrl+G). Rotate the view with **R** (the file is not changed).
+- **Sidebar** (F4): thumbnails, the document's bookmarks and attached files, which you can save with **Save as...**. A document properties dialog shows the title, author and more.
+- **Find** with Ctrl+F (Enter, Shift+Enter or F3 for next and previous), with match case and whole word options. **Copy** selected text with Ctrl+C.
+- **Password-protected files** ask for the password. It is kept in memory only and is never stored.
+- Links to web and mail addresses open in your browser; links inside the document jump to their target.
+
+Scripts inside a PDF are never run. Scanned PDFs without a text layer can be read but not searched or copied from. Digital signatures are shown but not verified.
+
+### Mermaid diagrams
+
+In Markdown, a `mermaid` code fence renders as a live diagram in the Edit and Split views. Open a `.mmd` or `.mermaid` file for the dedicated editor: source on the left, diagram on the right.
+
+- Syntax highlighting, and the line with an error is marked.
+- Zoom and pan (Ctrl+scroll to zoom, drag to pan), fit to view, and export to PNG with a light or dark background, or print and save as PDF.
+- A **Template** gallery of 22 starter diagrams, a snippet palette that changes with the diagram type, and completion of node names as you type (Ctrl+Space).
+
+### 3D models
+
+Open a `.gltf` file to see its JSON on the left and a live 3D view on the right. Drag to orbit, scroll to zoom, right-drag to pan. The view keeps your camera position as you edit, and the toolbar has fit, reset, wireframe and grid buttons. Models that use separate `.bin` or texture files work when those files are inside your workspace. Binary `.glb` files are not supported.
+
+### Grammar and spelling
+
+Checking runs automatically as you type in the Markdown editor, with inline highlights and quick fixes. Run **Markdown Editor: Check Grammar with LanguageTool** from the Command Palette to check on demand. The free service checks up to 1,500 characters at a time; add a [LanguageTool Premium](https://languagetool.org/premium) account (or your own LanguageTool server) in Settings for more.
+
+## Choosing a different editor for a file type
+
+You decide which editor opens each kind of file.
+
+- **Everything in one place:** run **Markdown Editor: Choose Editors for Office and PDF Files...** from the Command Palette. For Word, Excel and PDF files, pick this extension, VS Code's default editor, or automatic selection.
+- **Just this once:** right-click the tab and choose **Reopen Editor With...**, or right-click the file in the Explorer and choose **Open With...**.
+- **By hand:** set `workbench.editorAssociations` in your settings, for example:
+
+```json
+"workbench.editorAssociations": {
+  "*.docx": "default",
+  "*.xlsx": "default",
+  "*.pdf": "default"
+}
 ```
-code --install-extension advancer.vscode-md-editor
-```
 
-### From Source
+## Settings
 
-```bash
-git clone https://github.com/Advancer-Limited/vscode-md-editor.git
-cd vscode-md-editor
-npm install
-npm run compile
-```
+Open Settings and search for **VS Code MD Editor**.
 
-Then press `F5` in VS Code to launch the Extension Development Host.
+### Word, Excel and PDF
 
-## Usage
+| Setting | Default | What it does |
+| ------- | ------- | ------------ |
+| `vscodeMdEditor.office.startInEditMode` | `false` | Open Word and Excel files with Edit already on. When off, files open in View mode and Edit (Ctrl+E) turns editing on. |
+| `vscodeMdEditor.office.confirmStructuralEdits` | `true` | Ask before inserting or deleting Excel rows, columns or sheets when the change cannot fully update charts, pivot tables or drawings. Deleting a sheet always asks. |
+| `vscodeMdEditor.office.sheetAppearance` | `theme` | `theme` draws Excel sheets to match your VS Code theme; `light` always shows a light sheet, as authored. Applies to workbooks opened afterwards. |
+| `vscodeMdEditor.pdf.defaultZoom` | `auto` | Zoom when a PDF opens: `auto`, `page-width`, `page-fit` or `actual`. A zoom you set while viewing is remembered for that tab. |
 
-1. Open any `.md` file and select **"VS Code MD Editor"** from the editor picker (or right-click the file and choose **Open with VS Code MD Editor**).
-2. Use the toolbar to format text, or write markdown directly in the textarea.
-3. Type `[[` to get autocomplete suggestions for linking to other markdown files.
-4. Open the **Markdown Links** sidebar to see backlinks and the link graph.
-5. Press **Ctrl+F** (find) or **Ctrl+H** (find and replace) — **Cmd** on macOS — to search the document, with an optional case-sensitive match. In Edit mode it searches the rendered text; in Raw/Split it searches the markdown source.
+### Grammar checking
 
-### Mermaid Diagrams
+| Setting | Default | What it does |
+| ------- | ------- | ------------ |
+| `vscodeMdEditor.languageTool.enabled` | `true` | Turn grammar and spelling checking on or off. |
+| `vscodeMdEditor.languageTool.language` | `auto` | Language to check, such as `en-US` or `de-DE`, or `auto` to detect it. |
+| `vscodeMdEditor.languageTool.motherTongue` | empty | Your first language, for better detection of common mistakes. |
+| `vscodeMdEditor.languageTool.checkDelayMs` | `1500` | How long to wait after you stop typing before checking. |
+| `vscodeMdEditor.languageTool.apiUrl` | `https://api.languagetoolplus.com/v2/check` | LanguageTool address. Change it to use your own server. |
+| `vscodeMdEditor.languageTool.apiKey` | empty | LanguageTool Premium API key. |
+| `vscodeMdEditor.languageTool.username` | empty | LanguageTool Premium account email (needed with an API key). |
 
-Write a `\`\`\`mermaid` fenced code block and it renders as a live diagram wherever the preview is visible (WYSIWYG or Split). The rendered diagram is read-only — click into Raw or Split mode to edit its source, and the preview updates as you type. Invalid syntax shows an inline error without losing the last valid render.
+### Notes and graph
 
-Opening a `.mmd` or `.mermaid` file directly uses a dedicated split-view editor (source on the left, live diagram on the right) with:
-
-- **Syntax highlighting** for Mermaid keywords, arrows, node shapes, edge labels and comments.
-- **Error highlighting** — when a diagram fails to parse, the offending source line is marked alongside the error message.
-- **Zoom and pan** — Ctrl/Cmd+scroll zooms about the pointer, drag to pan, and the toolbar has zoom in/out, 100%, and fit-to-view. Your view is kept as you type, so zooming into part of a large diagram doesn't reset on every edit.
-- **Export as PNG** — choose a light or dark background; the light option re-renders for a white background so it stays readable in documents and slides.
-- **Print / Save as PDF** — opens the diagram in your browser, where the print dialog's "Save as PDF" destination is available.
-
-Diagrams follow your VS Code light or dark theme and re-render automatically when you switch themes.
-
-### Task Checklists
-
-`- [ ] some task` and `- [x] done task` lines render as checkboxes in the preview. Click a checkbox to toggle it — the change is written straight back to the markdown source as `[ ]`/`[x]`.
-
-### Writing Mermaid Diagrams
-
-The `.mmd` editor helps you write diagrams rather than just render them:
-
-- **Template** — a searchable dropdown of 22 starter diagrams covering nearly every Mermaid diagram type (flowchart, sequence, class, state, ER, gantt, pie, mind map, user journey, git graph, kanban, timeline, quadrant chart, requirement diagram, C4 context, block, sankey, XY chart, radar, packet, architecture, treemap), each with generic example content (`Box 1`, `Task 2`...) obviously meant to be edited, and the first label pre-selected so you can type straight over it. Inserts at your cursor; if the cursor is in the middle of an existing diagram, you'll be asked to confirm first, since Mermaid only supports one diagram per file.
-- **Snippet palette** — the buttons beside Template change with the diagram type you're writing: node shapes and link styles for flowcharts, `participant`/`loop`/`alt` for sequence diagrams, and so on.
-- **Completions** — as you type, the editor offers the node IDs already in your diagram (press `Ctrl+Space` to summon them manually). This is the most useful one: in Mermaid a mistyped node ID doesn't produce an error, it quietly creates a stray disconnected node.
-
-### 3D Models (`.gltf`)
-
-Open a `.gltf` file and you'll get the JSON source on the left with a live 3D preview on the right. Drag to orbit, scroll to zoom, right-drag to pan. The preview updates as you edit and **keeps your camera position**, so you don't lose your place while tweaking a model. The toolbar has fit-to-view, reset, wireframe and grid toggles, plus an Update button (used automatically for files over 2 MB, where live updating is disabled).
-
-Models with external `.bin` buffers and textures work as long as those files sit within your workspace folder. Binary `.glb` files aren't supported yet, nor are Draco/KTX2-compressed assets — those report a clear error rather than failing silently.
-
-### Comparing Versions
-
-Compare your markdown files against previous git commits:
-
-- **Command Palette** (`Ctrl+Shift+P` / `Cmd+Shift+P`):
-  - **Compare with Previous Version** — Diff against the most recent commit that changed this file.
-  - **Compare with Commit...** — Pick from a list of recent commits with hash, message, author, and date.
-  - **Compare with Saved** — Diff your unsaved working changes against the file as it currently is on disk.
-- **Right-click** any `.md`/`.markdown` file in the Explorer for quick access to diff commands.
-
-The diff opens in a rendered webview panel with green highlighting for additions and red strikethrough for deletions. Fenced code blocks (including Mermaid diagrams) always diff as a single atomic block, never split across separate hunks.
+| Setting | Default | What it does |
+| ------- | ------- | ------------ |
+| `vscodeMdEditor.exclude` | `node_modules`, `.git`, `.claude/worktrees` | Folders the file lists and the link graph should ignore. Your `files.exclude` and `search.exclude` settings are respected too. |
 
 ## Commands
 
-| Command | Description |
-| ------- | ----------- |
-| `Markdown Editor: Compare with Previous Version` | Diff against the last commit that changed this file |
-| `Markdown Editor: Compare with Commit...` | Pick a commit from file history and diff against it |
-| `Markdown Editor: Compare with Saved` | Diff working changes against the on-disk saved file |
-| `Markdown Editor: Check Grammar with LanguageTool` | Run grammar and spelling check |
-| `Markdown Editor: Open with VS Code MD Editor` | Open a `.md` file in the custom editor |
-| `Markdown Editor: Show Link Graph` | Focus the Markdown Links sidebar |
-| `Markdown Editor: Open Full Graph` | Open the full-screen force-directed link graph |
+Open the Command Palette (Ctrl+Shift+P, Cmd+Shift+P on macOS) and type **Markdown Editor**.
 
-## Configuration
+| Command | What it does |
+| ------- | ------------ |
+| Choose Editors for Office and PDF Files... | Pick which editor opens Word, Excel and PDF files |
+| Open with VS Code MD Editor | Open a Markdown file in this editor |
+| Set VS Code MD Editor as Default for .md and .markdown Files | Make this the default Markdown editor |
+| Check Grammar with LanguageTool | Check the current document now |
+| Compare with Previous Version / Compare with Commit... / Compare with Saved | Show what changed in a Markdown file |
+| Show Link Graph | Show the MD & MMD Editor sidebar |
+| Open Full Graph | Explore your notes as an interactive graph |
 
-### LanguageTool Settings
+## Privacy
 
-Grammar checking works out of the box with the free LanguageTool API (1500 character limit per request). For unlimited checking, sign up for [LanguageTool Premium](https://languagetool.org/premium) and add your credentials:
+- **Your files stay on your machine.** Word, Excel and PDF files are opened and saved locally. Nothing is uploaded.
+- **The viewers load nothing from the internet.** Pictures that a document links from the web will not appear.
+- **Scripts in documents never run.** Macros in Office files and JavaScript in PDFs are never executed.
+- **Grammar checking sends the text being checked** to the LanguageTool service (or the server you set). Turn it off with `vscodeMdEditor.languageTool.enabled`, or point it at your own server, if your documents are sensitive.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `vscodeMdEditor.languageTool.enabled` | `true` | Enable LanguageTool grammar checking |
-| `vscodeMdEditor.languageTool.apiUrl` | `https://api.languagetoolplus.com/v2/check` | API endpoint (change for self-hosted) |
-| `vscodeMdEditor.languageTool.apiKey` | `""` | Premium API key (leave empty for free tier) |
-| `vscodeMdEditor.languageTool.username` | `""` | Premium username/email (required with API key) |
-| `vscodeMdEditor.languageTool.language` | `"auto"` | Language code (e.g., `en-US`, `de-DE`) |
-| `vscodeMdEditor.languageTool.motherTongue` | `""` | Your native language code for better error detection |
-| `vscodeMdEditor.languageTool.checkDelayMs` | `1500` | Delay (ms) before triggering check after typing |
+## Requirements
 
-### Graph Settings
+VS Code 1.95 (October 2024) or newer.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `vscodeMdEditor.graph.defaultMode` | `"local"` | Default graph view: `local` or `global` |
-| `vscodeMdEditor.graph.localDepth` | `1` | BFS depth for local graph (1-3 hops) |
+## Support and feedback
 
-## Contributing
+Found a problem or have an idea? Please [open an issue](https://github.com/Advancer-Limited/vscode-md-editor/issues). Include your VS Code version and, if you can, a sample file. See the [change log](CHANGELOG.md) for what is new in each release.
 
-Contributions are welcome! Please read the guidelines below before submitting a pull request.
+Want to build the extension or contribute? See [CONTRIBUTING.md](https://github.com/Advancer-Limited/vscode-md-editor/blob/master/CONTRIBUTING.md).
 
-### Getting Started
+## Licence
 
-1. Fork the repository on GitHub.
-2. Clone your fork locally:
-   ```bash
-   git clone https://github.com/<your-username>/vscode-md-editor.git
-   cd vscode-md-editor
-   npm install
-   ```
-3. Create a feature or fix branch from `develop`:
-   ```bash
-   git checkout develop
-   git pull origin develop
-   git checkout -b feature/my-feature
-   ```
-4. Make your changes, then verify:
-   ```bash
-   npm run compile    # Type-check and build
-   ```
-5. Commit your changes with a clear message.
-6. Push to your fork and open a Pull Request targeting `develop`.
-
-### Branch Workflow
-
-- **`master`** — Stable releases only. PRs from `develop` after testing.
-- **`develop`** — Integration branch. All feature/fix PRs target this branch.
-- **`feature/*`** / **`fix/*`** — Short-lived branches for individual changes.
-
-### PR Guidelines
-
-- Keep PRs focused on a single change or feature.
-- Include a clear description of what changed and why.
-- Ensure `npm run compile` passes before submitting.
-- New features should follow existing patterns in the codebase.
-- By submitting a PR, you agree to the [Contributor License Agreement](CLA.md).
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
-
-Copyright (c) 2026 Advancer Limited
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Advancer Limited.

@@ -437,14 +437,18 @@
       'keydown',
       (e) => {
         const mod = e.ctrlKey || e.metaKey;
+        // Handled keys are stopped too, so VS Code does not also act on them (its webview find, Find Next).
         if (mod && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
           e.preventDefault();
+          e.stopPropagation();
           open(false);
         } else if (mod && !e.altKey && !e.shiftKey && (e.key === 'h' || e.key === 'H')) {
           e.preventDefault();
+          e.stopPropagation();
           open(true);
         } else if (e.key === 'F3' && isOpen) {
           e.preventDefault();
+          e.stopPropagation();
           step(e.shiftKey ? -1 : 1);
         }
       },
