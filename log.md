@@ -1471,3 +1471,9 @@ Worktree `VSMarkdownEditor-int`, started from `feature/office-xlsx-structure-ui`
   - Real Excel (`verify-office-open.ps1 -Kind Excel -Path tests\.out`, hidden instance): 177/177 passed (no `r2-excel-check` files in this worktree).
   - Real Word (`-Kind Word`): 102/109 passed. The 7 failures are the `prettyDocx()` outputs (`docxParagraph/pretty-edit.docx`, `edits/*-pretty.docx` x6), whose unedited input Word already refuses (known test-input limitation, see WP-28 entry).
   - PDF (`node scripts/verify-pdf-open.mjs tests/.out/pdf`): 121/121 ok in pdf.js, PDFium and pdf-lib.
+
+### 2026-11-21 — Marketplace listing rewritten for customers
+- `README.md` restructured as a product page (highlights, getting started, per-feature how-to, editor choice, settings, commands, privacy, requirements, support); developer content moved to `CONTRIBUTING.md` (branch workflow, build from source, VS Code 1.95+).
+- `CHANGELOG.md`: Unreleased became `[1.6.0] - 2026-11-21` (Added / Improved / Changed); older entries rewritten in the same user-facing style, versions and dates kept.
+- `package.json`: displayName, description, categories (Visualization, Formatters, Other) and 29 keywords (incl. pdf, office editing); name, publisher and version untouched.
+- Checked: `vsce ls` works and ships README, CHANGELOG, LICENSE (CONTRIBUTING is excluded, so the README links it by absolute GitHub URL); `npm test` 2388 tests, 2387 pass, 1 skipped.

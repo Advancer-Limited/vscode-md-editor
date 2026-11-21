@@ -1,105 +1,117 @@
 # Changelog
 
-All notable changes to the VS Code MD Editor extension will be documented in this file.
+What's new in MD Editor & Office Viewer, release by release.
 
-## [Unreleased]
+## [1.6.0] - 2026-11-21
+
+Word, Excel and PDF files now open right inside VS Code. Edit your Word documents and Excel workbooks, and read PDFs, without leaving your editor.
 
 ### Added
 
-- **Word and Excel viewers.** `.docx` and `.xlsx` files now open in a read-only viewer by default instead of VS Code's "cannot display binary file" message. Word documents are drawn as pages (tables, pictures, headers and footers, footnotes, lists) with zoom, Fit width and a link to open in Word. Excel workbooks open in a styled, virtualised grid with sheet tabs, a formula bar, a status bar showing Sum / Average / Count, find across sheets, copy as tab-separated text and hyperlink support, following your VS Code theme (or always light, via the new `vscodeMdEditor.office.sheetAppearance` setting). Content that can't be drawn (tracked changes, comments, charts, pivot tables, macros, and so on) is listed in a notice bar and is never touched. Password-protected, legacy-format, damaged and empty files show a clear explanation with an "Open in Word/Excel" button. Files are never modified and never marked as changed; documents are processed locally with no network requests. To use another editor, use **Open With...** or set `workbench.editorAssociations` (see the README). Editing is planned for a later release.
-- **PDF viewer.** `.pdf` files now open in a read-only viewer by default. Pages scroll continuously with zoom (25-500%, Fit width, Fit page, Actual size), a page box, and view rotation; a sidebar shows thumbnails, bookmarks and attached files (save them with **Save as...**; they are never opened), with a document properties dialog; Ctrl+F finds text with a match count, Ctrl+C copies, and links to web and mail addresses open through VS Code. Password-protected PDFs ask for the password. Damaged, empty, non-PDF and oversized files show an explanation with an **Open externally** button. Notices tell you about encryption, digital signatures (not verified), scripts (never run), XFA forms (not shown), scanned files without text, and attachments. Follows your VS Code theme including both high-contrast themes, supports keyboard and screen-reader use, and makes no network requests. Files are never modified and never marked as changed. New setting `vscodeMdEditor.pdf.defaultZoom`. Problems rendering a file are logged to the **VS Code MD Editor** output channel. To use another editor, use **Open With...** or the **Choose Editors for Office and PDF Files...** command (see the README). Printing, form filling and editing are not part of this release.
-- **Choose Editors for Office and PDF Files...** command: pick, per file type, whether this extension's viewer, VS Code's default editor or automatic selection opens the file (a friendly front end to `workbench.editorAssociations`).
+- **Edit Word documents.** Open a `.docx` file as pages, press **Edit** (Ctrl+E), and change text in paragraphs and table cells. Apply bold, italic, underline, headings, bullet and numbered lists, and indentation. Undo and redo work as usual, and everything you do not touch is saved exactly as it was.
+- **Edit Excel workbooks.** Open an `.xlsx` file in a spreadsheet grid with sheet tabs and a formula bar, then edit cells, keep your formulas with their saved results, enter dates, and copy and paste. Insert and delete rows and columns, and add, rename or delete sheets. You are asked before any change that cannot fully update charts, pivot tables or drawings (see the new `confirmStructuralEdits` setting).
+- **View Word and Excel files.** Word documents are drawn as pages with tables, pictures, headers and footers, footnotes and lists, plus zoom and a link to open the file in Word. Excel workbooks keep their fonts, colours, borders, merged cells and number, date and currency formats, with Sum, Average and Count shown for selected cells, find across sheets and hyperlinks. Content that cannot be shown is listed in a notice and is always kept when you save.
+- **View PDFs.** Smooth scrolling, zoom from 25% to 500% (Fit width, Fit page, Actual size), a page box, and view rotation. The sidebar shows thumbnails, bookmarks and attached files (save them with **Save as...**), and a document properties dialog is included. Find text with a match count, copy text, and follow links. Password-protected files ask for the password. Scripts in a PDF never run.
+- **Files open in View mode by default.** Click **Edit** or press **Ctrl+E** to start editing. To start in Edit mode instead, turn on the new `vscodeMdEditor.office.startInEditMode` setting.
+- **Choose Editors for Office and PDF Files...** command: pick, for Word, Excel and PDF files, whether this extension, VS Code's default editor or automatic selection opens them. **Open With...** and `workbench.editorAssociations` work too.
+- **New settings:** `vscodeMdEditor.office.startInEditMode`, `vscodeMdEditor.office.confirmStructuralEdits`, `vscodeMdEditor.office.sheetAppearance` (follow your VS Code theme, or always show a light sheet) and `vscodeMdEditor.pdf.defaultZoom`.
+- A clear message, with a button to open the file elsewhere, for files that cannot be shown: password-protected Office files, older `.doc` and `.xls` files, damaged files and empty files.
+
+### Improved
+
+- Word, Excel and PDF viewers follow your VS Code theme, including high-contrast themes, and work with the keyboard and screen readers.
+- Files stay on your machine: the viewers load nothing from the internet, and macros and scripts in documents are never run.
 
 ### Changed
 
-- **Minimum VS Code version is now 1.95** (October 2024), up from 1.85. The PDF viewer needs browser features (`Promise.withResolvers`, CSS `round()`) that older VS Code builds do not have; on VS Code 1.88 to 1.94 pages would draw but text selection and search highlights would be misplaced.
+- **VS Code 1.95 (October 2024) or newer is now required**, up from 1.85.
 
 ## [1.5.0] - 2026-10-13
 
 ### Added
 
-- **Find and Replace.** Press **Ctrl+F** (find) or **Ctrl+H** (find and replace) — **Cmd** on macOS — or use the new toolbar button. Includes a case-sensitive toggle, a match count, next/previous (Enter, Shift+Enter, F3), Replace and Replace All. In Edit mode it searches the text as rendered, highlighting matches without disturbing your cursor; in Raw and Split it searches the markdown source. The shortcut only applies while the editor has focus, so VS Code's own Ctrl+F elsewhere is unaffected.
+- **Find and Replace in the Markdown editor.** Press **Ctrl+F** to find or **Ctrl+H** to find and replace (Cmd on macOS), or use the new toolbar button. Includes a case-sensitive option, a match count, next and previous (Enter, Shift+Enter, F3), Replace and Replace All. In Edit mode it searches the text as you see it, without moving your cursor; in Raw and Split it searches the Markdown source.
 
-### Changed
+### Improved
 
-- Updated dependencies, including Mermaid 11 → 12.
+- Updated Mermaid to version 12 and refreshed other bundled components.
 
 ## [1.4.0] - 2026-07-26
 
-### Fixed
-
-- **New files now appear in the sidebar straight away.** Adding a `.md` or `.mmd` file outside VS Code — from a terminal, a `git checkout` or branch switch, or a script — didn't show up until you reloaded the window. The file lists only listened for file operations VS Code itself performed, so anything created by another program went unnoticed. They now watch the filesystem directly, and deletions are picked up the same way.
-- **A file created by another program is re-read once its content is written**, so its `[[wikilinks]]` are picked up. Previously an externally created file could be indexed while still empty, leaving it out of backlinks and the graph. Content changed entirely outside VS Code (a `git checkout` rewriting files, for instance) is now noticed too.
-
 ### Added
 
-- **Refresh button on both sidebar tabs** — forces a rescan. Normally unnecessary now that new files are detected automatically, but file watching legitimately misses things: paths under `files.watcherExclude`, network and remote filesystems, and very large trees that exhaust the OS watcher limit. The icon spins briefly so you can tell the rescan ran even when nothing changed.
+- **Refresh button on both sidebar tabs** to rescan your files on demand. It is rarely needed now, but helps with network and remote drives, folders excluded from file watching, and very large projects.
+
+### Fixed
+
+- **New files appear in the sidebar straight away.** Files added outside VS Code, such as from a terminal, a Git checkout or a script, used to show up only after reloading the window. Deleted files are noticed too.
+- **Links in files created by other programs are picked up** once their content is written, so they appear in backlinks and the graph. Files rewritten outside VS Code are noticed too.
 
 ## [1.3.2] - 2026-07-26
 
-### Fixed
-
-- **Nested copies of your repository are no longer indexed** — this was the real cause of the same file appearing many times in the sidebar. Tools that create a full working copy inside your project (notably the per-agent git worktrees Claude Code writes to `.claude/worktrees/`) meant every document was indexed once per copy: in one real workspace, 35 markdown files became 502 entries. It could also make a `[[wikilink]]` resolve to a copy inside a worktree instead of the real file.
-
 ### Added
 
-- **New `vscodeMdEditor.exclude` setting** — glob patterns the Markdown and Mermaid file lists (and the link graph) should ignore. Defaults to `**/node_modules/**`, `**/.git/**` and `**/.claude/worktrees/**`. Your existing `files.exclude` and `search.exclude` settings are now honoured on top of these, so anything hidden from the Explorer or search is hidden here too.
-- **Flat view tells same-named files apart** — a file whose name is shared by another file (the several `README.md` most repos have) now shows its folder path in dimmed text. Files with a unique name stay as a plain name, as before.
+- **New `vscodeMdEditor.exclude` setting** to choose folders the file lists and link graph ignore. It defaults to `node_modules`, `.git` and `.claude/worktrees`, and your `files.exclude` and `search.exclude` settings are respected as well.
+- **Same-named files are easy to tell apart** in the flat list: a file whose name is shared by another file (such as several `README.md` files) shows its folder path in dimmed text.
+
+### Fixed
+
+- **Copies of your project inside your project are no longer listed.** Tools that create a working copy under your project folder (such as the git worktrees Claude Code creates in `.claude/worktrees`) caused every document to appear once per copy, and could make a `[[wikilink]]` open the copy instead of the real file.
 
 ## [1.3.1] - 2026-07-26
 
 ### Fixed
 
-- **Sidebar Markdown file list no longer shows files more than once.** The list still carried an old link-navigation feature: each file row could expand to show the files it links to and from, so files already in the list reappeared as sub-rows under other files, reading as duplicates. Link exploration lives in the interactive graph (the Show Graph button), so the list is now just files — every file exactly once.
-- **Sidebar flat view is now strictly alphabetical** — the same files as folder view, flattened. Previously the active file was hoisted to the top of the list; it keeps its highlight but stays in alphabetical position.
+- **The sidebar Markdown list shows each file exactly once.** Files used to reappear as sub-rows under other files, which looked like duplicates. Link exploration lives in the interactive graph.
+- **The flat view is strictly alphabetical.** The active file keeps its highlight but no longer jumps to the top.
 
 ## [1.3.0] - 2026-07-23
 
 ### Added
 
-- **Print/Save as PDF for the Markdown WYSIWYG editor** — a new Print button on the toolbar opens the current rendered document (including any embedded Mermaid diagrams) in your browser, where Print and its "Save as PDF" destination work properly.
+- **Print or save as PDF from the Markdown editor.** A new Print button opens the rendered document, including Mermaid diagrams, in your browser where Print and "Save as PDF" work properly.
 
-### Changed
+### Improved
 
-- **Sidebar flat view is now a plain alphabetical file list**, with no folder tag — the tag only ever showed the immediate parent folder, so files sharing a name and immediate folder in different parent projects (e.g. `serviceA/docs/00-overview.md` and `serviceB/docs/00-overview.md`) looked like duplicates. Switch to folder view (the toggle button) to see where a file actually lives. Folder path now also used in full — this affects the full-graph panel's node coloring/tooltips and sidebar search matching too, not just the (now-removed) tag.
-- **Sidebar tabs renamed and given icons** — "Markdown Links" is now just "Markdown", both tabs show a small file-type icon to the left of their label, and the panel header reads "MD & MMD Editor".
-- **Several Markdown editor toolbar buttons converted from text labels to icons** (Link, Image, Code, Code Block, Unordered/Ordered List, Blockquote, Horizontal Rule, and the new Print button) with tooltips, saving toolbar space. Bold/Italic/Strikethrough, headings, Grammar (its label shows check progress), and the Edit/Split/Raw view toggle stay as text.
+- **The sidebar flat view is a plain alphabetical file list**; switch to folder view to see where a file lives.
+- **Sidebar tabs have icons.** "Markdown Links" is now just "Markdown", and the panel header reads "MD & MMD Editor".
+- **Toolbar buttons use icons with tooltips** (link, image, code, code block, lists, quote, horizontal rule and print), saving space.
 
 ### Fixed
 
-- **A real (if rare) file-indexing bug**: the sidebar's file index computed a file's path relative to its workspace folder with a plain, case-sensitive string comparison — a document opened via a differently-cased path (possible even on Windows, mid-path, not just the drive letter) could silently produce a bogus second index entry instead of updating the existing one. Replaced with `path.relative()`, which resolves this correctly.
+- A document opened through a differently-cased file path could appear twice in the sidebar.
 
 ## [1.2.0] - 2026-07-22
 
 ### Added
 
-- **Sidebar now has tabs** — the "Markdown Links" panel is joined by a new **Mermaid** tab listing every `.mmd`/`.mermaid` file in the workspace (search + click to open), laying the groundwork for further tabs down the line.
-- **Flat/folder view toggle**, independent per tab — switch either tab between a flat sorted list and a folder tree. The tree only ever shows folders that actually contain a matching file (directly or in a subfolder); typing in that tab's search box temporarily flattens the view, reverting to folder view when the search is cleared. Each tab remembers its own view mode across reloads.
-- **Right-click a folder in folder view** for **Add Markdown**/**Add Mermaid** (prompts for a name, creates the file, and opens it) and **Show in Explorer** (reveals that folder in VS Code's native Explorer).
+- **A Mermaid tab in the sidebar** listing every `.mmd` and `.mermaid` file in your workspace, with search.
+- **Flat or folder view for each tab.** The folder tree shows only folders that contain matching files. Searching temporarily flattens the list, and each tab remembers its own view.
+- **Right-click a folder in folder view** to add a new Markdown or Mermaid file there, or to show the folder in the Explorer.
 
 ## [1.1.2] - 2026-07-22
 
+### Improved
+
+- **The Mermaid snippet palette uses icon buttons** with tooltips, so the full set fits on one toolbar row.
+
 ### Fixed
 
-- **Print/Save as PDF could fail with a "Get an app to open this vscode-userdata link" error** on Windows — the print HTML file's URI was passed to `openExternal()` as-is, which can carry a `vscode-userdata:` scheme rather than `file:`. Rebuilt as a proper `file:` URI before opening.
-
-### Changed
-
-- **Mermaid source-editor snippet palette is now icon buttons instead of text labels** (Box, Diamond, Participant, Loop, etc.) — the full shape/option palette now fits on one toolbar row instead of wrapping across 2-3, with the label and description available as a hover tooltip.
+- **Print and Save as PDF could fail on Windows** with a "Get an app to open this link" error.
 
 ## [1.1.1] - 2026-07-22
 
-### Fixed
+### Improved
 
-- **Activity bar icon now matches the real logo** — the 1.1.0 icon was a hand-drawn approximation that read as a plain hollow triangle. Replaced with a silhouette traced directly from `media/icon.png`'s actual pixels (not redrawn by eye), so it's pixel-accurate to the real "A" mark, counter and base included.
+- **The Activity Bar icon now matches the real logo**, drawn directly from the brand mark.
 
 ## [1.1.0] - 2026-07-20
 
 ### Added
 
-- **New activity bar icon** — a monochrome Advancer 'A' mark, matching the brand icon already on the editor toolbars, replacing the generic link icon.
-- **Mermaid template dropdown expanded from 8 to 22 diagram types** — nearly every official Mermaid diagram type is now available (flowchart, sequence, class, state, ER, gantt, pie, mind map, user journey, git graph, kanban, timeline, quadrant chart, requirement diagram, C4 context, block, sankey, XY chart, radar, packet, architecture, treemap), each verified to render correctly and using generic example content (`Box 1`, `Task 2`...) that's obviously meant to be edited. The dropdown is now searchable, so the longer list stays easy to scan.
-- **Smarter template insertion** — templates now insert at your cursor instead of always replacing the whole document. If the cursor is in the middle of an existing diagram, you're asked to confirm first (since Mermaid only supports one diagram per file); at the very start or end, it inserts immediately.
+- **A new Activity Bar icon**: the Advancer "A" in a single colour.
+- **22 Mermaid starter templates**, up from 8, covering nearly every diagram type: flowchart, sequence, class, state, ER, Gantt, pie, mind map, user journey, git graph, kanban, timeline, quadrant, requirement, C4, block, Sankey, XY chart, radar, packet, architecture and treemap. The dropdown is searchable.
+- **Smarter template insertion.** Templates insert at your cursor instead of replacing the whole file. If your cursor is inside an existing diagram, you are asked first.
 
 ## [1.0.0] - 2026-07-19
 
@@ -107,111 +119,99 @@ First stable release.
 
 ### Added
 
-- **Mermaid source editor overhaul** — the `.mmd`/`.mermaid` editor now has full syntax highlighting in the source pane (diagram keywords, arrows, node shapes, edge labels, comments, `%%{init}%%` directives), with the offending line highlighted when a diagram fails to parse.
-- **Zoom and pan in the diagram preview** — Ctrl/Cmd+scroll to zoom about the cursor, drag to pan, plus toolbar controls for zoom in/out, 100%, and fit-to-view with a live zoom readout. Your view is preserved as you keep typing, so zooming into part of a large diagram no longer resets on every edit.
-- **Export diagrams as PNG**, with a choice of light or dark background — a light export re-renders the diagram for a white background, so it stays readable when dropped into documents and slides.
-- **Print diagrams / save as PDF** — opens the diagram in your browser, where Print and its "Save as PDF" destination work properly.
-- **Refreshed diagram styling** — softer rounded corners, a flatter and more professional palette, and cleaner typography, with proper light and dark theme support that follows your VS Code theme (including live re-render when you switch themes).
-- **Mermaid authoring help** — a **Template** gallery inserting working starter diagrams (flowchart, sequence, class, state, ER, gantt, pie, mind map), a snippet palette that changes with the diagram type you're writing, and completions offering the node IDs already in your diagram, plus diagram types, directions, keywords and arrows. The node-ID completion prevents Mermaid's most common trap: a mistyped ID doesn't error, it silently creates a stray disconnected node.
-- **glTF 3D file editor** — opening a `.gltf` file gives you the JSON source alongside a live 3D preview rendered with three.js, with orbit, pan and zoom. The view updates as you edit and keeps your camera position, so you don't lose your place. Toolbar has fit, reset, wireframe and grid toggles. (Binary `.glb` files are not supported in this release.)
-- An **About** button on editor toolbars showing the product, version, and author.
+- **A better Mermaid editor** for `.mmd` and `.mermaid` files, with syntax highlighting and the failing line marked when a diagram has an error.
+- **Zoom and pan** in the diagram preview (Ctrl+scroll to zoom, drag to pan), with zoom in and out, 100% and fit-to-view. Your view is kept as you type.
+- **Export diagrams as PNG** with a light or dark background.
+- **Print diagrams or save them as PDF.**
+- **Refreshed diagram styling** with rounded corners, a cleaner palette and proper light and dark themes that follow VS Code.
+- **Mermaid writing help:** a template gallery, a snippet palette that changes with the diagram type, and node-name completion that guards against a mistyped name quietly creating a stray node.
+- **3D model editor for `.gltf` files**: the JSON source beside a live 3D preview with orbit, pan and zoom. The view keeps your camera position as you edit, and the toolbar has fit, reset, wireframe and grid buttons. (Binary `.glb` files are not supported.)
+- An **About** button on the editor toolbars.
 
 ## [0.3.0] - 2026-07-18
 
 ### Added
 
-- **Mermaid diagrams** — `\`\`\`mermaid` fences render as live diagrams in the WYSIWYG/split preview (read-only there — edit the source in Raw/Split mode). Rendered SVG is cached so unrelated re-renders don't re-invoke Mermaid, and invalid syntax shows an inline error while keeping the last valid render.
-- **`.mmd`/`.mermaid` editor** — opening a Mermaid source file directly now uses a dedicated forced-split editor (source + live preview), independent of the markdown editor.
-- **Task checklists** — GFM `- [ ] task` / `- [x] task` render as clickable checkboxes in the preview and toggle back to `[ ]`/`[x]` in the markdown source.
-- Diff view and the markdown editor now fully support `.markdown` (not just `.md`) — wikilinks, the file index/graph, and diff commands all recognize it.
+- **Mermaid diagrams in Markdown.** A `mermaid` code fence renders as a live diagram in the Edit and Split views. Invalid syntax shows an inline message while keeping the last good diagram.
+- **A dedicated editor for `.mmd` and `.mermaid` files**, with source and live preview side by side.
+- **Task checklists.** `- [ ]` and `- [x]` lines show as clickable checkboxes that update your Markdown.
+- Version comparison, wikilinks, the file list and the graph now work with `.markdown` files as well as `.md`.
 
 ### Fixed
 
-- **WYSIWYG cursor jump, for real this time.** The caret position was tracked as a single character offset across the whole preview, which is ambiguous exactly at block boundaries (e.g. right after pressing Enter into a new empty paragraph) — the most common case where earlier fixes (0.2.1, 0.2.4) had already reduced *how often* a caret restore ran, but not the underlying offset math. Replaced with a block-anchored position that removes the ambiguity structurally.
-- A debounced webview edit still in flight to the extension host could be silently overwritten by a stale update racing it.
-- CRLF-line-ending files had their entire body rewritten on the very first keystroke.
-- **"Compare with Saved" was actually comparing against the last commit (HEAD), not the saved file** — now correctly diffs against what's on disk.
-- The diff viewer no longer splits a fenced code block (including a Mermaid diagram) across separate hunks when only an interior line changed — a changed block now always renders as one complete removed block plus one complete added block.
-- A code block containing a shell-style `$(...)` or similar could corrupt neighboring preview text due to a `String.replace()` special-pattern interpretation bug.
-- Grammar-check highlighting could mark (and apply a suggested fix to) the wrong occurrence of a repeated phrase.
-- A clicked grammar-fix suggestion could be silently lost if another edit was in flight at the same moment.
-- Hardened the preview's HTML sanitizer against case variation and embedded control characters in `javascript:`-style URLs, and extended the check beyond `href` to `src`/`xlink:href`/`formaction`/`poster`.
+- **The cursor no longer jumps in the Edit view**, including when you press Enter into a new paragraph.
+- A change you had just typed could occasionally be overwritten by an older update.
+- Files with Windows line endings no longer have their whole body rewritten on the first keystroke.
+- **"Compare with Saved" now compares against the file saved on disk**, not the last commit.
+- Version comparison no longer splits a code block or Mermaid diagram across separate changes; a changed block shows as one removed block and one added block.
+- Code containing `$(...)` or similar could scramble nearby text in the preview.
+- Grammar highlights and fixes could land on the wrong occurrence of a repeated phrase, and a clicked fix could be lost if you were typing at the same moment.
+- Stronger protection against unsafe links in the preview.
 
 ## [0.2.4] - 2026-07-09
 
 ### Fixed
 
-- **WYSIWYG: cursor no longer jumps or loses focus while typing.** Automatic grammar checks were rebuilding the editable preview mid-typing; highlights now refresh in place without re-rendering, document updates that would clobber pending keystrokes are skipped, and IME composition is no longer interrupted.
-- Edits are applied to the document as a minimal ranged edit instead of a whole-document replace (granular undo, no cursor/scroll disturbance in a parallel raw editor); a rejected edit resyncs the webview instead of silently diverging.
-- Grammar: per-document check debouncing (edits in one file no longer cancel another file's pending check); automatic checks fail silently instead of spamming warnings when the API is unreachable; quick fixes verify the target text hasn't shifted before replacing.
-- Graph: "Center force" toggle actually re-enables the force; node tooltip escapes tag text; sidebar list keeps its scroll position when expanding/collapsing.
-- Diff viewer renders line breaks, links, and typography the same way as the editor.
+- **The cursor no longer jumps or loses focus while you type in the Edit view.** Grammar highlights refresh in place, and typing with an input method is no longer interrupted.
+- **Edits are applied more gently**, giving finer-grained undo and no disturbance to a second editor on the same file. A rejected edit now resyncs instead of leaving the view out of step.
+- **Grammar checking:** edits in one file no longer cancel another file's pending check, automatic checks stay quiet when the service is unreachable, and fixes check the text has not moved before applying.
+- **Graph and sidebar:** the "Center force" toggle works, node tooltips display tag text safely, and the file list keeps its scroll position.
+- The version comparison view shows line breaks, links and typography the same way as the editor.
 
-### Changed
+### Improved
 
-- Updated markdown-it to 14.3.0; removed the obsolete Askance tooling and its dependency.
-- Vendor-file copy step now fails the build loudly if a webview library is missing.
+- Updated the Markdown engine.
 
 ## [0.2.3] - 2026-06-17
 
 ### Fixed
 
-- Grammar highlights: skip text already wrapped in a highlight so a repeated phrase advances to its next un-highlighted occurrence instead of re-marking the first.
-- LanguageTool: add a request timeout so a hung upstream after the tunnel is established no longer leaves the request pending forever.
-- Editor: replace the boolean edit guard with a depth counter so overlapping edits from fast typing don't clear the echo-suppression guard early.
-- Rename propagation: don't rewrite `[[wikilink]]` references when another file owns the stem's resolution; share a single whitespace-tolerant, regex-safe stem matcher.
-
-### Added
-
-- Unit tests for the wikilink stem matcher used by rename propagation.
+- Grammar highlights move on to the next occurrence of a repeated phrase instead of re-marking the first.
+- A grammar check no longer hangs forever if the service stops responding.
+- Fast typing no longer causes duplicate or lost updates.
+- Renaming a file no longer rewrites `[[wikilink]]` references that belong to another file with a similar name.
 
 ## [0.2.2] - 2026-06-16
 
 ### Fixed
 
-- Preserve table formatting when editing tables in WYSIWYG mode (#29).
-- Keep `[[wikilink|alias]]` syntax intact when used inside a table cell.
-- Use a cryptographically secure nonce for the webview Content Security Policy.
-- File index: debounce per-document so rapid edits across files aren't dropped; index files changed during the initial workspace scan.
-- Bound memory/time of the version-diff algorithm on large files.
-
-### Added
-
-- Unit test suite (`npm test`) covering the table round-trip and diff algorithm.
+- Table formatting is preserved when you edit tables in the Edit view.
+- `[[wikilink|alias]]` links stay intact inside table cells.
+- Rapid edits across several files are no longer dropped from the file index, and files changed during the first scan are included.
+- Version comparison stays fast on large files.
 
 ## [0.2.1] - 2026-06-16
 
 ### Fixed
 
-- Prevent cursor jump in WYSIWYG mode during editing (#24).
+- The cursor no longer jumps while editing in the Edit view.
 
 ## [0.2.0] - 2026-03-13
 
 ### Added
 
-- **Version Diff** — Compare markdown files against previous git commits in a rendered diff viewer.
-  - "Compare with Previous Version" — diff against the most recent commit (smart: HEAD if uncommitted changes, else HEAD~1).
-  - "Compare with Commit..." — pick from a list of recent commits (QuickPick with hash, message, author, date).
-  - "Compare with Saved" — diff working changes against HEAD.
-  - Right-click context menu entries for `.md` files in the Explorer.
-  - Custom webview panel renders both versions through markdown-it with green/red diff highlighting.
+- **Version comparison.** See what changed in a Markdown file against earlier Git versions, on the rendered page with additions in green and deletions struck through in red.
+  - **Compare with Previous Version** compares against the most recent commit that changed the file.
+  - **Compare with Commit...** lets you pick from recent commits, with message, author and date.
+  - **Compare with Saved** compares against the saved file.
+  - Right-click a Markdown file in the Explorer for quick access.
 
 ## [0.1.1] - 2026-02-24
 
 ### Fixed
 
-- Added marketplace icon.
-- Updated `.gitignore`.
+- Added the Marketplace icon.
 
 ## [0.1.0] - 2026-02-24
 
+First release.
+
 ### Added
 
-- WYSIWYG editing with contenteditable preview, split view, and raw markdown modes.
-- Toolbar with formatting buttons (bold, italic, headings, links, images, code, lists, quotes).
-- `[[Wikilinks]]` with autocomplete suggestions and preview rendering.
-- Markdown Links sidebar with file list and incoming/outgoing link display.
-- Full-screen force-directed link graph with Obsidian-style controls.
-- LanguageTool grammar and spelling integration with inline highlights and quick-fix suggestions.
-- Rename propagation — renaming a `.md` file updates all wikilink references.
-- Real-time incremental grammar checking (paragraph-level on edit).
+- Rich Edit view, Split view and Raw Markdown modes.
+- A formatting toolbar for bold, italic, headings, links, images, code, lists and quotes.
+- `[[Wikilinks]]` with autocomplete suggestions.
+- A Markdown sidebar listing files with their incoming and outgoing links.
+- A full-screen interactive link graph with Obsidian-style controls.
+- Grammar and spelling checking with LanguageTool, with inline highlights and quick fixes, checked as you type.
+- Renaming a Markdown file updates all `[[wikilink]]` references to it.

@@ -43,6 +43,12 @@ Be respectful and constructive. We want this to be a welcoming project for every
 6. **Commit** with a clear, descriptive message.
 7. **Push** to your fork and open a **Pull Request** targeting `develop`.
 
+### Branch Workflow
+
+- **`master`**: stable releases only. PRs from `develop` after testing.
+- **`develop`**: integration branch. All feature and fix PRs target this branch.
+- **`feature/*`** / **`fix/*`**: short-lived branches for individual changes.
+
 ### PR Requirements
 
 - Target the `develop` branch (not `master`).
@@ -56,7 +62,7 @@ Be respectful and constructive. We want this to be a welcoming project for every
 ### Prerequisites
 
 - Node.js 18+ to build; **Node.js 22.13+ to run `npm test`** (pdf.js's `saveDocument()`, which the PDF writer, contract and verifier suites run, needs it). On an older Node those suites are skipped and `tests/pdf/nodeVersion.test.mjs` fails the run, so a green run always means they ran; set `PDF_TESTS_ALLOW_OLD_NODE=1` to accept a partial run knowingly.
-- VS Code 1.85+
+- VS Code 1.95+
 
 ### Build Commands
 
@@ -67,6 +73,17 @@ Be respectful and constructive. We want this to be a welcoming project for every
 | `npm run watch` | Build in watch mode |
 | `npm run package` | Production build |
 | `npm run lint` | Run ESLint |
+
+### Building from Source
+
+```bash
+git clone https://github.com/Advancer-Limited/vscode-md-editor.git
+cd vscode-md-editor
+npm install
+npm run compile
+```
+
+Then press `F5` in VS Code to launch the Extension Development Host. Run the tests with `npm test`.
 
 ### Testing Locally
 

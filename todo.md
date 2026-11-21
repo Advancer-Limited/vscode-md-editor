@@ -462,6 +462,6 @@
 - [x] Merge `feature/office-xlsx-fixes`, `feature/office-docx-model`, `feature/pdf-edit-core` onto the Excel stack tip (conflicts resolved, tests green after each)
 - [x] Switch on `xlsxEdit`, `xlsxStructure`, `docxEdit` (PDF flags stay off); flag-off tests kept through the mutable-flags copy
 - [x] Verify: check-types, compile, production build, npm test, vsce ls / package (4.62 MB), real Excel 177/177, real Word 102/109 (7 known prettyDocx), PDF 121/121
-- [ ] Rewrite README / CHANGELOG for users (all sections kept as merged)
+- [x] Rewrite README / CHANGELOG / Marketplace metadata for users (developer content moved to CONTRIBUTING.md)
 - [ ] Version bump to 1.6.0, PR to develop, then develop -> master, publish
 - [ ] Decide whether `signatures/cla.json` belongs in the VSIX (add to `.vscodeignore`)
