@@ -17,6 +17,8 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 - **Version Diff** — Compare your markdown file against previous git commits in a rendered diff viewer with green/red change highlighting. Fenced code blocks (including Mermaid diagrams) always diff as a whole block, never split mid-fence.
 - **Rename Propagation** — Renaming a `.md`/`.markdown` file automatically updates all wikilink references across your workspace.
 
+**Requires VS Code 1.95 or newer** (October 2024). The PDF viewer relies on browser features that older VS Code builds do not have.
+
 ## Installation
 
 ### From VS Code Marketplace

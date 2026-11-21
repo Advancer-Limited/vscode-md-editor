@@ -19,7 +19,7 @@
     "url": "https://github.com/Advancer-Limited/vscode-md-editor/issues"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
     "Other"
@@ -155,7 +155,10 @@
       "properties": {
         "vscodeMdEditor.office.sheetAppearance": {
           "type": "string",
-          "enum": ["theme", "light"],
+          "enum": [
+            "theme",
+            "light"
+          ],
           "enumDescriptions": [
             "Follow the VS Code color theme.",
             "Always show the sheet on a light background, as authored."
@@ -275,9 +278,11 @@
     "test": "node esbuild.js --test-bundle && node --test \"tests/**/*.test.{js,mjs}\""
   },
   "devDependencies": {
+    "@cantoo/pdf-lib": "2.11.1",
+    "@hyzyla/pdfium": "3.0.0",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^20.19.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.95.0",
     "esbuild": "^0.28.0",
     "exceljs": "4.4.0",
     "saxes": "6.0.0",
@@ -292,6 +297,7 @@
     "markdown-it": "^14.3.2",
     "mermaid": "^12.1.0",
     "numfmt": "4.1.4",
+    "pdfjs-dist": "6.5.438",
     "three": "^0.185.1",
     "turndown": "^7.2.2"
   }
