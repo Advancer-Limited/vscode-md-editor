@@ -27,7 +27,8 @@ const EXPECT = {
   'js-openaction.pdf': { revs: 1, kind: 'table' }, 'large.pdf': { revs: 1, kind: 'stream' }, 'multi-revision.pdf': { revs: 3, kind: 'table' },
   'outline.pdf': { revs: 1, kind: 'table' }, 'rotated.pdf': { revs: 1, kind: 'table' }, 'scanned.pdf': { revs: 1, kind: 'table' },
   'signed.pdf': { revs: 1, kind: 'table' }, 'tagged.pdf': { revs: 1, kind: 'table' }, 'xref-stream.pdf': { revs: 1, kind: 'stream' },
-  'broken-xref.pdf': 'bad-xref', 'hybrid-xref.pdf': 'hybrid', 'word.pdf': 'hybrid' /* Word writes /XRefStm */,
+  'hybrid-xref.pdf': { revs: 1, kind: 'hybrid' }, 'word.pdf': { revs: 2, kind: 'hybrid' } /* Word writes /XRefStm */,
+  'broken-xref.pdf': 'bad-xref',
   'encrypted-user.pdf': 'encrypted', 'encrypted-owner.pdf': 'encrypted', 'truncated.pdf': 'no-startxref',
   'empty.pdf': 'no-header', 'not-a-pdf.pdf': 'no-header',
 };
@@ -414,11 +415,147 @@ test('startxref and header defects', () => {
   assert.strictEqual(code(() => openPdfSync(u(s.replace('%PDF-1.7', '%PDX-1.7')))), 'no-header');
 });
 
-test('/Encrypt in an older revision and /XRefStm in an appended table are refused', () => {
+test('/Encrypt in an older revision is refused; /XRefStm in an appended table that points at no xref stream is hybrid', () => {
   const enc = build(CAT, { trailer: '/Encrypt 2 0 R ' }).bytes;
   assert.strictEqual(code(() => openPdfSync(appendRev(enc, { 3: '<< >>' }))), 'encrypted');
-  const hyb = appendRev(build(CAT).bytes, { 3: '<< >>' }, { trailer: '/XRefStm 9 ' });
+  const hyb = appendRev(build(CAT).bytes, { 3: '<< >>' }, { trailer: '/XRefStm 9 ' }); // offset 9 is `1 0 obj` (the catalog)
   assert.strictEqual(code(() => openPdfSync(hyb)), 'hybrid');
+});
+
+// ------------------------------------------------------------------ hybrid-reference sections (ISO 32000-1 §7.5.8.4)
+
+test('word.pdf: the newest (hybrid) section supplies object-stream entries the older table marks free', () => {
+  const pdf = openPdfSync(fixture('word.pdf'));
+  const [r0, r1] = pdf.revisions;
+  assert.deepStrictEqual([r0.kind, r1.kind, pdf.xrefKind], ['table', 'hybrid', 'hybrid']);
+  assert.strictEqual(r0.xrefStm, null);
+  assert.strictEqual(r1.xrefStm, Number(pdf.trailer.entries.get('XRefStm').value));
+  assert.strictEqual(pdf.resolve(r1.xrefStreamNum, 0).value.dict.entries.get('Type').value, 'XRef');
+  // Word lists the compressed objects as free in its full table and as type-2 entries in the stream of the update.
+  const compressed = [...pdf.objectNumbers()].filter((n) => pdf.entry(n).type === 'objstm');
+  assert.ok(compressed.length > 40);
+  for (const n of compressed) {
+    assert.strictEqual(r0.entry(n).type, 'free');
+    assert.strictEqual(r1.entry(n).type, 'objstm');
+    assert.ok(pdf.resolve(n), `object ${n} resolves from its object stream`);
+  }
+  assert.ok(r1.sectionEnd > r1.startxref);
+});
+
+test('hybrid-xref.pdf: the object only the stream lists comes from the stream; table entries keep their offsets', () => {
+  const pdf = openPdfSync(fixture('hybrid-xref.pdf'));
+  const r = pdf.revisions[0];
+  assert.strictEqual(r.kind, 'hybrid');
+  assert.strictEqual(pdf.entry(6).type, 'objstm');
+  assert.strictEqual(pdf.resolve(6).location.kind, 'objstm');
+  assert.strictEqual(pdf.resolve(6).value.entries.get('Type').value, 'Page');
+  assert.strictEqual(r.entryCount, 10); // nine table rows (0-5, 7-9) + one from the stream
+  assert.strictEqual(r.xrefStreamNum, 9);
+});
+
+/**
+ * A one-section hybrid file: catalog 1, pages 2, page 3, object stream 4 holding 5 (`<< /Marker 5 >>`), the /XRefStm
+ * stream 6; the table lists 0-4 and 6. Options: rows (stream rows [num, type, f2, f3], default [[5, 2, 4, 0]]),
+ * stmDict (extra keys of the stream), tableExtra (extra table rows: num -> 'f' | offset), xrefStm (trailer value
+ * text), size (table /Size), stmSize, trailer (extra trailer text), dup1 (a second copy of object 1 at offs.dup1).
+ */
+function hybridBuild(o = {}) {
+  const parts = [L1('%PDF-1.7\n')]; let off = parts[0].length; const offs = {};
+  const add = (n, body) => { const b = Buffer.concat([L1(`${n} 0 obj\n`), Buffer.isBuffer(body) ? body : L1(body), L1('\nendobj\n')]); offs[n] = off; off += b.length; parts.push(b); };
+  add(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  add(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  add(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>');
+  const inner = L1('5 0 << /Marker 5 >> ');
+  add(4, stm('/Type /ObjStm /N 1 /First 4', inner));
+  if (o.dup1) { const d = L1('1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Copy true >>\nendobj\n'); offs.dup1 = off; off += d.length; parts.push(d); }
+  const rows = (typeof o.rows === 'function' ? o.rows(offs) : o.rows) ?? [[5, 2, 4, 0]];
+  const data = Buffer.alloc(rows.length * 6);
+  rows.forEach(([, t, a, g], i) => { data[i * 6] = t; data.writeUInt32BE(a, i * 6 + 1); data[i * 6 + 5] = g; });
+  const index = rows.map(([n]) => `${n} 1`).join(' ');
+  const stmAt = off;
+  add(6, stm(`/Type /XRef /Size ${o.stmSize ?? 7} /W [1 4 1] /Index [${index}] ${o.stmDict ?? ''}`, data));
+  const row = (v) => (v === 'f' ? '0000000000 00001 f \n' : `${String(v).padStart(10, '0')} 00000 n \n`);
+  const table = { 0: '0000000000 65535 f \n' };
+  for (const n of [1, 2, 3, 4, 6]) table[n] = row(offs[n]);
+  for (const [n, v] of Object.entries(o.tableExtra ?? {})) table[n] = row(v);
+  let x = 'xref\n';
+  for (const n of Object.keys(table).map(Number).sort((a, b) => a - b)) x += `${n} 1\n${table[n]}`;
+  const xref = off;
+  x += `trailer\n<< /Size ${o.size ?? 7} /Root 1 0 R /XRefStm ${o.xrefStm ?? stmAt} ${o.trailer ?? ''}>>\nstartxref\n${xref}\n%%EOF\n`;
+  parts.push(L1(x));
+  return { bytes: new Uint8Array(Buffer.concat(parts)), offs, stmAt, xref };
+}
+
+test('hand-built hybrid file reads: stream-only object, agreeing duplicates, free in both', () => {
+  const h = hybridBuild();
+  const pdf = openPdfSync(h.bytes);
+  assert.strictEqual(pdf.xrefKind, 'hybrid');
+  assert.strictEqual(pdf.revisions[0].xrefStm, h.stmAt);
+  assert.strictEqual(pdf.resolve(5).value.entries.get('Marker').value, 5);
+  assert.strictEqual(pdf.objectCount, 6);
+  // the stream repeats the table's entry for 1 (same offset and generation) and a free 0: accepted, table entry kept
+  const dup = hybridBuild({ rows: (offs) => [[0, 0, 0, 255], [1, 1, offs[1], 0], [5, 2, 4, 0]] });
+  assert.strictEqual(code(() => openPdfSync(dup.bytes)), 'ok');
+  assert.strictEqual(openPdfSync(dup.bytes).entry(1).offset, dup.offs[1]);
+  // a number only the stream lists as free is free in this section
+  const free = openPdfSync(hybridBuild({ rows: [[5, 2, 4, 0], [7, 0, 0, 1]], size: 8, stmSize: 8 }).bytes);
+  assert.strictEqual(free.entry(7).type, 'free');
+  assert.strictEqual(free.revisions[0].entryCount, 8);
+});
+
+test('a plain table appended on top of a hybrid section supersedes its stream entries (pdf.js output shape)', () => {
+  const h = hybridBuild();
+  const pdf = openPdfSync(h.bytes);
+  const upd = appendRev(h.bytes, { 5: '<< /Marker 55 >>' }, { size: 7 }); // a plain table section on top of the hybrid
+  const p2 = openPdfSync(upd);
+  assert.deepStrictEqual(p2.revisions.map((r) => r.kind), ['hybrid', 'table']);
+  assert.strictEqual(p2.xrefKind, 'table');
+  assert.strictEqual(p2.resolve(5).value.entries.get('Marker').value, 55);
+  assert.strictEqual(pdf.resolve(5).value.entries.get('Marker').value, 5);
+});
+
+test('malformed or ambiguous hybrid sections are refused with hybrid', () => {
+  const c = (o) => code(() => openPdfSync(hybridBuild(o).bytes));
+  const h = hybridBuild();
+  // the /XRefStm value
+  assert.strictEqual(c({ xrefStm: '999999' }), 'hybrid');          // past the end of the file
+  assert.strictEqual(c({ xrefStm: '-5' }), 'hybrid');
+  assert.strictEqual(c({ xrefStm: '12.5' }), 'hybrid');
+  assert.strictEqual(c({ xrefStm: '(754)' }), 'hybrid');
+  assert.strictEqual(c({ xrefStm: '6 0 R' }), 'hybrid');
+  assert.strictEqual(c({ xrefStm: String(h.offs[1]) }), 'hybrid');  // an object that is not an XRef stream
+  assert.strictEqual(c({ xrefStm: String(h.offs[4]) }), 'hybrid');  // a stream that is not an XRef stream
+  assert.strictEqual(c({ xrefStm: String(h.xref) }), 'hybrid');     // the table itself
+  assert.strictEqual(c({ xrefStm: String(h.stmAt + 1) }), 'hybrid'); // inside the stream's header
+  // the stream
+  assert.strictEqual(c({ stmDict: '/Prev 9' }), 'hybrid');
+  assert.strictEqual(c({ stmDict: '/XRefStm 9' }), 'hybrid');
+  assert.strictEqual(c({ rows: [[5, 2, 4, 0], [9, 2, 4, 1]], stmSize: 10 }), 'hybrid'); // entry over the table's /Size
+  assert.strictEqual(c({ rows: [[5, 1, 9999, 0]] }), 'hybrid');     // entry does not point at its header
+  assert.strictEqual(c({ rows: [[5, 7, 0, 0]] }), 'hybrid');        // unknown entry type
+  assert.strictEqual(c({ stmDict: '/Encrypt 1 0 R' }), 'encrypted');
+  // conflicts between the table and the stream of one section
+  assert.strictEqual(c({ dup1: true, rows: (offs) => [[1, 1, offs.dup1, 0], [5, 2, 4, 0]] }), 'hybrid'); // a different copy of 1
+  assert.strictEqual(c({ rows: (offs) => [[1, 2, 4, 0], [5, 2, 4, 0]] }), 'hybrid');       // offset vs object stream
+  assert.strictEqual(c({ rows: [[1, 0, 0, 0], [5, 2, 4, 0]] }), 'hybrid');                 // in use vs free
+  assert.strictEqual(c({ tableExtra: { 5: 'f' } }), 'hybrid');                             // free in the table, in use in the stream
+});
+
+test('hybrid /XRefStm streams are each read once and never also a /Prev section', () => {
+  // two sections naming the same /XRefStm stream
+  const h = hybridBuild();
+  const twice = appendRev(h.bytes, { 7: '<< >>' }, { size: 8, trailer: `/XRefStm ${h.stmAt} ` });
+  assert.strictEqual(code(() => openPdfSync(twice)), 'hybrid');
+  // an appended table whose /XRefStm is the base's own cross-reference stream section (also its /Prev)
+  const xs = xrefStreamPdf();
+  const self = appendRev(xs, { 5: '<< >>' }, { trailer: `/XRefStm ${sx(xs)} ` });
+  assert.strictEqual(code(() => openPdfSync(self)), 'hybrid');
+});
+
+test('hybrid stream entries count toward maxXrefEntries', () => {
+  const h = hybridBuild();
+  assert.strictEqual(code(() => openPdfSync(h.bytes, { maxXrefEntries: 7 })), 'ok'); // 6 table rows + 1 stream row
+  assert.strictEqual(code(() => openPdfSync(h.bytes, { maxXrefEntries: 6 })), 'too-large');
 });
 
 test('lazy: a garbage body behind a valid header opens; resolving that object fails, others still resolve', () => {
@@ -438,7 +575,7 @@ test('unsupported filters and predictors are refused by decodeStream, not guesse
 
 function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32); }
 
-for (const name of ['basic.pdf', 'xref-stream.pdf', 'multi-revision.pdf', 'annotated.pdf']) {
+for (const name of ['basic.pdf', 'xref-stream.pdf', 'multi-revision.pdf', 'annotated.pdf', 'hybrid-xref.pdf', 'word.pdf']) {
   test(`${name}: 400 seeded mutations and every truncation point give a result or a PdfReadError`, () => {
     const base = fixture(name); const r = rng(name.length * 7919);
     const t0 = performance.now();
