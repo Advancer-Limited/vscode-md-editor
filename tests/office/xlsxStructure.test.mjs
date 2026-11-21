@@ -835,12 +835,14 @@ test('S3: insert/delete at the top of a tall sheet is linear (two sizes), and un
     const fx = load('basic.xlsx', await tallWorkbook(n));
     await fx.wb.sheet(1);
     const orig = fx.pkg.serialize();
-    const t0 = performance.now();
+    // CPU time, not wall-clock: the ratio must not depend on what the other test files do meanwhile.
+    const cpu = () => { const c = process.cpuUsage(); return (c.user + c.system) / 1000; };
+    const t0 = cpu();
     const edit = await structural(fx.wb, 1, insR(1));
-    const applyMs = performance.now() - t0;
-    const t1 = performance.now();
+    const applyMs = cpu() - t0;
+    const t1 = cpu();
     outsideUndo(fx.wb, edit, true);
-    const undoMs = performance.now() - t1;
+    const undoMs = cpu() - t1;
     assertBytesEqual(fx.pkg.serialize(), orig, `${n}: undo restores the bytes`);
     outsideUndo(fx.wb, edit, false);
     return { applyMs, undoMs, changes: edit.changes.length };
@@ -848,7 +850,7 @@ test('S3: insert/delete at the top of a tall sheet is linear (two sizes), and un
   await run(5000);   // warm-up
   const small = await run(25000);
   const big = await run(100000);
-  t.diagnostic(`insert row 1: 25k rows ${small.applyMs.toFixed(0)} ms (undo ${small.undoMs.toFixed(0)} ms); 100k rows ${big.applyMs.toFixed(0)} ms (undo ${big.undoMs.toFixed(0)} ms); ${big.changes} changes`);
+  t.diagnostic(`insert row 1 (CPU): 25k rows ${small.applyMs.toFixed(0)} ms (undo ${small.undoMs.toFixed(0)} ms); 100k rows ${big.applyMs.toFixed(0)} ms (undo ${big.undoMs.toFixed(0)} ms); ${big.changes} changes`);
   // 4x the rows: linear ~4x, quadratic ~16x. Allow noise up to 9x.
   assert.ok(big.applyMs < 9 * Math.max(small.applyMs, 50), `apply: ${small.applyMs} ms -> ${big.applyMs} ms is not linear`);
   assert.ok(big.undoMs < 9 * Math.max(small.undoMs, 50), `undo: ${small.undoMs} ms -> ${big.undoMs} ms is not linear`);
