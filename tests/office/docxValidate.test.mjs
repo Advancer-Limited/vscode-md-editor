@@ -143,14 +143,18 @@ test('comment ranges: missing end, missing start, duplicate id', () => {
 test('a marker bookmark is reported, even without a clean original', () => {
   const marker = '<w:bookmarkStart w:id="90" w:name="__vsmd_7"/><w:bookmarkEnd w:id="90"/>';
   assertFails(broken('basic.docx', { [DOC]: sub('<w:body>', `<w:body><w:p>${marker}</w:p>`) }), /marker bookmark "__vsmd_7" is present/, 'marker');
-  // Already present when the file was loaded: still refused (never forgiven).
+  // Review N5: already present when the file was loaded (an old buggy save, a hand-made name): forgiven,
+  // or such a file could never be saved; a marker with a new name is still refused.
   const bytes = (() => {
     const p = open('basic.docx');
     p.setPart(DOC, encodePart(p.text(DOC).replace('<w:body>', `<w:body><w:p>${marker}</w:p>`), false));
     return p.serialize();
   })();
-  const pkg = OfficePackage.open('marked.docx', bytes);
-  assertFails(docxValidator(pkg, [], { original: () => OfficePackage.open('marked.docx', bytes) }), /marker bookmark/, 'marker in original');
+  const orig = () => OfficePackage.open('marked.docx', bytes);
+  const pkg = orig();
+  assert.deepStrictEqual(docxValidator(pkg, [DOC], { original: orig }), [], 'marker in original: forgiven');
+  pkg.setPart(DOC, encodePart(pkg.text(DOC).replace('<w:body>', '<w:body><w:p><w:bookmarkStart w:id="91" w:name="__vsmd_s_3"/><w:bookmarkEnd w:id="91"/></w:p>'), false));
+  assertFails(docxValidator(pkg, pkg.touchedParts(), { original: orig }), /marker bookmark "__vsmd_s_3" is present/, 'a new marker');
 });
 
 test('duplicate w14:paraId', () => {
@@ -192,6 +196,40 @@ test('problems the loaded package already had are forgiven; new ones of the same
   const msgs = docxValidator(edited, edited.touchedParts(), { original: load });
   assert.strictEqual(msgs.length, 1, JSON.stringify(msgs));
   assert.match(msgs[0], /Gone2|"Gone2"/);
+});
+
+test('review S1: forgiveness is by identity, so an edit that copies a pre-existing problem still saves', () => {
+  // Each defect is in the loaded file once; the edited file has it twice (a split copies pPr / rPr).
+  const cases = [
+    ['dangling pStyle', '<w:p><w:pPr><w:pStyle w:val="NoSuchStyle"/></w:pPr><w:r><w:t>Hello world</w:t></w:r></w:p>'],
+    ['dangling numId', '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="77"/></w:numPr></w:pPr><w:r><w:t>Hello world</w:t></w:r></w:p>'],
+    ['out-of-order rPr', '<w:p><w:r><w:rPr><w:i/><w:b/></w:rPr><w:t>Hello world</w:t></w:r></w:p>'],
+  ];
+  const withBody = (body) => {
+    const p = open('basic.docx');
+    const t = p.text(DOC);
+    p.setPart(DOC, encodePart(t.slice(0, t.indexOf('<w:body>') + 8) + body + t.slice(t.lastIndexOf('<w:sectPr')), false));
+    return p.serialize();
+  };
+  for (const [label, para] of cases) {
+    const bytes = withBody(para);
+    const orig = () => OfficePackage.open('d.docx', bytes);
+    assert.ok(docxValidator(orig(), [DOC]).length === 1, `${label}: the raw file has exactly one problem`);
+    const twice = orig();
+    twice.setPart(DOC, encodePart(twice.text(DOC).replace(para, para + para), false));
+    assert.strictEqual(docxValidator(twice, [DOC]).length, 2, `${label}: two copies without the context`);
+    assert.deepStrictEqual(docxValidator(twice, twice.touchedParts(), { original: orig }), [], `${label}: both copies forgiven`);
+  }
+  // A genuinely new problem of the same rule is still refused.
+  const bytes = withBody(cases[0][1]);
+  const orig = () => OfficePackage.open('d.docx', bytes);
+  const edited = orig();
+  edited.setPart(DOC, encodePart(edited.text(DOC).replace(cases[0][1], cases[0][1] + cases[0][1].replace('NoSuchStyle', 'OtherMissing')), false));
+  assert.deepStrictEqual(docxValidator(edited, edited.touchedParts(), { original: orig }),
+    ['word/document.xml: w:pStyle "OtherMissing" does not exist in styles.xml']);
+  const edited2 = orig();
+  edited2.setPart(DOC, encodePart(edited2.text(DOC).replace(cases[0][1], cases[0][1] + cases[2][1]), false));
+  assertFails(docxValidator(edited2, edited2.touchedParts(), { original: orig }), /w:b comes after w:i/, 'a new order problem');
 });
 
 test('other touched WordprocessingML parts are scanned; untouched ones are not', () => {

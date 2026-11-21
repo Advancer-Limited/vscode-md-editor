@@ -8,7 +8,9 @@
 //              w:abstractNum, every w:abstractNum precedes the first w:num
 //   styles     every w:pStyle / w:rStyle id exists in styles.xml
 //   ranges     bookmarkStart/End and commentRangeStart/End balance, ids unique per start
-//   markers    no bookmark named `__vsmd_...` (the render copy's marker, §8.2) in a saved part
+//   markers    no bookmark named `__vsmd_...` (the render copy's marker, §8.2) in a saved part; one with
+//              the same name the loaded file already had is forgiven like any other problem (review N5:
+//              otherwise such a file could never be saved; a leaked render marker still has a new name)
 //   paraId     w14:paraId values unique within a part
 //   cells      every w:tc ends with a w:p
 //   tables     the table census (model.census: w:tbl/w:tr/w:tc counts and the text of every
@@ -16,9 +18,13 @@
 //
 // Scope: the main part always, plus every other WordprocessingML part in `touched` (styles and
 // numbering are also scanned when either is touched, because their cross-references move together).
-// Like the xlsx validator, a problem the loaded package (ctx.original()) already had is not reported:
-// per part and rule, the first N problems are forgiven when the original had N. Without a context
-// every problem is reported and the census rule is skipped (there is nothing to compare with).
+// A problem the loaded package (ctx.original()) already had is not reported. Forgiveness is by
+// identity, not by count (review S1): a problem is forgiven when the original had a problem of the
+// same part, rule and detail (the message without its part prefix: the style id, the numId, the order
+// signature "w:b comes after w:i", the bookmark id, ...). Splitting a paragraph copies its pPr/rPr, so
+// a pre-existing problem can appear twice after an edit; it is still the same problem. A problem with
+// a new detail is reported. Without a context every problem is reported and the census rule is skipped
+// (there is nothing to compare with).
 //
 // The validator reads the XML trees directly and shares no code with the writers it checks other than
 // the lossless parser and `census`. No `vscode` import here (core rule).
@@ -96,11 +102,16 @@ async function runAsync<T>(g: Steps<T>, yieldEveryMs: number): Promise<T> {
 
 // ---------------------------------------------------------------------------------------------------
 
-/** One problem: `rule` + part name make the key the original's count is compared under. */
-interface Problem { rule: string; part: string; message: string }
+/** One problem. Part + rule + detail are its identity (compared with the original's problems). */
+interface Problem { rule: string; part: string; message: string; detail: string }
+
+function problem(rule: string, part: string, detail: string): Problem {
+  return { rule, part, detail, message: `${part}: ${detail}` };
+}
+const identity = (p: Problem): string => `${lower(p.part)}|${p.rule}|${p.detail}`;
 
 /** Rules never forgiven because the loaded package had them. */
-const UNFORGIVEN = new Set(['marker', 'census']);
+const UNFORGIVEN = new Set(['census']);
 
 const WML_CT = /^application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.[a-z.]+\+xml$/;
 
@@ -132,7 +143,7 @@ function numberingFacts(pkg: OfficePackage, main: string): NumberingFacts | null
   const nums = new Map<number, number | null>();
   const abstracts = new Set<number>();
   const problems: Problem[] = [];
-  const add = (rule: string, message: string): void => { problems.push({ rule, part, message: `${part}: ${message}` }); };
+  const add = (rule: string, message: string): void => { problems.push(problem(rule, part, message)); };
   let sawNum = false;
   for (const c of root.children) {
     if (c.type !== 'el' || c.ns !== W_NS) continue;
@@ -195,9 +206,9 @@ function* scanPart(pkg: OfficePackage, part: string, facts: Facts): Steps<Proble
   yield { pkg, part };
   let root: XmlElement;
   try { root = pkg.xml(part).root; } catch (e) {
-    return [{ rule: 'parse', part, message: `${part}: cannot be parsed (${errText(e)})` }];
+    return [problem('parse', part, `cannot be parsed (${errText(e)})`)];
   }
-  const add = (rule: string, message: string): void => { problems.push({ rule, part, message: `${part}: ${message}` }); };
+  const add = (rule: string, message: string): void => { problems.push(problem(rule, part, message)); };
   const isStyles = root.local === 'styles' && root.ns === W_NS;
   const isNumbering = root.local === 'numbering' && root.ns === W_NS;
 
@@ -319,23 +330,14 @@ function* docxChecks(pkg: OfficePackage, touched: string[], ctx: ValidatorContex
 
   const original = ctx?.original();
 
-  // Forgive what the loaded package already had (per part and rule, by count).
+  // Forgive what the loaded package already had (by identity: part, rule and detail; review S1).
   if (original && problems.some((p) => !UNFORGIVEN.has(p.rule))) {
     let omain: string | undefined;
     try { omain = mainPart(original).name; } catch { omain = undefined; }
     if (omain !== undefined) {
-      const before = new Map<string, number>();
-      for (const p of yield* scanAll(original, omain, scope)) {
-        const k = `${lower(p.part)}|${p.rule}`;
-        before.set(k, (before.get(k) ?? 0) + 1);
-      }
-      problems = problems.filter((p) => {
-        if (UNFORGIVEN.has(p.rule)) return true;
-        const k = `${lower(p.part)}|${p.rule}`;
-        const n = before.get(k) ?? 0;
-        if (n > 0) { before.set(k, n - 1); return false; }
-        return true;
-      });
+      const before = new Set<string>();
+      for (const p of yield* scanAll(original, omain, scope)) before.add(identity(p));
+      problems = problems.filter((p) => UNFORGIVEN.has(p.rule) || !before.has(identity(p)));
     }
   }
   const out = problems.map((p) => p.message);

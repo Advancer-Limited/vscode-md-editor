@@ -502,3 +502,24 @@ test('review S4: a model-level view-only reason (too many blocks) reaches the we
   assert.strictEqual(bm.error.code, 'read-only');
   assert.strictEqual((await edit(h, { op: 'insertParagraphAfter', blockId: 1 })).error.code, 'read-only');
 });
+
+test('review S1: a file with one pre-existing problem still saves after a split copies it', async () => {
+  ENABLE();
+  for (const [label, body] of [
+    ['dangling pStyle', '<w:p><w:pPr><w:pStyle w:val="NoSuchStyle"/></w:pPr><w:r><w:t>Hello world</w:t></w:r></w:p>'],
+    ['dangling numId', '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="77"/></w:numPr></w:pPr><w:r><w:t>Hello world</w:t></w:r></w:p>'],
+    ['out-of-order rPr', '<w:p><w:r><w:rPr><w:i/><w:b/></w:rPr><w:t>Hello world</w:t></w:r></w:p>'],
+  ]) {
+    S.reset();
+    const h = await open('t.docx', await withBody(body));
+    const b = h.panel.last('docxRender').blocks.find((x) => x.kind === 'paragraph');
+    assert.ok(b.editable, label);
+    const s0 = (await blockModel(h, b.id)).segments[0];
+    const mk = (text) => ({ kind: 'text', text, b: s0.b, i: s0.i, u: s0.u, src: s0.id });
+    const r = await edit(h, { op: 'splitParagraph', blockId: b.id, before: [mk('Hello ')], after: [mk('world')] });
+    assert.strictEqual(r.ok, true, label);
+    await h.doc.save(token);   // rejects (verification failure) when the copied problem is not forgiven
+    assert.strictEqual(h.doc.isDirty(), false, label);
+    assert.strictEqual((await mainXml(S.read(h.uri))).split('Hello').length, 2, `${label}: saved split`);
+  }
+});
