@@ -407,7 +407,8 @@
 
 ## PDF edit core (feature/pdf-edit-core)
 - [x] PWP-21 verify-pdf-open.mjs + PG6 helpers
-- [ ] PWP-14 strict reader · PWP-15 edit state/geometry (done) · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
-- [ ] hybrid-xref.pdf: pdf.js page-access failure (with PWP-14)
+- [x] PWP-14 strict reader`n- [ ] PWP-15 edit state/geometry (done) · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
+- [x] hybrid-xref.pdf fixed (generator bug)
+- [ ] Decision: support hybrid-xref files (Word 'Save as PDF') for editing, or keep them view-only (spec §3.3)
 - [ ] PWP-13 (BinaryDocumentBase) waits for Office Gate R2
 
