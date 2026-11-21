@@ -353,7 +353,7 @@ Determinism of the output **[Measured, spike S3, 2026-11-21]**: for annotation-o
 
 Writer service (`media/pdfWriter.js`), on `pdfWrite`:
 
-1. `data = await viewedDocument.getData()`; open a **fresh** document from it with the same options as the viewer (same worker).
+1. `data = await viewedDocument.getData()`; open a **fresh** document from it with the same options as the viewer, on a **dedicated Worker** started from the same worker file (not the viewer's: destroying a document on a shared `PDFWorker` also destroys its message handler and would break the viewed document — PWP-19, from the pdf.js 6.5.438 source).
 2. Apply the entries with `annotationStorage.setValue`; `out = await doc.saveDocument()`.
 3. Open `out` as a third, throwaway document and collect `observed` (page count, annotation count per page, value of each field in the request).
 4. Destroy both documents; reply `pdfWriteResult` with `out` and `observed`. Any exception → `ok: false`.
