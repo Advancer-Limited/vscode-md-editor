@@ -1083,3 +1083,6 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 
 - **PWP-21** (`25df760`, Sonnet): `scripts/verify-pdf-open.mjs` (pdf.js, PDFium, @cantoo/pdf-lib, optional qpdf; JSON summary; exit 0/1/2; --dry-run; PNG of page 1) and PG6 helpers in `tests/pdf/_readers.mjs` (`openAll`, `checkPg6`, `assertPg6`); 11 tests. Fixture run: 22/26 pass; empty/not-a-pdf/truncated fail as expected; `hybrid-xref.pdf` fails in pdf.js on page access (PDFium and pdf-lib open it) — likely a generator bug, handed to PWP-14.
 
+
+- **PWP-15** (`7ce50fa`, Opus): `core/state.ts` (normalised edit state; atomic before-checked deltas with invert; `planEdit`/`applyEdit` against a `PdfEditContext` from classification; labels per spec §6.3; canonical order; `toStateView`) and `core/geometry.ts` (host counterpart of `pdfViewMath`, cross-tested over 8 rotations). Protocol draft change: `setFields` entries gain optional `loaded` (spec §6.3). Decisions: popup removal maps to its parent; loaded field values recorded whatever the op outcome (found by the seeded tests); quads stored as axis-aligned bounding quads; page check = media box + 2 pt. 30 tests incl. 10 seeded 200-op undo/redo sequences vs replay. For PWP-16: supply `pages`, `deletable` (with `popup`) and `popups`; PWP-27 the field `check` rules; PWP-20 the per-generation baseline.
+
