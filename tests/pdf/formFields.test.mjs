@@ -8,6 +8,7 @@ import assert from 'node:assert';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { core, fixture, allFixtures } from './_helpers.mjs';
+import { skipWriter, warnIfSkipped } from './_node.mjs';
 
 const C = core.classify;
 const S = core.state;
@@ -16,8 +17,7 @@ const V = core.verify;
 const L1 = (s) => Buffer.from(s, 'latin1');
 const require = createRequire(import.meta.url);
 const PJ = path.dirname(require.resolve('pdfjs-dist/package.json'));
-const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
-const skipWriter = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13) ? false : 'pdf.js saveDocument() needs Node >= 22.13';
+warnIfSkipped('formFields');
 
 const ON = { forms: true };
 const env = () => { let t = 0; return { now: () => new Date(Date.UTC(2026, 10, 21) + 1000 * t++).toISOString(), baseline: new Map() }; };

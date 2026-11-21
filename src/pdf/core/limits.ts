@@ -23,6 +23,16 @@ export const PDF_LIMITS = {
   /** Strict reader: a dictionary of more than this many bytes of tokens is not editable. */
   maxDictionaryBytes: 4 * MB,
 
+  /**
+   * Classification work budget (spec §6.2): the strict reader may lex/decode at most
+   * classifyWorkFactor x file size + classifyWorkBaseBytes, and classification may take at most
+   * classifyTimeBaseMs + classifyTimePerMbMs per MB; beyond either the file is view-only (`too-large`).
+   */
+  classifyWorkFactor: 4,
+  classifyWorkBaseBytes: 64 * MB,
+  classifyTimeBaseMs: 10_000,
+  classifyTimePerMbMs: 100,
+
   /** Writer result larger than the loaded size plus this fails verification. */
   maxWriteGrowthBytes: 64 * MB,
 

@@ -46,7 +46,7 @@ export type PdfDelta = readonly PdfDeltaEntry[];
 
 /** Edit labels of spec §6.3 (the VS Code undo stack shows them). */
 export type PdfEditLabel =
-  | 'Highlight' | 'Draw' | 'Edit Comment' | 'Change Colour' | 'Delete Annotation' | 'Fill Form Field';
+  | 'Highlight' | 'Draw' | 'Edit Comment' | 'Change Colour' | 'Edit Comment and Colour' | 'Delete Annotation' | 'Fill Form Field';
 
 /**
  * Value kinds a fillable field accepts. The value rules of spec §8.5 (MaxLen, single line, options,
@@ -522,7 +522,8 @@ export function planEdit(s: PdfEditState, op: PdfEditOp, ctx: PdfEditContext, en
       if (!rec) return refuse('unknown-annotation', 'Only annotations added in this session can be changed.');
       const comment = op.patch.comment ?? rec.spec.comment;
       const color: PdfColor = op.patch.color ?? rec.spec.color;
-      const label: PdfEditLabel = comment !== rec.spec.comment ? 'Edit Comment' : 'Change Colour';
+      const label: PdfEditLabel = comment !== rec.spec.comment
+        ? (color !== rec.spec.color ? 'Edit Comment and Colour' : 'Edit Comment') : 'Change Colour';
       if (comment === rec.spec.comment && color === rec.spec.color) return { ok: true, label, delta: [] };
       const spec = { ...copySpec(rec.spec), comment, color } as PdfAnnotSpec;
       return { ok: true, label,

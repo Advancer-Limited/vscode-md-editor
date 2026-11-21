@@ -8,11 +8,16 @@
 //   PV1  prefix identity: the output is longer than the base and starts with every byte of it.
 //   PV2  revision structure: exactly one appended revision, chained to the base (/Prev, same /Root, /Info and
 //        first /ID), of an allowed cross-reference kind (`allowedAppendedKinds`), only allowed trailer keys,
-//        and every appended byte accounted for (objects, the section, `startxref N %%EOF`, whitespace).
+//        and every appended byte accounted for (objects, the section, `startxref N %%EOF`, whitespace); no shape
+//        pdf.js reads differently from the strict reader (a table subsection `1 N` starting free; a comment; text
+//        that pdf.js's recovery scan would take for an object boundary, `structureTokens`).
 //   PV3  entries: in-use entries point into the appended region; no object-stream entries; free entries are
 //        object 0 and exactly the annotations (and Popups) the request removes.
 //   PV4  object allow-list: new objects are Highlight/Ink/Popup annotations, their appearance form XObjects
-//        and the cross-reference stream, with listed keys and value shapes; superseded objects are pages
+//        and the cross-reference stream, with listed keys and value shapes; what a new annotation shows is the
+//        request's (geometry, colour, opacity, flags, author, date, Popup; `annotDisplay`), and every new
+//        appearance stream draws with the operators pdf.js writes for its kind only (`CONTENT_OPERATORS`), inside a
+//        /BBox that is the annotation's /Rect (or the widget's size); superseded objects are pages
 //        (/Annots only, and exactly as expected), and the objects of requested fields by role (`FIELD_SUPERSEDE_KEYS`:
 //        /V /I /AS /AP /M /MK) — compared by DECODED value; the written /V, /AS and /I must state the requested
 //        value and a rewritten text/choice widget must have a fresh appearance of its own (PWP-28). Anything else
@@ -30,8 +35,8 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import type { PdfFieldValue, PdfObserved } from '../protocol.js';
-import { openPdf, openPdfSync, PdfReadError } from './reader.js';
-import type { PdfDict, PdfFile, PdfIndirectObject, PdfRevision, PdfStream, PdfValue, ReaderLimits, XrefKind } from './reader.js';
+import { findComment, openPdf, openPdfSync, PdfReadError, tokenise } from './reader.js';
+import type { PdfDict, PdfFile, PdfIndirectObject, PdfRevision, PdfStream, PdfToken, PdfValue, ReaderLimits, XrefKind } from './reader.js';
 import type { PdfEditableClassification } from './classify.js';
 import type { PdfEditState, PdfFieldSpec } from './state.js';
 import { canonicalFields, fieldValuesEqual, refKey } from './state.js';
@@ -65,6 +70,10 @@ export const VERIFY_CODES = {
     'stray-bytes',           // appended bytes that belong to no listed object and not to the section
     'object-overlap',        // two listed objects (or an object and the section) overlap
     'eof',                   // the file does not end with `startxref <offset> %%EOF` and an end of line
+    'xref-ambiguous',        // a table subsection `1 N` starting with a free entry: pdf.js renumbers it from 0
+    'xref-stream-number',    // the cross-reference stream is not a new object number listed (at its offset) by itself
+    'comment',               // a `%` comment in the appended region outside stream data and strings
+    'structure-token',       // `N G obj`, `endobj`, `xref`, `trailer<<` or `startxref` text away from its place
   ],
   PV3: [
     'entry-target',          // an in-use entry does not point at its `N G obj` header
@@ -90,6 +99,11 @@ export const VERIFY_CODES = {
     'annot-wrong-page',      // a new annotation listed on a page other than the requested one
     'annot-unexpected',      // a new annotation that matches nothing the request adds
     'annot-missing',         // an annotation the request adds is not in the output
+    'annot-mismatch',        // a new annotation (or its Popup) shows something the request does not say (quads, ink, width,
+                             // opacity, flags, rotation, border, author, date, Popup /Rect or /Open)
+    'bbox-mismatch',         // a new appearance's /BBox is not its annotation's /Rect (or [0 0 w h] of its widget)
+    'content-operator',      // an appearance stream operator (or operand) outside the allow-list for its kind
+    'content-structure',     // an appearance stream with PDF structure keywords (obj, stream, xref ...) or an inline image
     'annots-mismatch',       // a page's /Annots is not "old minus removed plus added"
     'annots-indirect',       // a rewritten page's /Annots is not an inline array
     'page-unexpected',       // a page was rewritten although the request does not touch it
@@ -98,7 +112,7 @@ export const VERIFY_CODES = {
     'mk-changed',            // a widget's /MK changed beyond removing /R 0
     'kind-changed',          // a superseded object changed between dictionary and stream
     'field-unexpected',      // a field or widget the request does not set was rewritten
-    'value-mismatch',        // a requested field's written /V, /AS or /I does not state the requested value
+    'value-mismatch',        // a requested field's written /V, /AS or /I does not state the requested value (button /V not a name)
     'appearance-missing',    // a rewritten text/choice widget has no fresh /AP /N of its own (pdf.js could not draw the value)
     'need-appearances',      // the AcroForm was superseded only to add /NeedAppearances true (same cause; §8.5)
     'catalog-superseded', 'acroform-superseded', 'struct-superseded', 'info-superseded', 'pages-superseded',
@@ -231,6 +245,32 @@ export const NEW_OBJECT_KEYS: Readonly<Record<Exclude<NewObjectKind, 'xref'>, Re
   form: new Set(['Type', 'Subtype', 'FormType', 'BBox', 'Length', 'Resources']),
 });
 
+/** What a new appearance stream belongs to (decides its operator allow-list and its /BBox). */
+export type AppearanceUse = 'highlight' | 'ink' | 'widget';
+
+/**
+ * PV4: content-stream operators a new appearance may use, by what it belongs to, with their operand shapes
+ * (`n` number, `N` resource name, `s` string, `t` the name /Tx). Measured on every pdf.js 6.5.438 output of the
+ * contract and form suites (tests/.out/pdf, 251 appearance streams, 2026-11-21): highlights fill outlines with a
+ * Multiply ExtGState; ink strokes curves; text and choice widgets draw a marked-content /Tx block with a background,
+ * border, clip and Tj lines. Anything else (images, XObjects, shadings, inline images, arrays, dictionaries, PDF
+ * structure keywords) is refused, so a new appearance cannot paint arbitrary content over the page.
+ */
+export const CONTENT_OPERATORS: Readonly<Record<AppearanceUse, Readonly<Record<string, string>>>> = Object.freeze({
+  highlight: { rg: 'nnn', gs: 'N', m: 'nn', l: 'nn', h: '', 'f*': '' },
+  ink: { w: 'n', J: 'n', j: 'n', RG: 'nnn', m: 'nn', l: 'nn', c: 'nnnnnn', S: '' },
+  widget: {
+    BMC: 't', EMC: '', q: '', Q: '', g: 'n', G: 'n', rg: 'nnn', RG: 'nnn', w: 'n', re: 'nnnn', f: '', S: '', W: '', n: '',
+    BT: '', ET: '', Tf: 'Nn', Tm: 'nnnnnn', Td: 'nn', Tj: 's',
+  },
+});
+
+/** Keywords that are PDF file structure, never content (`content-structure`), and the inline-image operators. */
+const STRUCTURE_KEYWORDS: ReadonlySet<string> = new Set(['obj', 'endobj', 'stream', 'endstream', 'trailer', 'xref', 'startxref', 'BI', 'ID', 'EI']);
+/** Operators per appearance, and nesting of q/BT/BMC, beyond these are refused. */
+const MAX_CONTENT_OPS = 100_000;
+const MAX_CONTENT_NESTING = 16;
+
 /** The kinds a superseded object can have, decided from its BASE version. */
 export type SupersededKind =
   | 'page' | 'widget' | 'field' | 'acroform' | 'catalog' | 'struct' | 'info' | 'pages' | 'annot' | 'stream' | 'other';
@@ -298,6 +338,8 @@ const STRUCT_TYPES: ReadonlySet<string> = new Set(['StructTreeRoot', 'StructElem
 const NUM_EPS = 1e-9;
 const RECT_EPS = 0.01;
 const COLOR_EPS = 1.5 / 255;
+/** Appearance colours and widths: pdf.js writes them with two decimals. */
+const PAINT_EPS = 0.006;
 /** /Parent hops followed when collecting the fields a request may rewrite. */
 const MAX_FIELD_DEPTH = 64;
 /** Prefix compared per slice by the async verifier. */
@@ -394,6 +436,7 @@ function readerFinding(e: PdfReadError, which: 'base' | 'out'): [PdfVerifyCheck,
   if (which === 'base') return ['PV2', 'base-unreadable'];
   if (e.code === 'encrypted') return ['PV2', 'encrypt'];
   if (e.code === 'hybrid') return ['PV2', 'xref-kind'];
+  if (e.code === 'ambiguous-xref') return ['PV2', 'xref-ambiguous'];
   // The reader checks every in-use entry against its `N G obj` header while opening; those refusals are PV3.
   // (Matched on the reader's own messages, `reader.ts` tableSection/streamSection.)
   if (e.code === 'bad-xref' && /does not point at its header|object stream number invalid/.test(e.message)) return ['PV3', 'entry-target'];
@@ -551,6 +594,8 @@ function matchAt(b: Uint8Array, p: number, s: string): boolean {
 // ================================================================ the verifier
 
 interface NewObject { num: number; kind: NewObjectKind | null; obj: PdfIndirectObject; dict: PdfDict | null }
+/** What a new appearance stream must draw: its kind, /BBox, and for markup the colour (/C) and line width (/BS /W). */
+interface FormUse { use: AppearanceUse; bbox: number[] | null; color?: number[] | null; width?: number | null }
 type AddedEntry = PdfHighlightEntry | PdfInkEntry;
 
 class Verifier {
@@ -563,6 +608,8 @@ class Verifier {
   private readonly roles = new Map<string, { role: FieldRole; spec: Readonly<PdfFieldSpec> }>();
   /** How often each new appearance stream is referenced from an /AP (each may be used once). */
   private readonly apUses = new Map<number, number>();
+  /** What each referenced new appearance stream belongs to, and the /BBox it must have. */
+  private readonly formUse = new Map<number, FormUse>();
 
   constructor(readonly input: PdfVerifyInput, readonly options: PdfVerifyOptions) {
     this.max = options.maxFindings ?? 100;
@@ -673,6 +720,12 @@ class Verifier {
       if (of.revisions[i].startxref !== bf.revisions[i].startxref) { this.add('PV2', 'chain-mismatch'); return null; }
     }
     if (!allowedAppendedKinds(baseXrefKind(bf)).includes(rev.kind)) this.add('PV2', 'xref-kind');
+    if (rev.kind === 'stream') {
+      // pdf.js gives its cross-reference stream a fresh number and lists it, at its own offset, in itself.
+      const n = rev.xrefStreamNum;
+      const e = n === null ? undefined : rev.entry(n);
+      if (n === null || n < bf.size || !e || e.type !== 'offset' || e.offset !== rev.startxref) this.add('PV2', 'xref-stream-number', n ?? undefined);
+    }
 
     const t = rev.trailer.entries;
     const bt = bf.trailer.entries;
@@ -740,6 +793,7 @@ class Verifier {
     // Read every appended object (the reader checks its framing, /Length and endstream) and tile the region.
     const objs = new Map<number, PdfIndirectObject>();
     const tiles: Array<{ start: number; end: number }> = [];
+    const headers = new Set<number>(); const endobjs = new Set<number>();
     for (const u of inUse) {
       let o: PdfIndirectObject | null;
       try { o = of.resolve(u.num, u.gen); } catch (e) {
@@ -751,11 +805,53 @@ class Verifier {
       const end = objectEnd(out, o);
       if (end < 0) { this.add('PV2', 'out-unreadable', u.num); return null; }
       objs.set(u.num, o);
+      headers.add(u.offset); endobjs.add(end - 6);
       if (u.offset !== rev.startxref) tiles.push({ start: u.offset, end });
+      if (this.hasComment(o, u.offset, end)) this.add('PV2', 'comment', u.num);
     }
     tiles.push({ start: rev.startxref, end: rev.sectionEnd });
+    if (rev.kind !== 'stream' && this.commentIn(rev.startxref, rev.sectionEnd)) this.add('PV2', 'comment');
     this.tiling(tiles, rev);
+    this.structureTokens(rev, headers, endobjs);
     return objs;
+  }
+
+  /** PV2: a `%` comment in an appended object outside its stream data and strings (pdf.js never writes one). */
+  private hasComment(o: PdfIndirectObject, start: number, end: number): boolean {
+    const v = o.value;
+    if (v.kind === 'stream') return this.commentIn(start, v.dataStart) || this.commentIn(v.dataEnd, end);
+    return this.commentIn(start, end);
+  }
+
+  private commentIn(start: number, end: number): boolean {
+    try { return findComment(this.input.out, start, end, this.options.reader) >= 0; } catch (e) {
+      if (e instanceof PdfReadError) return true; // already parsed once; a lexical error here is not pdf.js's output
+      throw e;
+    }
+  }
+
+  /**
+   * PV2: the text pdf.js's recovery scan (`XRef.indexObjects`) takes for object and section boundaries — `N G obj`,
+   * `endobj`, `xref`, `trailer<<`, `startxref`, matched as its regular expressions do, inside strings and stream
+   * data too — appears in the appended region only where this revision really has them. pdf.js rescans the file
+   * when its normal reading fails; with such text planted (in an appearance stream, a string, a dictionary), the
+   * rescan would find objects the strict reader never saw, with the last `N G obj` winning (the B1 bypass).
+   * Residual, accepted: a comment or field text the user typed that contains such a word refuses the save.
+   */
+  private structureTokens(rev: PdfRevision, headers: ReadonlySet<number>, endobjs: ReadonlySet<number>): void {
+    const { base, out } = this.input;
+    const text = latin1Of(out, base.length, out.length);
+    const re = /\b(endobj|\d+\s+\d+\s+obj|xref|trailer\s*<<|startxref)\b/g;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const at = base.length + m.index;
+      const t = m[1];
+      const ok = t === 'endobj' ? endobjs.has(at)
+        : t === 'xref' ? rev.kind !== 'stream' && at === rev.startxref
+        : t === 'startxref' ? at >= rev.sectionEnd
+        : t.startsWith('trailer') ? rev.kind !== 'stream' && at > rev.startxref && at < rev.sectionEnd
+        : headers.has(at);
+      if (!ok) { this.add('PV2', 'structure-token'); return; }
+    }
   }
 
   /** PV2: the appended region is exactly the listed objects, the section and the `startxref` tail. */
@@ -820,8 +916,12 @@ class Verifier {
     for (const p of expectedPages) if (!rewrittenPages.has(p)) this.add('PV4', 'page-missing', cls.pages[p].ref.num, p);
     for (const p of rewrittenPages) if (!expectedPages.has(p)) this.add('PV4', 'page-unexpected', cls.pages[p].ref.num, p);
 
-    // Every new appearance stream is used.
+    // Every new appearance stream is used, by one thing, and draws only what its kind draws.
     for (const n of news.values()) if (n.kind === 'form' && !formRefs.has(n.num)) this.add('PV4', 'orphan-object', n.num);
+    for (const [num, use] of this.formUse) {
+      const n = news.get(num);
+      if (n) this.appearance(of, n, use);
+    }
 
     this.matchAnnotations(news, links);
 
@@ -869,8 +969,13 @@ class Verifier {
           if (!isDict(v) || v.entries.size !== 1) { this.add('PV4', 'ap-target', n.num); break; }
           const nv = v.entries.get('N');
           const target = nv && nv.kind === 'ref' && nv.gen === 0 ? news.get(nv.num) : undefined;
-          if (!target || target.kind !== 'form') this.add('PV4', 'ap-target', n.num);
-          else { formRefs.add(target.num); this.useAp(target.num); }
+          if (!target || target.kind !== 'form' || (kind !== 'highlight' && kind !== 'ink')) this.add('PV4', 'ap-target', n.num);
+          else {
+            formRefs.add(target.num); this.useAp(target.num);
+            const bs = d.entries.get('BS'); const w = isDict(bs) ? bs.entries.get('W') : undefined;
+            this.formUse.set(target.num, { use: kind, bbox: nums(d.entries.get('Rect')), color: nums(d.entries.get('C')),
+              width: w && w.kind === 'number' ? w.value : null });
+          }
           break;
         }
         case 'Popup': {
@@ -964,7 +1069,9 @@ class Verifier {
           if (!on) { mismatch(); break; }
           const as = wOut.entries.has('AS') ? nameOf(wOut.entries.get('AS')) : 'Off';
           const v = inheritedV(of, fieldKey);
+          // A button's /V is a name or absent (pdf.js writes a name); anything else is not a value readers agree on.
           const vName = v === undefined ? 'Off' : nameOf(v);
+          if (vName === null) { mismatch(); break; }
           if (value === true ? as !== on || vName !== on : as !== 'Off' || vName === on) mismatch();
           break;
         }
@@ -1047,30 +1154,90 @@ class Verifier {
         ? { ...a, entries: new Map([...a.entries].filter(([k]) => k !== 'R')) } : a;
       if (!equalValues(stripped, b)) this.add('PV4', 'mk-changed', o.num);
     }
-    if (changed.includes('AP') && od.entries.has('AP')) this.widgetAp(c.bf, o.num, od.entries.get('AP')!, c.news, c.formRefs);
+    if (changed.includes('AP') && od.entries.has('AP')) this.widgetAp(o.num, od.entries.get('AP')!, od, c.news, c.formRefs);
   }
 
-  /** A rewritten widget's /AP: N/D/R, each a reference or a dictionary of references, to base objects or new forms. */
-  private widgetAp(bf: PdfFile, num: number, ap: PdfValue, news: Map<number, NewObject>, formRefs: Set<number>): void {
-    const okRef = (v: PdfValue): boolean => {
-      if (v.kind !== 'ref') return false;
-      if (v.num >= bf.size) {
-        const t = news.get(v.num);
-        if (!t || t.kind !== 'form' || v.gen !== 0) return false;
-        formRefs.add(t.num);
-        this.useAp(t.num);
-        return true;
-      }
-      const e = bf.entry(v.num);
-      return !!e && e.type !== 'free' && e.gen === v.gen;
+  /**
+   * A rewritten widget's /AP: exactly `<< /N new-form >>`, what pdf.js writes for a text or choice value (it replaces
+   * the whole appearance dictionary; buttons never change theirs). The form must be [0 0 w h] of the widget's /Rect.
+   */
+  private widgetAp(num: number, ap: PdfValue, od: PdfDict, news: Map<number, NewObject>, formRefs: Set<number>): void {
+    const v = isDict(ap) && ap.entries.size === 1 ? ap.entries.get('N') : undefined;
+    const t = v && v.kind === 'ref' && v.gen === 0 ? news.get(v.num) : undefined;
+    if (!t || t.kind !== 'form') { this.add('PV4', 'ap-target', num); return; }
+    formRefs.add(t.num);
+    this.useAp(t.num);
+    const r = nums(od.entries.get('Rect'));
+    this.formUse.set(t.num, { use: 'widget', bbox: r && r.length === 4 ? [0, 0, Math.abs(r[2] - r[0]), Math.abs(r[3] - r[1])] : null });
+  }
+
+  /**
+   * PV4: one new appearance stream, by what uses it: /BBox as expected (`bbox-mismatch`), and a content stream made
+   * only of the operators of `CONTENT_OPERATORS[use]` with their operand shapes, names that are keys of its own
+   * /Resources, balanced q/Q, BT/ET and BMC/EMC (`content-operator`), and no structure keyword or inline image
+   * (`content-structure`). The data is read raw: pdf.js writes appearances unfiltered (/Filter is not an allowed key).
+   * Markup draws what its annotation says (`annot-mismatch`): a highlight fills with its /C through the Multiply
+   * ExtGState (`gs` before the first fill, so text stays readable); ink strokes with its /C and /BS /W. pdf.js writes
+   * these colours rounded to two decimals. Residual: path coordinates are not compared with /QuadPoints or /InkList
+   * (they are clipped to the /BBox, i.e. the requested /Rect), and a widget's drawn text is not compared with /V.
+   */
+  private appearance(of: PdfFile, n: NewObject, fu: FormUse): void {
+    const { use, bbox } = fu;
+    const v = n.obj.value;
+    if (v.kind !== 'stream') return; // newKindOf: a form is a stream
+    const box = nums(v.dict.entries.get('BBox'));
+    if (!bbox || !box || box.length !== 4 || box.some((x, i) => Math.abs(x - bbox[i]) > RECT_EPS)) this.add('PV4', 'bbox-mismatch', n.num);
+    const res = v.dict.entries.get('Resources');
+    const resKeys = (k: string): ReadonlySet<string> => {
+      const d = isDict(res) ? res.entries.get(k) : undefined;
+      return new Set(isDict(d) ? d.entries.keys() : []);
     };
-    if (!isDict(ap)) { this.add('PV4', 'ap-target', num); return; }
-    for (const [k, v] of ap.entries) {
-      if (k !== 'N' && k !== 'D' && k !== 'R') { this.add('PV4', 'ap-target', num); continue; }
-      if (v.kind === 'ref') { if (!okRef(v)) this.add('PV4', 'ap-target', num); continue; }
-      if (!isDict(v)) { this.add('PV4', 'ap-target', num); continue; }
-      for (const s of v.entries.values()) if (!okRef(s)) this.add('PV4', 'ap-target', num);
+    const gsNames = resKeys('ExtGState'), fontNames = resKeys('Font');
+    const allowed = CONTENT_OPERATORS[use];
+    let data: Uint8Array;
+    try { data = of.decodeStream(v, this.budgetBytes); } catch (e) {
+      if (!(e instanceof PdfReadError)) throw e;
+      this.add('PV4', 'content-operator', n.num); return;
     }
+    const operands: PdfToken[] = [];
+    const depth = { q: 0, BT: 0, BMC: 0 };
+    let ops = 0;
+    let blended = false, paintOk = true;
+    const close2 = (t: readonly PdfToken[], want: number[] | null | undefined) =>
+      !!want && want.length === t.length && t.every((x, i) => x.type === 'number' && Math.abs(x.value - want[i]) <= PAINT_EPS);
+    try {
+      for (const t of tokenise(data, 0, data.length, this.options.reader)) {
+        if (t.type !== 'keyword') {
+          if (t.type === 'punct') { this.add('PV4', 'content-operator', n.num); return; } // arrays, dictionaries
+          if (operands.length >= 8) { this.add('PV4', 'content-operator', n.num); return; }
+          operands.push(t);
+          continue;
+        }
+        if (STRUCTURE_KEYWORDS.has(t.value)) { this.add('PV4', 'content-structure', n.num); return; }
+        const shape = allowed[t.value];
+        if (shape === undefined || ++ops > MAX_CONTENT_OPS || !operandsFit(shape, operands, t.value === 'gs' ? gsNames : fontNames)) {
+          this.add('PV4', 'content-operator', n.num); return;
+        }
+        if (use === 'highlight') {
+          if (t.value === 'gs') blended = true;
+          else if (t.value === 'rg' && !close2(operands, fu.color)) paintOk = false;
+          else if (t.value === 'f*' && !blended) paintOk = false;
+        } else if (use === 'ink') {
+          if (t.value === 'RG' && !close2(operands, fu.color)) paintOk = false;
+          else if (t.value === 'w' && !close2(operands, fu.width === null || fu.width === undefined ? null : [fu.width])) paintOk = false;
+        }
+        operands.length = 0;
+        const open = t.value === 'q' ? 'q' : t.value === 'BT' ? 'BT' : t.value === 'BMC' ? 'BMC' : null;
+        const close = t.value === 'Q' ? 'q' : t.value === 'ET' ? 'BT' : t.value === 'EMC' ? 'BMC' : null;
+        if (open && ++depth[open] > (open === 'BT' ? 1 : MAX_CONTENT_NESTING)) { this.add('PV4', 'content-operator', n.num); return; }
+        if (close && --depth[close] < 0) { this.add('PV4', 'content-operator', n.num); return; }
+      }
+    } catch (e) {
+      if (!(e instanceof PdfReadError)) throw e;
+      this.add('PV4', 'content-operator', n.num); return;
+    }
+    if (operands.length || depth.q || depth.BT || depth.BMC) this.add('PV4', 'content-operator', n.num);
+    else if (!paintOk) this.add('PV4', 'annot-mismatch', n.num);
   }
 
   /** PV4 page row: /Annots is an inline array equal to "old minus removed, plus the new annotations". */
@@ -1084,8 +1251,12 @@ class Verifier {
     const keep = oldItems.filter((it) => !(it.kind === 'ref' && freed.has(refKey(it))));
     const items = raw ? raw.items : [];
     const kept: PdfValue[] = [];
+    let added = false;
     for (const it of items) {
+      // pdf.js appends new annotations after the kept ones; one in front would change the drawing order.
+      if (added && !(it.kind === 'ref' && it.num >= bf.size)) { this.add('PV4', 'annots-mismatch', num, page); added = false; }
       if (it.kind === 'ref' && it.num >= bf.size) {
+        added = true;
         const t = news.get(it.num);
         if (!t || it.gen !== 0 || (t.kind !== 'highlight' && t.kind !== 'ink' && t.kind !== 'popup')) { this.add('PV4', 'annots-mismatch', num, page); continue; }
         if (links.has(it.num)) { this.add('PV4', 'annot-unlinked', it.num); continue; }
@@ -1113,11 +1284,16 @@ class Verifier {
       if (isEditorKey(k) && !('deleted' in v)) wanted.push({ e: v as AddedEntry, used: false });
     }
     const markup = [...news.values()].filter((n) => n.kind === 'highlight' || n.kind === 'ink').sort((a, b) => a.num - b.num);
+    const matched = new Map<number, AddedEntry>();
     for (const n of markup) {
       const page = links.get(n.num);
       if (page === undefined) { this.add('PV4', 'annot-unlinked', n.num); continue; }
       const hit = wanted.find((w) => !w.used && w.e.pageIndex === page && annotMatches(n, w.e));
-      if (hit) { hit.used = true; continue; }
+      if (hit) {
+        hit.used = true; matched.set(n.num, hit.e);
+        if (!annotDisplayMatches(n.dict!, hit.e)) this.add('PV4', 'annot-mismatch', n.num, page);
+        continue;
+      }
       if (wanted.some((w) => !w.used && annotMatches(n, w.e))) this.add('PV4', 'annot-wrong-page', n.num, page);
       else this.add('PV4', 'annot-unexpected', n.num, page);
     }
@@ -1128,6 +1304,9 @@ class Verifier {
       if (page === undefined) { this.add('PV4', 'annot-unlinked', n.num); continue; }
       const parent = n.dict?.entries.get('Parent');
       if (parent && parent.kind === 'ref' && links.has(parent.num) && links.get(parent.num) !== page) this.add('PV4', 'annot-wrong-page', n.num, page);
+      // What the Popup shows: the requested rectangle, closed.
+      const e = parent && parent.kind === 'ref' ? matched.get(parent.num) : undefined;
+      if (e && !popupMatches(n.dict!, e)) this.add('PV4', 'annot-mismatch', n.num, page);
     }
   }
 
@@ -1143,8 +1322,10 @@ class Verifier {
         if (observed.annotsPerPage[p] !== cls.pages[p].annots.length + (delta.get(p) ?? 0)) this.add('PV6', 'annot-count', cls.pages[p].ref.num, p);
       }
     }
+    const read = new Map<string, PdfObserved['fields'][number]>();
+    for (const f of observed.fields) { const k = refKey(f.ref); if (!read.has(k)) read.set(k, f); }
     for (const { ref, value } of canonicalFields(state)) {
-      const got = observed.fields.find((f) => f.ref.num === ref.num && f.ref.gen === ref.gen);
+      const got = read.get(refKey(ref));
       if (!got) this.add('PV6', 'field-missing', ref.num);
       else if (!fieldValuesEqual(got.value, value)) this.add('PV6', 'field-value', ref.num);
     }
@@ -1185,6 +1366,76 @@ function annotMatches(n: NewObject, e: AddedEntry): boolean {
   const text = contents && contents.kind === 'string' ? decodeTextString(contents.bytes) : '';
   if (text !== (e.popup?.contents ?? '')) return false;
   return d.entries.has('Popup') === !!e.popup;
+}
+
+/** Do the operands before an operator fit its shape (`CONTENT_OPERATORS`)? `N` names must be in `names`. */
+function operandsFit(shape: string, operands: readonly PdfToken[], names: ReadonlySet<string>): boolean {
+  if (operands.length !== shape.length) return false;
+  for (let i = 0; i < shape.length; i++) {
+    const t = operands[i];
+    switch (shape[i]) {
+      case 'n': if (t.type !== 'number' || !Number.isFinite(t.value)) return false; break;
+      case 'N': if (t.type !== 'name' || !names.has(t.value)) return false; break;
+      case 't': if (t.type !== 'name' || t.value !== 'Tx') return false; break;
+      case 's': if (t.type !== 'string') return false; break;
+      default: return false;
+    }
+  }
+  return true;
+}
+
+/** pdf.js's PDF date for an ISO time (`getModificationDate`, UTC): `D:YYYYMMDDHHmmss`. */
+export function pdfDate(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `D:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+}
+
+function numsClose(v: Val, want: readonly number[], eps = RECT_EPS): boolean {
+  const a = nums(v);
+  return !!a && a.length === want.length && a.every((x, i) => Math.abs(x - want[i]) <= eps);
+}
+
+/**
+ * S2: the parts of a matched new annotation that decide what it shows, against the request: highlight /QuadPoints,
+ * ink /InkList and /BS /W, /CA 1, /F 4 (print, nothing hidden), /Rotate 0 or absent, /Border [0 0 0] or absent,
+ * /T the author (absent without one) and /CreationDate the state's date. (Rect, colour, comment: `annotMatches`.)
+ */
+function annotDisplayMatches(d: PdfDict, e: AddedEntry): boolean {
+  const g = (k: string) => d.entries.get(k);
+  if (e.annotationType === 9) {
+    if (!numsClose(g('QuadPoints'), e.quadPoints)) return false;
+  } else {
+    const ink = g('InkList');
+    if (!ink || ink.kind !== 'array' || ink.items.length !== e.paths.points.length) return false;
+    if (ink.items.some((s, i) => !numsClose(s, e.paths.points[i]))) return false;
+    const bs = g('BS');
+    const w = isDict(bs) ? bs.entries.get('W') : undefined;
+    if (!w || w.kind !== 'number' || Math.abs(w.value - e.thickness) > NUM_EPS * Math.max(1, e.thickness)) return false;
+  }
+  const ca = g('CA'); if (ca !== undefined && !(ca.kind === 'number' && numEqual(ca.value, e.opacity))) return false;
+  const f = g('F'); if (!f || f.kind !== 'number' || f.value !== 4) return false;
+  const rot = g('Rotate'); if (rot !== undefined && !(rot.kind === 'number' && rot.value === 0)) return false;
+  const border = g('Border'); if (border !== undefined && !numsClose(border, [0, 0, 0], 0)) return false;
+  const t = g('T');
+  const user = e.user;
+  if (user === undefined ? t !== undefined : !(t && t.kind === 'string' && decodeTextString(t.bytes) === user)) return false;
+  const cd = g('CreationDate');
+  if (!cd || cd.kind !== 'string' || decodeTextString(cd.bytes) !== pdfDate(e.date)) return false;
+  return true;
+}
+
+/** S2: a new Popup has the requested rectangle and is closed (/Open false or absent). */
+function popupMatches(d: PdfDict, e: AddedEntry): boolean {
+  if (!e.popup || !numsClose(d.entries.get('Rect'), e.popup.rect)) return false;
+  const open = d.entries.get('Open');
+  return open === undefined || (open.kind === 'bool' && !open.value);
+}
+
+function latin1Of(b: Uint8Array, start: number, end: number): string {
+  let s = '';
+  for (let i = start; i < end; i += 8192) s += String.fromCharCode(...b.subarray(i, Math.min(end, i + 8192)));
+  return s;
 }
 
 /** A choice field's /V as a list of texts (a string, or an array of strings), or null for anything else. */

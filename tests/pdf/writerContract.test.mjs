@@ -19,6 +19,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { core, fixture } from './_helpers.mjs';
 import { assertPg6 } from './_readers.mjs';
+import { skipWriter, warnIfSkipped } from './_node.mjs';
 
 const S = core.state;
 const SA = core.storageAdapter;
@@ -28,10 +29,7 @@ const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(here, '..', '.out', 'pdf', 'writerContract');
 const PJ = path.dirname(require.resolve('pdfjs-dist/package.json'));
-const nodeMajor = Number(process.versions.node.split('.')[0]);
-const nodeMinor = Number(process.versions.node.split('.')[1]);
-const skipWriter = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13) ? false : 'pdf.js saveDocument() needs Node >= 22.13';
-if (skipWriter) console.warn(`writerContract: SKIPPED the pdf.js writer tests (${skipWriter}; running ${process.versions.node})`);
+warnIfSkipped('writerContract');
 
 // ---------------------------------------------------------------- small helpers
 
@@ -854,6 +852,12 @@ const recordSummary = (row) => {
   fs.writeFileSync(path.join(OUT_DIR, 'summary.json'), JSON.stringify(summary, null, 1));
 };
 
+/**
+ * Contract cases the matrix must register (review S5): cases are chosen per fixture from its pdf.js inventory, so a
+ * fixture or inventory change that silently drops cases would otherwise still give a green run.
+ */
+const MIN_CONTRACT_CASES = 90;
+let registered = 0;
 if (!skipWriter) {
   // Cases are chosen per fixture from its pdf.js inventory, so only applicable ones are registered.
   for (const [fx, groups] of Object.entries(MATRIX)) {
@@ -863,6 +867,7 @@ if (!skipWriter) {
       for (const [name, build] of Object.entries(group)) {
         const ops = build(inv, ctx);
         if (!ops) continue;
+        registered++;
         test(`contract ${fx} / ${name}`, async () => {
           const r = await contract(fx, name, ops, { inv });
           recordSummary({ fixture: fx, case: name, appended: r.analysis.appended, newKinds: r.analysis.newKinds, superseded: r.analysis.superseded, freed: r.analysis.freed });
@@ -871,6 +876,10 @@ if (!skipWriter) {
     }
   }
 }
+
+test(`the contract matrix registers at least ${MIN_CONTRACT_CASES} cases`, { skip: skipWriter }, () => {
+  assert.ok(registered >= MIN_CONTRACT_CASES, `only ${registered} contract cases were registered`);
+});
 
 test('forms-js.pdf: no field case applies — every field carries scripts, so the state refuses them (PWP-27 decision)', { skip: skipWriter }, async () => {
   const base = fixture('forms-js.pdf');
