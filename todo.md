@@ -355,7 +355,7 @@
   - [ ] WP-30 Styles and lists, write side
   - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
   - [ ] WP-32 Island DOM <-> segments
-  - [ ] WP-33 Docx provider edit path
+  - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
   - [ ] WP-34 Island controller and re-render scheduling
   - [ ] WP-35 Word edit toolbar, shortcuts, CSS
   - [ ] Gate R3
@@ -380,7 +380,7 @@
 - [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
 - [ ] WP-30 Styles and lists, write side
 - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
-- [ ] WP-33 Docx provider edit path
+- [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
 - [ ] WP-34 Island controller and re-render scheduling
 - [ ] WP-35 Word edit toolbar, shortcuts, CSS
 - [ ] Gate R3 (needs S3 result and the LibreOffice/Google/German fixtures)
@@ -389,3 +389,5 @@
 - [ ] Make `prettyDocx()` (tests/office/_roundtrip.mjs) a package Word opens, or stop writing `pretty-edit.docx` to tests/.out for the Word check
 
 - [ ] Fold the WP-29 deviations (log.md 2026-11-21) into spec §8.5/§6.3
+- [ ] After WP-30 merges: add `setStyle`/`setList` cases to `docxEditWiring.test.mjs`
+- [ ] WP-34/35: keep Edit enabled for `tracked-changes-on` (host asks the Edit-anyway modal on `setEditMode`)
