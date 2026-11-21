@@ -252,6 +252,8 @@ export class OfficeDocument implements vscode.CustomDocument {
   private serialCache: { version: number; generation: number; result: VerifyResult } | undefined;
   /** Saves between their flush and their completion; edits are refused meanwhile (editRefusal). */
   private writing = 0;
+  /** Resolved when `writing` drops to 0 (or the document is disposed): edits waiting for a save (B1). */
+  private writeIdleWaiters: Array<() => void> = [];
   private diskCheckAfterWrite = false;
   private lastBackupFailure = -1;
 
@@ -317,6 +319,7 @@ export class OfficeDocument implements vscode.CustomDocument {
     if (this.diskTimer) clearTimeout(this.diskTimer);
     this.watcher?.dispose();
     for (const p of [...this.pendingFlushes.values()]) p.done();
+    this.releaseWriteIdleWaiters();
     this.flushTargets.clear();
     this.stateEmitter.dispose();
     this.editEmitter.dispose();
@@ -335,6 +338,27 @@ export class OfficeDocument implements vscode.CustomDocument {
     // then would be marked saved by VS Code without being on disk.
     if (this.writing > 0) return { code: 'blocked', message: SAVE_BUSY_MESSAGE };
     return null;
+  }
+
+  /**
+   * Resolves once no save is writing: at once when none is, else when the last one finishes (or the
+   * document is disposed). Never rejects.
+   */
+  whenNotWriting(): Promise<void> {
+    if (this.writing === 0 || this.disposed) return Promise.resolve();
+    return new Promise((resolve) => { this.writeIdleWaiters.push(resolve); });
+  }
+
+  /**
+   * Review B1: why an edit cannot be applied, after waiting out any save that is writing. A save in
+   * progress is not a reason to refuse an edit the user already made (the webview would drop the
+   * typed text); providers call this from their per-document edit queue, so the edit still lands in
+   * arrival order, just after the bytes being written. A save that starts while the caller is between
+   * this check and applying the edit is caught by the synchronous refusal in edit/applyEdit/recordApplied.
+   */
+  async editRefusalAfterSave(): Promise<OfficeError | null> {
+    while (this.writing > 0 && !this.disposed) await this.whenNotWriting();
+    return this.editRefusal();
   }
 
   /**
@@ -671,6 +695,13 @@ export class OfficeDocument implements vscode.CustomDocument {
       this.diskCheckAfterWrite = false;
       this.scheduleDiskCheck();
     }
+    if (this.writing === 0) this.releaseWriteIdleWaiters();
+  }
+
+  private releaseWriteIdleWaiters(): void {
+    const waiters = this.writeIdleWaiters;
+    this.writeIdleWaiters = [];
+    for (const w of waiters) w();
   }
 
   // -------------------------------------------------------------------------------------------
