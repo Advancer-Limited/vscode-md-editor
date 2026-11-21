@@ -220,6 +220,17 @@ test('Ctrl+E when read-only posts nothing and shows the reason hint', () => {
   assert.strictEqual(t.q((e) => e.className === 'office-hint')[0].textContent, t.OC.READ_ONLY_TEXT['too-large']);
 });
 
+test('Ctrl+E in the viewers-only build (no edit, no reason) shows no "Press Edit" hint', () => {
+  const t = setup();
+  t.OC.setInit(initMsg({ canEdit: false, readOnlyReason: null }));
+  const n = t.posted.length;
+  t.win.dispatch('keydown', { key: 'e', ctrlKey: true, preventDefault() {} });
+  assert.strictEqual(t.posted.length, n);
+  const hintEl = t.q((e) => e.className === 'office-hint')[0];
+  assert.strictEqual(hintEl.hidden, true);
+  assert.strictEqual(hintEl.textContent, '');
+});
+
 test('Edit button click posts setEditMode; hint auto-clears and announces politely', () => {
   const t = setup();
   t.OC.setInit(initMsg());

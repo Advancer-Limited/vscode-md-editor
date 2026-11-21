@@ -130,6 +130,19 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Size of `uri` in bytes, or undefined when it cannot be stat'ed (the read then reports the error). */
+async function statSize(uri: vscode.Uri): Promise<number | undefined> {
+  try { return (await vscode.workspace.fs.stat(uri)).size; } catch { return undefined; }
+}
+
+/** Whether two URIs name the same file (case-insensitive paths for `file:` on Windows). */
+export function sameFile(a: vscode.Uri, b: vscode.Uri): boolean {
+  if (a.scheme !== b.scheme || a.authority !== b.authority) return false;
+  return a.scheme === 'file' && process.platform === 'win32'
+    ? a.path.toLowerCase() === b.path.toLowerCase()
+    : a.path === b.path;
+}
+
 /** Candidate names of the lock file Word/Excel create next to an open document. */
 export function siblingLockNames(name: string): string[] {
   if (name.startsWith('~$')) return [];
@@ -989,12 +1002,21 @@ export class OfficeDocument implements vscode.CustomDocument {
     let pkg: OfficePackage | null = null;
     let loadError: LoadErrorView | null = null;
     let bytes: Uint8Array | undefined;
-    try {
-      bytes = await vscode.workspace.fs.readFile(source);
-    } catch (e) {
-      loadError = describeReadFailure(this.kind, errorText(e));
-    }
+    // Stamp the file BEFORE reading it: a write that lands between the read and a later stat would
+    // otherwise be recorded as "already seen" and the watcher would skip the reload (stale view).
     const stamp = await this.statDisk();
+    // Refuse an over-limit file from its size alone, without reading 250 MB+ into the host.
+    const sourceSize = source.toString() === this.uri.toString() ? stamp?.size : await statSize(source);
+    if (sourceSize !== undefined && sourceSize > LIMITS.maxFileBytes) {
+      loadError = describeLoadFailure('too-large', this.kind,
+        `File is ${sourceSize} bytes; the limit is ${LIMITS.maxFileBytes}`);
+    } else {
+      try {
+        bytes = await vscode.workspace.fs.readFile(source);
+      } catch (e) {
+        loadError = describeReadFailure(this.kind, errorText(e));
+      }
+    }
     if (bytes) {
       try {
         pkg = OfficePackage.open(this.fileName, bytes);
@@ -1073,9 +1095,13 @@ export class OfficeDocument implements vscode.CustomDocument {
     if (this.disposed || !this.writableScheme) return;   // git: and other read-only views never change
     try {
       const dir = vscode.Uri.joinPath(this.uri, '..');
-      const w = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dir, this.fileName));
-      w.onDidChange(() => this.scheduleDiskCheck());
-      w.onDidCreate(() => this.scheduleDiskCheck());
+      // RelativePattern takes a glob, so a name like "Budget [2024].xlsx" would never match itself.
+      // Such names watch the whole directory (non-recursive) and filter events by URI instead.
+      const pattern = /[[\]{}*?!]/.test(this.fileName) ? '*' : this.fileName;
+      const w = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dir, pattern));
+      const onEvent = (u: vscode.Uri): void => { if (sameFile(u, this.uri)) this.scheduleDiskCheck(); };
+      w.onDidChange(onEvent);
+      w.onDidCreate(onEvent);
       this.watcher = w;
     } catch (e) {
       console.warn('[OfficeDocument] could not watch', this.uri.toString(), e);

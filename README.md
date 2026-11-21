@@ -106,7 +106,7 @@ Opening a `.docx` or `.xlsx` file in VS Code shows it in a read-only viewer inst
 }
 ```
 
-**Privacy and trust.** Documents are opened entirely on your machine; no content is uploaded and the viewer makes no network requests, so pictures linked from the web simply appear broken. Documents cannot run code (macros are never executed). The viewers work in untrusted workspaces because they run nothing from the workspace.
+**Privacy and trust.** Documents are opened entirely on your machine; no content is uploaded and the viewer makes no network requests, so pictures linked from the web simply appear broken. Documents cannot run code (macros are never executed).
 
 ### Comparing Versions
 

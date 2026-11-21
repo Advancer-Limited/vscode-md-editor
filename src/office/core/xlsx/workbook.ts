@@ -212,23 +212,35 @@ export class Workbook {
     if (!e) throw new SheetLoadError('unknown-sheet', `No sheet with id ${id}`);
     if (e.kind !== 'worksheet') throw new SheetLoadError('not-worksheet', `Sheet "${e.name}" is a ${e.kind}, not a worksheet`);
     if (!e.part) throw new SheetLoadError('missing-part', `Sheet "${e.name}" has no worksheet part`);
-    const size = this.partSize(e.part);
-    if (size > LIMITS.xlsxSkipSheetXmlBytes) {
-      throw new SheetLoadError('too-large', `Sheet "${e.name}" is ${size} bytes uncompressed; it is not loaded`);
-    }
-    // Shared strings first (small next to sheets; parsed with the same chunking rule).
-    if (!this.sst && this.sharedStringsPart) {
-      const doc = await this.pkg.xmlAsync(this.sharedStringsPart);
-      this.sst ??= SharedStrings.parse(doc);
-    }
-    let sheet: Sheet;
+    const part = e.part;
+    // Everything below can meet malformed input (the ZIP directory, the shared strings part, the
+    // sheet XML, the cell index); any failure that is not already a SheetLoadError is `damaged`, so
+    // the viewer always gets an answer instead of waiting on a rejected promise it cannot classify.
     try {
-      const doc = await this.pkg.xmlAsync(e.part);
-      sheet = new Sheet(e.part, doc, { pkg: this.pkg, sharedStrings: () => this.sharedStrings(), partBytes: size });
+      const size = this.partSize(part);
+      if (size > LIMITS.xlsxSkipSheetXmlBytes) {
+        throw new SheetLoadError('too-large', `Sheet "${e.name}" is ${size} bytes uncompressed; it is not loaded`);
+      }
+      // Shared strings first (small next to sheets; parsed with the same chunking rule).
+      if (!this.sst && this.sharedStringsPart) {
+        try {
+          const sstDoc = await this.pkg.xmlAsync(this.sharedStringsPart);
+          this.sst ??= SharedStrings.parse(sstDoc);
+        } catch (err) {
+          throw new SheetLoadError('damaged', `Shared strings (${this.sharedStringsPart}): ${errorText(err)}`);
+        }
+      }
+      const doc = await this.pkg.xmlAsync(part);
+      const sheet = new Sheet(part, doc, { pkg: this.pkg, sharedStrings: () => this.sharedStrings(), partBytes: size });
+      await sheet.buildIndexAsync();
+      return sheet;
     } catch (err) {
-      throw new SheetLoadError('damaged', `Sheet "${e.name}": ${err instanceof Error ? err.message : String(err)}`);
+      if (err instanceof SheetLoadError) throw err;
+      throw new SheetLoadError('damaged', `Sheet "${e.name}": ${errorText(err)}`);
     }
-    await sheet.buildIndexAsync();
-    return sheet;
   }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
