@@ -5,10 +5,16 @@
 // loop and allocation is bounded by a cap from `limits.ts`. Failure is always a `PdfReadError` with a code;
 // messages carry offsets and object numbers only, never document content.
 //
-// Scope: header and `startxref`; classic cross-reference tables and cross-reference streams; the `/Prev`
-// chain; object streams; a tokeniser and parser for PDF objects that skips stream bodies by `/Length`;
-// FlateDecode (with PNG predictors) through `node:zlib`. Out of scope, refused: encryption (`encrypted`),
-// hybrid-reference files (`/XRefStm`, `hybrid`), repair of damaged cross-references (`bad-xref`).
+// Scope: header and `startxref`; classic cross-reference tables and cross-reference streams; hybrid-reference
+// sections (a table whose trailer has `/XRefStm`, ISO 32000-1 §7.5.8.4, as Word writes); the `/Prev` chain;
+// object streams; a tokeniser and parser for PDF objects that skips stream bodies by `/Length`; FlateDecode
+// (with PNG predictors) through `node:zlib`. Out of scope, refused: encryption (`encrypted`), malformed or
+// ambiguous hybrid sections (`hybrid`), repair of damaged cross-references (`bad-xref`).
+//
+// Hybrid sections: the entries of the `/XRefStm` stream supplement the section's table. The table's own entry
+// wins, which is pdf.js's order (`??=`: table, then its `/XRefStm`, then `/Prev`); a number the table and the
+// stream both list must agree (both free, or the same offset and generation) or the file is refused, because
+// readers that ignore `/XRefStm` (or prefer it) would otherwise see a different object.
 //
 // LAZY by design (spike S4): `openPdf` parses the cross-reference chain and checks each in-use entry's
 // `N G obj` header; objects are tokenised only when `resolve` asks for them. There is no code path that
@@ -27,7 +33,7 @@ export type PdfReadErrorCode =
   | 'no-startxref'   // no `startxref N %%EOF` at the end of the file
   | 'bad-xref'       // a cross-reference section or entry is wrong (offsets, headers, ranges, duplicates)
   | 'prev-cycle'     // the /Prev chain revisits a section
-  | 'hybrid'         // a trailer has /XRefStm
+  | 'hybrid'         // a hybrid section (/XRefStm) that is malformed or ambiguous (see `hybridSection`)
   | 'encrypted'      // a trailer has /Encrypt
   | 'objstm'         // an object stream is malformed or does not hold the object the xref says it does
   | 'too-large'      // a §9.3 cap was exceeded
@@ -118,20 +124,25 @@ export type XrefEntry =
   | { num: number; type: 'offset'; gen: number; offset: number }
   | { num: number; type: 'objstm'; gen: 0; stream: number; index: number };
 
+export type XrefKind = 'table' | 'stream' | 'hybrid';
+
 export interface PdfRevision {
   /** 0 = the original file; the last one is the newest. */
   index: number;
   /** Offset of this cross-reference section (what `startxref` or the next section's /Prev holds). */
   startxref: number;
-  kind: 'table' | 'stream';
+  /** 'hybrid': a classic table whose trailer has /XRefStm; its entries include the stream's (table wins). */
+  kind: XrefKind;
   /** The trailer dictionary (for a cross-reference stream: the stream's dictionary). */
   trailer: PdfDict;
   /** /Size of this section's trailer. */
   size: number;
   /** /Prev of this section, or null for the oldest. */
   prev: number | null;
-  /** Object number of the cross-reference stream (kind 'stream' only). */
+  /** Object number of the cross-reference stream (kind 'stream'; for 'hybrid', of the /XRefStm stream). */
   xrefStreamNum: number | null;
+  /** Offset of the /XRefStm stream (kind 'hybrid' only). */
+  xrefStm: number | null;
   /** First byte after the section (after the trailer dictionary, or after the stream's `endobj`). */
   sectionEnd: number;
   entryCount: number;
@@ -152,7 +163,7 @@ export interface PdfFile {
   /** /Size of the newest section. */
   readonly size: number;
   /** Kind of the newest section. */
-  readonly xrefKind: 'table' | 'stream';
+  readonly xrefKind: XrefKind;
   /** Value of the final `startxref`. */
   readonly startxref: number;
   /** In-use objects in the merged (newest-wins) cross-reference view. */
@@ -515,8 +526,8 @@ class EntryList {
 }
 
 interface Section {
-  startxref: number; kind: 'table' | 'stream'; trailer: PdfDict; size: number; prev: number | null;
-  xrefStreamNum: number | null; sectionEnd: number; list: EntryList;
+  startxref: number; kind: XrefKind; trailer: PdfDict; size: number; prev: number | null;
+  xrefStreamNum: number | null; xrefStm: number | null; sectionEnd: number; list: EntryList;
 }
 
 class Revision implements PdfRevision {
@@ -528,6 +539,7 @@ class Revision implements PdfRevision {
   get size() { return this.s.size; }
   get prev() { return this.s.prev; }
   get xrefStreamNum() { return this.s.xrefStreamNum; }
+  get xrefStm() { return this.s.xrefStm; }
   get sectionEnd() { return this.s.sectionEnd; }
   get entryCount() { return this.s.list.length; }
   *entries(): IterableIterator<XrefEntry> { for (let i = 0; i < this.s.list.length; i++) yield this.s.list.at(i); }
@@ -547,7 +559,7 @@ class Reader implements PdfFile {
   revisions: PdfRevision[] = [];
   trailer!: PdfDict;
   size = 0;
-  xrefKind: 'table' | 'stream' = 'table';
+  xrefKind: XrefKind = 'table';
   startxref = 0;
   objectCount = 0;
   private mType = new Uint8Array(0);
@@ -578,13 +590,19 @@ class Reader implements PdfFile {
 
     const sections: Section[] = []; // newest first
     const seen = new Set<number>();
+    const stms = new Set<number>(); // /XRefStm offsets: each used once, never also a section of the chain
     let off: number | null = n[0];
     while (off !== null) {
       if (seen.has(off)) fail('prev-cycle', 'the /Prev chain revisits a section', off);
+      if (stms.has(off)) fail('hybrid', 'a /Prev section is also an /XRefStm stream', off);
       seen.add(off);
       if (sections.length >= this.lim.maxRevisions) fail('too-large', 'more revisions than the cap', off);
       if (off < this.headerOffset || off >= b.length) fail('bad-xref', 'cross-reference offset outside the file', off);
       const sec: Section = isDigit(b[off]) ? yield* this.streamSection(off) : yield* this.tableSection(off);
+      if (sec.xrefStm !== null) {
+        if (seen.has(sec.xrefStm) || stms.has(sec.xrefStm)) fail('hybrid', '/XRefStm names a section already read', off);
+        stms.add(sec.xrefStm);
+      }
       sections.push(sec);
       off = sec.prev;
     }
@@ -619,9 +637,8 @@ class Reader implements PdfFile {
     if (this.totalEntries > this.lim.maxXrefEntries) fail('too-large', 'more cross-reference entries than the cap', at);
   }
 
-  private checkTrailer(t: PdfDict, at: number, kind: 'table' | 'stream'): { size: number; prev: number | null } {
+  private checkTrailer(t: PdfDict, at: number): { size: number; prev: number | null } {
     if (t.entries.has('Encrypt')) fail('encrypted', 'the file is encrypted', at);
-    if (kind === 'table' && t.entries.has('XRefStm')) fail('hybrid', 'hybrid-reference file (/XRefStm)', at);
     const size = getInt(t, 'Size');
     if (size === undefined || size < 1) fail('bad-xref', 'trailer /Size missing or invalid', at);
     if (size > this.lim.maxXrefEntries) fail('too-large', '/Size over the cross-reference cap', at);
@@ -681,12 +698,49 @@ class Reader implements PdfFile {
       throw e;
     }
     if (tr.kind !== 'dict') fail('bad-xref', 'trailer is not a dictionary', tr.start);
-    const { size, prev } = this.checkTrailer(tr, off, 'table');
+    const { size, prev } = this.checkTrailer(tr, off);
     for (let i = 0; i < list.length; i++) {
       if (list.nums[i] >= size) fail('bad-xref', `object ${list.nums[i]} at or over /Size`, off);
       if (i % CHECKPOINT === CHECKPOINT - 1) yield;
     }
-    return { startxref: off, kind: 'table', trailer: tr, size, prev, xrefStreamNum: null, sectionEnd: tr.end, list };
+    const sec: Section = { startxref: off, kind: 'table', trailer: tr, size, prev, xrefStreamNum: null, xrefStm: null, sectionEnd: tr.end, list };
+    if (tr.entries.has('XRefStm')) yield* this.hybridSection(sec);
+    return sec;
+  }
+
+  /**
+   * Make `sec` (a table section whose trailer has /XRefStm) hybrid: read the /XRefStm cross-reference stream and
+   * add its entries for numbers the table does not list. Refused with `hybrid`: /XRefStm not an offset inside the
+   * file, no cross-reference stream there (or one that cannot be read), a stream with its own /Prev or /XRefStm,
+   * an entry at or over the table's /Size, or a number both list differently (anything but both free, or the same
+   * offset and generation). Caps (`too-large`) and `/Encrypt` (`encrypted`) keep their own codes.
+   */
+  private *hybridSection(sec: Section): Generator<void, void> {
+    const b = this.bytes;
+    const v = sec.trailer.entries.get('XRefStm')!;
+    if (v.kind !== 'number' || !v.integer || v.value < this.headerOffset || v.value >= b.length) fail('hybrid', '/XRefStm is not an offset inside the file', sec.startxref);
+    const at = v.value;
+    if (!isDigit(b[at])) fail('hybrid', '/XRefStm does not point at an object', at);
+    let stm: Section;
+    try { stm = yield* this.streamSection(at); } catch (e) {
+      if (e instanceof PdfReadError && e.code === 'bad-xref') fail('hybrid', `/XRefStm stream: ${e.message.replace(/^bad-xref: /, '').replace(/ \(offset \d+\)$/, '')}`, e.offset ?? at);
+      throw e;
+    }
+    if (stm.prev !== null || stm.trailer.entries.has('XRefStm')) fail('hybrid', '/XRefStm stream has its own /Prev or /XRefStm', at);
+    const T = sec.list; const S = stm.list;
+    const inTable = new Map<number, number>();
+    for (let i = 0; i < T.length; i++) inTable.set(T.nums[i], i);
+    for (let i = 0; i < S.length; i++) {
+      const num = S.nums[i];
+      if (num >= sec.size) fail('hybrid', `/XRefStm object ${num} at or over the table's /Size`, at);
+      const j = inTable.get(num);
+      if (j === undefined) T.push(num, S.types[i], S.a[i], S.b[i]);
+      else if (!(T.types[j] === T_FREE && S.types[i] === T_FREE) && !(T.types[j] === T_OFFSET && S.types[i] === T_OFFSET && T.a[j] === S.a[i] && T.b[j] === S.b[i])) {
+        fail('hybrid', `object ${num}: the table and its /XRefStm stream disagree`, at);
+      }
+      if (i % CHECKPOINT === CHECKPOINT - 1) yield;
+    }
+    sec.kind = 'hybrid'; sec.xrefStm = at; sec.xrefStreamNum = stm.xrefStreamNum;
   }
 
   private *streamSection(off: number): Generator<void, Section> {
@@ -703,7 +757,7 @@ class Reader implements PdfFile {
     const { value, end } = parsed;
     if (value.kind !== 'stream' || getName(value.dict, 'Type') !== 'XRef') fail('bad-xref', 'cross-reference offset does not hold an XRef stream', off);
     const d = value.dict;
-    const { size, prev } = this.checkTrailer(d, off, 'stream');
+    const { size, prev } = this.checkTrailer(d, off);
     const W = d.entries.get('W');
     if (!W || W.kind !== 'array' || W.items.length !== 3) fail('bad-xref', '/W missing or invalid', off);
     const w = W.items.map((x) => (x.kind === 'number' && x.integer && x.value >= 0 && x.value <= 8 ? x.value : -1));
@@ -754,7 +808,7 @@ class Reader implements PdfFile {
         if (++done % CHECKPOINT === 0) yield;
       }
     }
-    return { startxref: off, kind: 'stream', trailer: d, size, prev, xrefStreamNum: hdr[0], sectionEnd: end, list };
+    return { startxref: off, kind: 'stream', trailer: d, size, prev, xrefStreamNum: hdr[0], xrefStm: null, sectionEnd: end, list };
   }
 
   // ---------------------------------------------------------------- objects
