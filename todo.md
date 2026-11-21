@@ -392,3 +392,4 @@
 - [ ] After WP-30 merges: add `setStyle`/`setList` cases to `docxEditWiring.test.mjs`
 - [ ] WP-34/35: keep Edit enabled for `tracked-changes-on` (host asks the Edit-anyway modal on `setEditMode`)
 - [ ] WP-30 follow-ups: allocate new numIds above any numId referenced by paragraphs (not only defined ones); check VSMDBullet/VSMDNumber names survive a Word re-save; remove the dead stub branch in the WP-29 dispatch test
+- [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)
