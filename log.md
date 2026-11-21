@@ -755,3 +755,29 @@ User report: adding a `.mmd` file (and, on follow-up, a `.md` file) didn't show 
 - PR #81: develop → master release merge.
 - Published `advancer-limited.vscode-md-editor` v1.5.0 from master (vsce reported DONE; Marketplace listing lags a few minutes).
 - Dev-host testing tip: the default profile's other markdown extensions claim `.md`; launch with an isolated `--user-data-dir`/`--extensions-dir` and a `workbench.editorAssociations` setting for `vscodeMdEditor.editor`.
+
+## 2026-11-21 — PDF viewer: specification and plan (feature/pdf-viewer-docs)
+
+Documents only; no code, dependency or build change.
+
+**Files.** New `docs/pdf-viewer-spec.md`, `docs/pdf-viewer-plan.md`; `todo.md` (new section), `log.md` (this entry).
+
+**Template.** Structure, guarantees and gates follow the Office spec/plan (`docs/office-viewers-spec.md`, `docs/office-viewers-plan.md` on the Office branches). Note: the Office code and docs are not on `develop` yet, so this branch's references to them resolve only once those PRs merge.
+
+**Recommended design (details in the spec).**
+- Renderer: pdf.js (`pdfjs-dist` 6.5.438, Apache-2.0, legacy build, `PDFViewer` components) in the webview. No scripting sandbox shipped, no XFA, no network.
+- Saving: incremental update only (loaded bytes + one appended revision). Writer = pdf.js `saveDocument()` run as a service in the webview worker from host-owned edit state; verifier = an own strict PDF object reader in the host that proves prefix identity, one well-formed revision, an allow-listed and inert set of changed objects before anything is written.
+- v1 editing: highlight, comment on a highlight, ink, delete markup annotations, AcroForm filling. Page operations, free text, standalone notes, metadata: post-v1.
+- Reuse: `officeCommon` chrome, common protocol, provider base as they are; save/undo/backup after extracting `src/binaryEditor/binaryDocumentBase.ts` from `officeDocument.ts` (plan PWP-13).
+
+**Verified (scratch install, Node 24.13; nothing installed in the repo).**
+- Registry: pdfjs-dist 6.5.438 Apache-2.0 (`engines.node >= 22.13`); pdf-lib 1.17.1 MIT (published 2021-11, no incremental mode); @cantoo/pdf-lib 2.11.1 MIT; mupdf 1.28.6 AGPL-3.0-or-later; @embedpdf/pdfium 2.15.1 and @hyzyla/pdfium 3.0.0 MIT.
+- pdf.js source: ESM only; worker has no static imports; cross-origin worker goes through a blob wrapper with a silent main-thread fallback; no `eval`/`new Function`; wasm decoders for JPEG 2000 / JBIG2 / colour; scripting only via `PDFScriptingManager` + sandbox bundle; `saveDocument()` copies the original data and appends, returns the original when nothing changed, matches the base's xref kind; the writer creates FreeText, Highlight, Ink, Stamp (no standalone note, underline or strikeout); `noView` storage hook; legacy build calls `Promise.withResolvers` unpolyfilled (so it will not run on the Chromium of VS Code 1.85); its Node detection excludes Electron non-browser processes (so it cannot run in the extension host as is).
+- Experiment (two synthetic files, xref table and xref stream): pdf.js form fill + new annotation is prefix-identical, no-change save is byte-identical, output re-read by @cantoo/pdf-lib. @cantoo/pdf-lib incremental save is prefix-identical and deterministic but: a no-change save appends ~277 bytes, form fill writes the value without regenerating the appearance stream, the increment's xref kind does not follow the base, and the catalog is rewritten unchanged. Hence pdf.js as the writer and @cantoo/pdf-lib as a dev-only independent reader/fixture generator.
+- Sizes: worker 1.33 MB, display build 538 KB, viewer components 485 KB (unminified), CSS 169 KB, cmaps 1.5 MB, standard fonts 0.82 MB, three wasm 0.42 MB.
+
+**Not verified (Phase 0 spikes S1-S8).** pdf.js under the webview CSP; the real minimum VS Code version; that pdf.js's increments open cleanly in Acrobat/Edge/Chrome/Firefox and fit a tight object allow-list; limits and budgets; appearance across readers; display hooks inside `PDFViewer`; signed/certified behaviour in Acrobat; save-on-close with a live webview.
+
+**Open for the user.** Q1-Q8 in spec section 16.2 (v1 edit scope, viewer-first release, page operations, default editor, flatten, signed/encrypted policy, minimum VS Code, order relative to the Office merges).
+
+**Housekeeping to watch.** `docs/**` is not in `.vscodeignore` on `develop` (the Office PR-0 adds it). If this docs PR merges first, add the line before any release so the spec does not ship in the VSIX.

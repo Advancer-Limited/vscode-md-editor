@@ -305,3 +305,18 @@
 - [x] PR #80 fix/bump-1.5.0 → develop (version 1.5.0 + CHANGELOG), merge
 - [x] PR #81 develop → master (Release 1.5.0), merge
 - [x] Publish 1.5.0 from master to VS Code Marketplace
+
+## 2026-11-21 PDF viewer with basic editing (feature/pdf-viewer-docs)
+
+- [x] Read the Office spec, plan and gate checklist as the template; assess which Office code is reusable (chrome, common protocol, provider base: as is; `officeDocument.ts` save/undo/backup: after extracting a shared base)
+- [x] Check library claims against the published packages (pdfjs-dist 6.5.438, pdf-lib 1.17.1, @cantoo/pdf-lib 2.11.1) in a scratch install, including an incremental-save experiment under Node
+- [x] Write `docs/pdf-viewer-spec.md`
+- [x] Write `docs/pdf-viewer-plan.md`
+- [ ] User: answer open questions Q1-Q8 (spec section 16.2)
+- [ ] User: supply ten everyday PDFs for the spike corpus and the PENDING fixtures (spec section 13.3)
+- [ ] PR-P0 feature/pdf-viewer-docs -> develop (make sure `docs/**` is in `.vscodeignore` before any release)
+- [ ] Phase 0: PWP-01 spikes S1-S8, PWP-02 scaffolding, PWP-03 fixtures, Gate P0
+- [ ] Phase 1 (viewer): PWP-04 to PWP-12, Gate P1, viewer-first release
+- [ ] Phase 2 (edit core): PWP-13 to PWP-21, Gate P2 (independent review)
+- [ ] Phase 3 (annotations): PWP-22 to PWP-26, Gate P3, flip `pdfEdit`
+- [ ] Phase 4 (forms + release): PWP-27 to PWP-30, Gate P4, flip `pdfForms`, Gate P-final
