@@ -86,7 +86,7 @@ Phase 1 acceptance (spec §14). Section 0 setup (0.1-0.6) comes first; the Phase
 
 ### 3A. Word viewer (about 12 minutes)
 
-Open each file from the Explorer by clicking it (it should open in "Word Document Viewer" without any picker).
+Open each file from the Explorer by clicking it (it should open in "Word Document Editor" without any picker).
 
 - [ ] **W1 [must] `fx/basic.docx` opens as pages.** Title, Heading 1-3, bold/italic/underline runs, a bullet list and a numbered list with a nested level are all visible and look like Word. There is no Edit button and no dirty dot on the tab. Toolbar shows zoom, section count, Open in Word, About.
 - [ ] **W2 [must] `fx/rich.docx` visual check against Word** (open the same file in desktop Word side by side). Expected: table, inline picture, floating picture, header and footer, footnote, hyperlink, page break and section break all render; layout is close to Word (docx-preview is approximate, not identical: no re-pagination, floating picture may sit slightly differently). The toolbar's section count matches the number of explicit page/section breaks plus one. The notices bar lists nothing that is not actually in the file. This is the Phase 1 acceptance item for Word (spec §14).
@@ -166,7 +166,7 @@ The Office work added step 2d/2e wiring in `extension.ts` and two `customEditors
 - [ ] **R2 [must] Mermaid editor.** Create a scratch `d.mmd` with `graph TD; A-->B;`. It opens in "Mermaid Diagram Editor": diagram renders, an error line is marked when you break the syntax, zoom/pan works.
 - [ ] **R3 [must] glTF viewer.** Open any small `.gltf` (none is committed; use one from the three.js samples) or at least confirm a scratch `x.gltf` containing `{}` opens in "glTF 3D Editor" with its source pane and a sensible message rather than a crash.
 - [ ] **R4 [nice] Sidebar.** The "Markdown Links" activity-bar view lists the markdown files; **Show Graph** opens the graph. Neither lists `.docx`/`.xlsx` files (Office files are not indexed in v1).
-- [ ] **R5 [nice] Opt-out.** Right-click `basic.docx` in the Explorer → **Open With...** lists "Word Document Viewer" and VS Code's text editor; choosing **Configure default editor for '*.docx'...** and picking another option makes plain clicks use it. Setting `"workbench.editorAssociations": { "*.docx": "default" }` does the same (this is the README's switch-back instruction, so it must really work).
+- [ ] **R5 [nice] Opt-out.** Right-click `basic.docx` in the Explorer → **Open With...** lists "Word Document Editor" and VS Code's text editor; choosing **Configure default editor for '*.docx'...** and picking another option makes plain clicks use it. Setting `"workbench.editorAssociations": { "*.docx": "default" }` does the same (this is the README's switch-back instruction, so it must really work).
 
 ---
 

@@ -478,8 +478,8 @@ implements vscode.CustomEditorProvider<D> {
       const uri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', ...file.split('/')));
       return `${uri}?v=${cacheBust}`;
     };
-    const title = this.kind === 'docx' ? 'Word Document Viewer'
-      : this.kind === 'xlsx' ? 'Excel Workbook Viewer' : 'PDF Viewer';
+    const title = this.kind === 'docx' ? 'Word Document Editor'
+      : this.kind === 'xlsx' ? 'Excel Workbook Editor' : 'PDF Viewer';
     const styles = this.styles().map((f) => `  <link href="${media(f)}" rel="stylesheet">`).join('\n');
     const scripts = this.scripts().map((f) => `  <script nonce="${nonce}" src="${media(f)}"></script>`).join('\n');
     return /* html */ `<!DOCTYPE html>

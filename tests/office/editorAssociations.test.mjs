@@ -31,7 +31,7 @@ before(async () => {
 });
 beforeEach(() => S.reset());
 
-const DOCX = { pattern: '*.docx', viewType: 'vscodeMdEditor.docx', label: 'Word Document Viewer' };
+const DOCX = { pattern: '*.docx', viewType: 'vscodeMdEditor.docx', label: 'Word Document Editor' };
 
 test('package.json: command is declared and every table row we offer is a contributed editor', () => {
   const cmd = pkg.contributes.commands.find((c) => c.command === 'vscodeMdEditor.chooseDocumentEditors');

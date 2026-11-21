@@ -4,14 +4,14 @@
 export interface DocumentTypeDef {
   pattern: string;
   viewType: string;
-  /** Name of this extension's viewer, e.g. "Word Document Viewer". */
+  /** Name of this extension's editor or viewer, e.g. "Word Document Editor", "PDF Viewer". */
   label: string;
 }
 
 /** Later branches add rows. A row is offered only if its viewType is contributed (see availableTypes). */
 export const DOCUMENT_TYPES: readonly DocumentTypeDef[] = [
-  { pattern: '*.docx', viewType: 'vscodeMdEditor.docx', label: 'Word Document Viewer' },
-  { pattern: '*.xlsx', viewType: 'vscodeMdEditor.xlsx', label: 'Excel Workbook Viewer' },
+  { pattern: '*.docx', viewType: 'vscodeMdEditor.docx', label: 'Word Document Editor' },
+  { pattern: '*.xlsx', viewType: 'vscodeMdEditor.xlsx', label: 'Excel Workbook Editor' },
   { pattern: '*.pdf', viewType: 'vscodeMdEditor.pdf', label: 'PDF Viewer' },
 ];
 
@@ -67,7 +67,7 @@ export interface ChoiceItem { label: string; detail: string; choice: Choice }
 
 export function buildChoiceItems(def: DocumentTypeDef): ChoiceItem[] {
   return [
-    { label: "Use this extension's viewer", detail: `Open ${def.pattern} files in the ${def.label}.`, choice: 'extension' },
+    { label: "Use this extension's editor", detail: `Open ${def.pattern} files in the ${def.label}.`, choice: 'extension' },
     { label: "Use VS Code's default editor", detail: 'Open them with VS Code itself, or whichever extension claims them.', choice: 'default' },
     { label: 'Let VS Code decide (remove the setting)', detail: 'Removes the association; VS Code picks by priority.', choice: 'auto' },
   ];

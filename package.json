@@ -117,7 +117,7 @@
       },
       {
         "viewType": "vscodeMdEditor.docx",
-        "displayName": "Word Document Viewer",
+        "displayName": "Word Document Editor",
         "selector": [
           {
             "filenamePattern": "*.docx"
@@ -127,7 +127,7 @@
       },
       {
         "viewType": "vscodeMdEditor.xlsx",
-        "displayName": "Excel Workbook Viewer",
+        "displayName": "Excel Workbook Editor",
         "selector": [
           {
             "filenamePattern": "*.xlsx"
@@ -229,7 +229,7 @@
             "Always show the sheet on a light background, as authored."
           ],
           "default": "theme",
-          "description": "How Excel workbooks are drawn in the viewer: following the VS Code theme, or always as a light sheet."
+          "description": "How Excel workbooks are drawn in the Excel Workbook Editor: following the VS Code theme, or always as a light sheet."
         },
         "vscodeMdEditor.office.startInEditMode": {
           "type": "boolean",
