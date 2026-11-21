@@ -6,6 +6,7 @@
 //   FROZEN (view half, PWP-04): PdfReadOnlyReason, PdfFacts, `pdfRequestDocument`, `pdfDocument`,
 //     `pdfFacts`, `pdfSaveAttachment`, `pdfSaveAttachmentResult`, the common Office messages, and
 //     the limits and rules that govern them. A change is a plan/spec change made with spec §5.
+//   AMENDMENT (view half, 2026-11-21, approved by the user): `pdfLog` (spec §5, §12).
 //   DRAFT (edit half): PdfColor .. PdfObserved, `pdfState`, `pdfEditInfo`, `pdfEdit`,
 //     `pdfEditResult`, `pdfWrite`, `pdfWriteResult`. Confirmed (not redesigned) by the
 //     orchestrator at the start of Phase 2 (plan §3); the validators below already enforce them.
@@ -34,6 +35,10 @@ export interface PdfFacts {
   hasXfa: boolean; attachmentCount: number;
   signatures: Array<{ signer: string; reason: string; time: string }>;
 }
+
+// FROZEN (amendment 2026-11-21): the small fixed set of things the webview may report to the host log.
+export type PdfLogLevel = 'info' | 'warn' | 'error';
+export type PdfLogCode = 'csp-violation' | 'worker-fallback' | 'page-render-failed';
 
 // DRAFT (edit half)
 export type PdfColor = 'yellow' | 'green' | 'blue' | 'pink' | 'red';
@@ -85,6 +90,7 @@ export type PdfToWebview = OfficeCommonToWebview
 export type PdfToHost = OfficeCommonToHost
   | { type: 'pdfRequestDocument' }                              // FROZEN
   | { type: 'pdfFacts'; facts: PdfFacts }                       // FROZEN; display only, never used for a decision
+  | { type: 'pdfLog'; level: PdfLogLevel; code: PdfLogCode; detail?: string }          // FROZEN (amendment 2026-11-21); appended to the output channel, never shown
   | { type: 'pdfSaveAttachment'; requestId: number; name: string; bytes: Uint8Array }  // FROZEN; `name` is untrusted, the host keeps the base name only
   | { type: 'pdfEdit'; requestId: number; baseVersion: number; edit: PdfEditOp }       // DRAFT from here on
   | { type: 'pdfWriteResult'; requestId: number; ok: true; bytes: Uint8Array; observed: PdfObserved }
@@ -96,7 +102,7 @@ export function isPdfToHost(msg: { type: string }): msg is PdfToHost {
   switch (m.type) {
     case 'ready': case 'setEditMode': case 'flushed': case 'openLink': case 'openExternally':
     case 'retry': case 'writeClipboard': case 'showAbout':
-    case 'pdfRequestDocument': case 'pdfFacts': case 'pdfSaveAttachment':
+    case 'pdfRequestDocument': case 'pdfFacts': case 'pdfLog': case 'pdfSaveAttachment':
     case 'pdfEdit': case 'pdfWriteResult':
       return true;
     default: {
@@ -142,6 +148,8 @@ export const PDF_PROTOCOL_LIMITS = {
   MAX_ANNOTS_PER_PAGE: 10_000_000,
   /** pdfWriteResult failure text. */
   MAX_MESSAGE: 10_000,
+  /** pdfLog.detail, as sent. */
+  MAX_LOG_DETAIL: 2_000,
 } as const;
 
 type Rec = Record<string, unknown>;
@@ -261,6 +269,18 @@ function parseEditOp(v: unknown): PdfEditOp | null {
   }
 }
 
+const LOG_LEVELS: readonly string[] = ['info', 'warn', 'error'];
+const LOG_CODES: readonly string[] = ['csp-violation', 'worker-fallback', 'page-render-failed'];
+
+/**
+ * A log detail made safe to append to a log line: query strings and fragments removed from
+ * anything URL-like (`blockedURI` can carry document-derived data), control characters (line
+ * breaks included) replaced so a detail cannot forge a log line.
+ */
+export function sanitizeLogDetail(detail: string): string {
+  return detail.replace(/[?#]\S*/g, '').replace(/[\x00-\x1f\x7f\p{Zl}\p{Zp}]/gu, ' ');
+}
+
 function parseFacts(v: unknown): PdfFacts | null {
   if (!isRec(v)) return null;
   if (!isIdx(v.pageCount, L.MAX_PAGES + 1) || !isIdx(v.attachmentCount, L.MAX_ATTACHMENTS + 1)) return null;
@@ -302,6 +322,15 @@ export function parsePdfToHost(raw: unknown, opts: ParsePdfOptions = {}): PdfToH
     case 'pdfFacts': {
       const facts = parseFacts(raw.facts);
       return facts ? { type: 'pdfFacts', facts } : null;
+    }
+    case 'pdfLog': {
+      if (typeof raw.level !== 'string' || !LOG_LEVELS.includes(raw.level)) return null;
+      if (typeof raw.code !== 'string' || !LOG_CODES.includes(raw.code)) return null;
+      const level = raw.level as PdfLogLevel;
+      const code = raw.code as PdfLogCode;
+      if (raw.detail === undefined) return { type: 'pdfLog', level, code };
+      return isStr(raw.detail, L.MAX_LOG_DETAIL)
+        ? { type: 'pdfLog', level, code, detail: sanitizeLogDetail(raw.detail) } : null;
     }
     case 'pdfSaveAttachment':
       return isId(raw.requestId) && isStr(raw.name, L.MAX_ATTACHMENT_NAME) && isBytes(raw.bytes, L.MAX_ATTACHMENT_BYTES)
