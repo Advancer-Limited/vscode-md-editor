@@ -35,6 +35,19 @@ import { OFFICE_FLAGS } from './featureFlags.js';
 /** `fullCalcAtLoad`: the workbook asks Excel to recalculate on open (`calcPr/@fullCalcOnLoad`, Gate R2 F9). */
 interface Model { wb: Workbook; styles: StyleTable; fullCalcAtLoad: boolean }
 
+/**
+ * The Tier C modal's title (review N2): a delete-sheet confirmation names the sheet (its detail says
+ * what goes with it); the other lists are about content that will not follow the change.
+ */
+export function confirmTitle(op: XlsxEditOp, wb: Workbook): string {
+  if (op.op === 'deleteSheet') {
+    const name = wb.entry(op.sheetId)?.name;
+    return name !== undefined ? `Delete sheet "${name}"?` : 'Delete this sheet?';
+  }
+  if (op.op === 'renameSheet') return 'Some content refers to this sheet by name and will not be updated.';
+  return 'This change will not be fully applied everywhere.';
+}
+
 /** Whether `workbook.xml` has `calcPr/@fullCalcOnLoad` on: cached formula results may be out of date (§9.5). */
 function hasFullCalcOnLoad(wb: Workbook): boolean {
   try {
@@ -417,7 +430,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       if (!res.ok) { fail(res.error); return; }
       if (res.confirm && res.confirm.length > 0 && !confirmed) {
         // Tier C (spec §9.6): ask, then run the same operation again with the confirmation.
-        if (!(await this.confirmEdit(msg.edit, res.confirm))) { fail({ code: 'cancelled', message: 'Cancelled.' }); return; }
+        if (!(await this.confirmEdit(msg.edit, res.confirm, m.wb))) { fail({ code: 'cancelled', message: 'Cancelled.' }); return; }
         if (msg.baseVersion !== doc.version) { stale(); return; }
         confirmed = true;
         continue;
@@ -464,13 +477,13 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   }
 
   /** The modal for a Tier C list (default button Cancel); skipped when `confirmStructuralEdits` is off (spec §4.1). */
-  private async confirmEdit(op: XlsxEditOp, lines: readonly string[]): Promise<boolean> {
+  private async confirmEdit(op: XlsxEditOp, lines: readonly string[], wb: Workbook): Promise<boolean> {
     const alwaysAsk = op.op === 'deleteSheet';   // §9.7: deleting a sheet always asks
     const setting = vscode.workspace.getConfiguration('vscodeMdEditor.office').get<boolean>('confirmStructuralEdits', true);
     if (setting === false && !alwaysAsk) return true;
     const proceed = 'Continue';
     const answer = await vscode.window.showWarningMessage(
-      'This change will not be fully applied everywhere.',
+      confirmTitle(op, wb),
       { modal: true, detail: lines.join('\n') },
       proceed,
     );

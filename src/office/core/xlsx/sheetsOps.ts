@@ -678,7 +678,14 @@ function deleteOrPlan(b: EditBuilder | null, wb: Workbook, sheetId: number): Off
       setViewIndex(b, wb, v, 'activeTab', a);
       let f = intAttr(v, 'firstSheet');
       if (f > idx) f--;
-      setViewIndex(b, wb, v, 'firstSheet', Math.min(f, remaining.length - 1));
+      f = Math.min(f, remaining.length - 1);
+      // The first tab shown must be a visible sheet (review N3), as for activeTab.
+      if (remaining[f].state !== 'visible') {
+        let j = remaining.findIndex((x, i) => i >= f && x.state === 'visible');
+        if (j < 0) j = remaining.map((x) => x.state).lastIndexOf('visible');
+        if (j >= 0) f = j;
+      }
+      setViewIndex(b, wb, v, 'firstSheet', f);
     }
     for (const r of plan) applyRewrite(b, r);
     b.removeNode(wb.workbookPart, target.el);

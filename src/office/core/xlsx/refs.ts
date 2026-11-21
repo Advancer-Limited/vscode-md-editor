@@ -790,7 +790,11 @@ export function shiftRange(ref: string, shift: StructuralShift): string {
   const eps = parts.map((p) => parseEndpoint(p, beam));
   const moved = shiftEndpoints(eps, shift);
   if (moved === null) return '#REF!';
-  return moved === eps ? ref : moved.map(formatEndpoint).join(':');
+  if (moved === eps) return ref;
+  const out = moved.map(formatEndpoint);
+  // A cell range shrunk to one cell is written as that cell (`B4`, as Excel writes it), not `B4:B4` (review N5).
+  if (!beam && out.length === 2 && out[0] === out[1]) return out[0];
+  return out.join(':');
 }
 
 /**

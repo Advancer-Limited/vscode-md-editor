@@ -267,6 +267,13 @@ const RANGE_CASES = [
   ['A1:D5', insC('B', 3), 'A1:G5'],
   ['A1048576', insR(1, 1), '#REF!'],
   ['a1:b2', insR(1, 1), 'a2:b3'],
+  // Review N5: a cell range reduced to one cell is written as that cell, as Excel does.
+  ['B4:B5', delR(5, 1), 'B4'],
+  ['B4:C4', delC('C', 1), 'B4'],
+  ['B3:B5', delR(4, 2), 'B3'],
+  ['$B$4:$B$5', delR(5, 1), '$B$4'],
+  ['3:4', delR(4, 1), '3:3'],
+  ['B:C', delC('C', 1), 'B:B'],
 ];
 
 describe('shiftRange', () => {
@@ -291,6 +298,7 @@ const SQREF_CASES = [
   ['A1:B2 D4:E5', insC('A', 1), 'B1:C2 E4:F5'],
   ['B2', delR(1, 1), 'B1'],
   ['XFD1 A1', insC('A', 1), 'B1'],
+  ['B4:B5 D1', delR(5, 1), 'B4 D1'],
 ];
 
 describe('shiftSqref', () => {

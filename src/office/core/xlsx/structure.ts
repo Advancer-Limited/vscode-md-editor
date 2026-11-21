@@ -31,7 +31,7 @@
 //                       group (no master, several masters for one si, a member outside the master's ref)
 //                       is refused.
 //   dimension/@ref      shifted; "A1" when everything it covered was deleted.
-//   sheetView           pane/@topLeftCell, selection/@activeCell (a deleted cell moves to the first
+//   sheetView           @topLeftCell, pane/@topLeftCell, selection/@activeCell (a deleted cell moves to the first
 //                       row/column after the band; pushed off -> last row/column), selection/@sqref
 //                       (all deleted -> the active cell). Frozen panes (state frozen/frozenSplit) also
 //                       shift xSplit/ySplit as the frozen band [0, split-1]; deleting every frozen
@@ -577,6 +577,9 @@ function planDimension(op: Op, b: EditBuilder, part: string, el: XmlElement, wri
 
 function planSheetViews(op: Op, b: EditBuilder, part: string, views: XmlElement, ns: string, writes: Write[]): void {
   for (const view of childrenOf(views, ns, 'sheetView')) {
+    // The scroll position (the view's top-left cell) follows its cell like the pane's (review N4).
+    const vtl = attr(view, '', 'topLeftCell');
+    if (vtl !== undefined) setAttrW(writes, b, part, view, 'topLeftCell', moveCellClamped(op, vtl, 'view position'));
     const pane = child(view, ns, 'pane');
     if (pane) {
       const tl = attr(pane, '', 'topLeftCell');

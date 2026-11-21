@@ -512,6 +512,17 @@ test('sheetView: pane topLeftCell, frozen split, selection activeCell/sqref [WP-
   assert.match((await refusal(fx4.wb, 1, delR(1))).message, /every frozen row/);
 });
 
+test('N4: sheetView/@topLeftCell (the scroll position) follows its cell; deleted -> first cell after the band', async () => {
+  const bytes = await patched('basic.xlsx', { [S1]: (s) => s.replace(/<sheetView\b/, '<sheetView topLeftCell="C5"') });
+  assert.match(partText(bytes, S1), /<sheetView topLeftCell="C5"/);
+  const { bytes: b1 } = await check(load('basic.xlsx', bytes), 1, insR(2, 3), [S1], 'view-topleft-insert');
+  assert.match(partText(b1, S1), /<sheetView topLeftCell="C8"/);
+  const { bytes: b2 } = await check(load('basic.xlsx', bytes), 1, insC('A'), [S1], 'view-topleft-insert-col');
+  assert.match(partText(b2, S1), /<sheetView topLeftCell="D5"/);
+  const { bytes: b3 } = await check(load('basic.xlsx', bytes), 1, delR(4, 3), [S1], 'view-topleft-delete');
+  assert.match(partText(b3, S1), /<sheetView topLeftCell="C4"/);
+});
+
 test('autoFilter and sortState (sheet level): ref, filterColumn colId, sortCondition', async () => {
   const bytes = await patched('basic.xlsx', {
     [S1]: injectBefore('pageMargins', '<autoFilter ref="A1:C23"><filterColumn colId="2"><filters><filter val="x"/></filters></filterColumn><sortState ref="A2:C23"><sortCondition ref="C2:C23"/></sortState></autoFilter>'),

@@ -235,6 +235,7 @@ test('Tier C: the modal lists what will not follow; Continue applies it with con
   assert.ok(asked, 'modal shown');
   assert.strictEqual(asked.options.modal, true);
   assert.match(asked.options.detail, /pivot table "PivotTable1"/);
+  assert.strictEqual(asked.m, 'This change will not be fully applied everywhere.');
   assert.strictEqual(h.events.length, 1);
 });
 
@@ -366,10 +367,13 @@ test('deleteSheet: the modal is always shown; Continue removes it and selects a 
   const original = fixture('basic.xlsx');
   const h = await open('basic.xlsx');
   let asked = 0;
-  S.answer = () => { asked++; return 'Continue'; };
+  let title;
+  S.answer = (m) => { asked++; title = m; return 'Continue'; };
   const r = await edit(h, { op: 'deleteSheet', sheetId: 2 });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(asked, 1);
+  // Review N2: a plain delete asks about the sheet, not about a change "not fully applied everywhere".
+  assert.strictEqual(title, 'Delete sheet "Second Sheet"?');
   let wb = lastWorkbook(h);
   assert.deepStrictEqual(names(wb), ['Values']);
   assert.strictEqual(wb.activeSheetId, 1, 'the sheet before the deleted one');
