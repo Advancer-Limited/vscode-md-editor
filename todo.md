@@ -325,6 +325,7 @@
   - [x] WP-08 Host shell
   - [x] WP-09 Common webview chrome
   - [x] WP-10 Word viewer
+    - [x] Review L: external links open once (link click stopped before VS Code's host page)
   - [x] WP-11 Xlsx read model
   - [x] WP-12 Xlsx styles and display formatting
   - [x] WP-13 Grid maths
@@ -339,10 +340,12 @@
 - [ ] Phase 2 — save pipeline + Excel cell editing
   - [x] WP-18 Edits, undo/redo, serialise, verify, save core
   - [x] WP-19 Full CustomEditorProvider
+    - [x] Review B1 (host): edits wait for a save that is writing (`editRefusalAfterSave`) instead of being refused
   - [x] WP-20 Xlsx cell write, input classification, calc handling
   - [x] WP-21 Formula entry, _xlfn, shared formulas
   - [x] WP-22 Date style patch + xlsx validators
   - [x] WP-23 Xlsx editing wiring
+    - [x] Review B1 (xlsx): `runEdit` waits for a save that is writing (and re-runs an edit a save rolled back) instead of refusing it
   - [x] WP-24 verify-office-open.ps1, OpenXmlValidator script
   - [ ] Gate R2 (Fable): review done, F1–F10 fixed (645 tests). Waiting on the user: verify-office-open.ps1 on `scratchpad/r2/excel-check` + `tests/.out`, then the dev-host checklist; then flip `xlsxEdit`
   - [x] Follow-up (F5): async core serialize, verify and xlsxValidator; the longest block on large.xlsx is now 42–85 ms for a backup and 83–187 ms for a save

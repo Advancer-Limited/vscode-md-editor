@@ -31,6 +31,7 @@ import { packageValidator } from './core/save.js';
 import type { Validator } from './core/save.js';
 import { xlsxValidator } from './core/xlsx/validate.js';
 import { OFFICE_FLAGS } from './featureFlags.js';
+import { SAVE_BUSY_MESSAGE } from './saveErrors.js';
 
 /** `fullCalcAtLoad`: the workbook asks Excel to recalculate on open (`calcPr/@fullCalcOnLoad`, Gate R2 F9). */
 interface Model { wb: Workbook; styles: StyleTable; fullCalcAtLoad: boolean }
@@ -373,7 +374,8 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private async runEdit(doc: OfficeDocument, panel: vscode.WebviewPanel, msg: EditMsg): Promise<void> {
     const fail = (error: OfficeError): void => this.editFailed(panel, msg.requestId, error);
     const stale = (): void => fail({ code: 'stale', message: 'The workbook changed. Your edit was not applied.' });
-    const refusal = doc.editRefusal();
+    // Review B1: an edit that arrives while a save is writing waits for it instead of being refused.
+    const refusal = await doc.editRefusalAfterSave();
     if (refusal) { fail(refusal); return; }
     if (msg.baseVersion !== doc.version) { stale(); return; }
     if (STRUCTURAL_OPS.has(msg.edit.op) && !OFFICE_FLAGS.xlsxStructure) {
@@ -399,6 +401,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     fail: (error: OfficeError) => void, stale: () => void,
   ): Promise<void> {
     let confirmed = false;
+    let saveRetries = 3;
     for (;;) {
       const res = await applyXlsxEdit(m.wb, pkg, msg.edit, { confirmed, styles: m.styles });
       if (!res.ok) { fail(res.error); return; }
@@ -413,6 +416,14 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
       const rec = doc.recordApplied(res.edit, pkg);
       if (!rec.ok) {
         if (res.edit) refreshAfterEdit(m.wb, res.edit, m.styles);
+        // A save began while the edit was being built (it awaits): recordApplied rolled it back. Run it
+        // again once the save is done rather than dropping the user's edit (review B1).
+        if (rec.error.code === 'blocked' && rec.error.message === SAVE_BUSY_MESSAGE && saveRetries-- > 0) {
+          const again = await doc.editRefusalAfterSave();
+          if (again) { fail(again); return; }
+          if (doc.pkg !== pkg || msg.baseVersion !== doc.version) { stale(); return; }
+          continue;
+        }
         fail(rec.error);
         return;
       }

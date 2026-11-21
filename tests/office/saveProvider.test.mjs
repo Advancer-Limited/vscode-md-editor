@@ -736,6 +736,34 @@ test('save flushes first: a commit landing before `flushed` is saved; edits are 
   assert.strictEqual(tag(doc, 'after').ok, true, 'edits work again after the save');
 });
 
+test('review B1: an edit arriving while a save is writing waits for the save instead of being refused', async () => {
+  host.OFFICE_FLAGS.docxEdit = true;
+  const { doc, uri } = await open('basic.docx', fixture('basic.docx'));
+  tag(doc);
+  assert.strictEqual(await doc.editRefusalAfterSave(), null, 'no save: resolves at once');
+  let waiting = null;
+  let settled = false;
+  S.fail = (op) => {
+    if (op === 'write' && !waiting) {
+      waiting = doc.editRefusalAfterSave().then((r) => { settled = true; return r; });
+    }
+    return undefined;
+  };
+  await doc.save(token);
+  assert.ok(waiting, 'asked while the save was writing');
+  assert.strictEqual(await waiting, null, 'no refusal once the save is done');
+  assert.ok(settled);
+  assert.strictEqual(tag(doc, 'after').ok, true, 'the edit lands after the bytes written');
+  assert.strictEqual(doc.isDirty(), true, 'and keeps the document dirty');
+  assert.match(rootTag(S.read(uri)), /vsmdTest="1"/, 'the save wrote the state before the edit');
+
+  // Disposal while waiting releases the waiter with the read-only refusal.
+  let late = null;
+  S.fail = (op) => { if (op === 'write' && !late) { late = doc.editRefusalAfterSave(); doc.dispose(); } return undefined; };
+  await doc.save(token).catch(() => {});
+  assert.strictEqual((await late).code, 'read-only');
+});
+
 test('flush times out when the webview never answers; backup flushes too; no flush before ready', async () => {
   host.OFFICE_FLAGS.docxEdit = true;
   host.OfficeDocument.flushTimeoutMs = 40;

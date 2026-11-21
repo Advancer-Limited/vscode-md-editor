@@ -342,6 +342,10 @@
       // The webview never navigates (spec §12).
       if (ev.preventDefault) { ev.preventDefault(); }
       if (href.charAt(0) === '#') { scrollToAnchor(href.slice(1)); return; }
+      // VS Code's webview host page posts its own `did-click-link` for any <a href> click that reaches
+      // it, whether or not the default was prevented, so an external link would open twice. Stop it
+      // here (capture phase): `openLink` below is the only path.
+      if (href.trim() && ev.stopPropagation) { ev.stopPropagation(); }
       const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href.trim());
       if (m && ALLOWED_SCHEMES.indexOf(m[1].toLowerCase()) >= 0) {
         post({ type: 'openLink', href: href.trim() });
@@ -723,8 +727,8 @@
 
     function start() {
       buildToolbar();
-      content.addEventListener('click', onLinkClick);
-      content.addEventListener('auxclick', onLinkClick);
+      content.addEventListener('click', onLinkClick, true);
+      content.addEventListener('auxclick', onLinkClick, true);
       content.addEventListener('keydown', onContentKey);
       content.addEventListener('dblclick', editHint);
       content.addEventListener('wheel', onWheel, { passive: false });
