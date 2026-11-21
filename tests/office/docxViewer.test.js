@@ -40,7 +40,7 @@ class FakeEl {
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
   fire(t, ev) {
-    const e = Object.assign({ target: this, preventDefault() { e.prevented = true; } }, ev);
+    const e = Object.assign({ target: this, preventDefault() { e.prevented = true; }, stopPropagation() { e.stopped = true; } }, ev);
     (this.listeners[t] || []).forEach((f) => f(e));
     return e;
   }
@@ -177,6 +177,8 @@ test('clicking http link posts openLink and prevents navigation; javascript: and
 
   let e = click(links.http);
   assert.ok(e.prevented, 'navigation prevented');
+  // VS Code's host page would post its own did-click-link too (it ignores defaultPrevented): opened twice.
+  assert.ok(e.stopped, 'an external link click is stopped before it reaches the host page');
   deq(t.posted.slice(before), [{ type: 'openLink', href: 'http://example.com/a' }]);
   click(links.https); click(links.mail);
   deq(t.posted.slice(before + 1).map((m) => m.href), ['https://example.com/b', 'mailto:a@b.c']);
@@ -187,12 +189,15 @@ test('clicking http link posts openLink and prevents navigation; javascript: and
 
   e = click(links.anchor);
   assert.ok(e.prevented);
+  assert.ok(!e.stopped, 'internal # links are left to propagate');
   assert.strictEqual(links.target.scrolledIntoView, 1);
   assert.strictEqual(t.posted.length, n, 'anchors are handled in the webview');
   click(links.missing);
   assert.strictEqual(t.posted.length, n);
 
-  assert.ok(!click(links.none).prevented, 'an element without href is not a link');
+  assert.ok(click(links.js).stopped, 'a dropped scheme is stopped too (the host page must not open it either)');
+  e = click(links.none);
+  assert.ok(!e.prevented && !e.stopped, 'an element without href is not a link');
   assert.ok(!click(t.content).prevented, 'non-link clicks are untouched');
 });
 
