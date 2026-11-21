@@ -38,7 +38,7 @@ export class DocxEditorProvider extends OfficeEditorProviderBase {
 
   protected scripts(): string[] {
     // docx-preview's UMD build expects the JSZip global, so jszip loads first.
-    return ['jszip.min.js', 'docx-preview.min.js', 'officeCommon.js', 'docxEditor.js'];
+    return ['jszip.min.js', 'docx-preview.min.js', 'officeCommon.js', 'docxMap.js', 'docxIsland.js', 'docxEdit.js', 'docxEditor.js'];
   }
 
   protected styles(): string[] {
