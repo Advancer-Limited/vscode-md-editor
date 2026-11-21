@@ -10,6 +10,7 @@ import v8 from 'node:v8';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { core, fixture, allFixtures } from './_helpers.mjs';
+import { skipWriter, warnIfSkipped } from './_node.mjs';
 
 const require = createRequire(import.meta.url);
 const W = require('../../media/pdfWriter.js');
@@ -19,9 +20,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sha = (u8) => crypto.createHash('sha256').update(u8).digest('hex');
 const AUTHOR = 'Writer Tester';
 
-const nodeMajor = Number(process.versions.node.split('.')[0]);
-const nodeMinor = Number(process.versions.node.split('.')[1]);
-const skipWriter = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13) ? false : 'pdf.js saveDocument() needs Node >= 22.13';
+warnIfSkipped('pdfWriter');
 if (skipWriter) console.warn(`pdfWriter: SKIPPED (${skipWriter}; running ${process.versions.node})`);
 const T = (name, fn) => test(name, { skip: skipWriter }, fn);
 
@@ -276,11 +275,14 @@ T('engine failures reply ok:false, close every document and dispose the session;
   for (const [name, hooks] of Object.entries(modes)) {
     const t = await makeShell(base);
     const engine = nodeEngine(hooks);
-    const w = W.create(t.shell, { engine });
+    const logs = [];
+    const w = W.create(t.shell, { engine, log: (s) => logs.push(s) });
     const r = request(t.shell, sc.storage); t.send(r);
     const res = await replyFor(t, r.requestId);
     assert.equal(res.ok, false, name);
-    assert.match(res.message, /boom/, name);
+    // N9: the host gets a fixed sentence; the raw error only reaches the webview console
+    assert.equal(res.message, W.WRITE_MESSAGES.failed, name);
+    assert.ok(!/boom/.test(res.message) && logs.some((l) => /boom/.test(l)), name);
     assert.equal(w.stats().openDocuments, 0, name);
     assert.ok(engine.log.sessions.every((s) => s.disposed), name);
     assert.equal(engine.log.opened, engine.log.closed, name);
@@ -291,10 +293,11 @@ T('engine failures reply ok:false, close every document and dispose the session;
   const engine = nodeEngine();
   const orig = engine.createSession;
   engine.createSession = async () => { engine.createSession = orig; throw new Error('boom worker'); };
-  const w = W.create(t.shell, { engine });
+  const logs = [];
+  const w = W.create(t.shell, { engine, log: (s) => logs.push(s) });
   const r = request(t.shell, sc.storage); t.send(r);
   const res = await replyFor(t, r.requestId);
-  assert.equal(res.ok, false); assert.match(res.message, /boom worker/);
+  assert.equal(res.ok, false); assert.equal(res.message, W.WRITE_MESSAGES.failed); assert.ok(logs.some((l) => /boom worker/.test(l)));
   const r2 = request(t.shell, sc.storage); t.send(r2);
   assert.equal((await replyFor(t, r2.requestId)).ok, true, 'the next request after a failure');
   w.dispose(); await t.close();
@@ -309,9 +312,71 @@ T('a hung engine times out with ok:false, documents closed and the session dispo
   const r = request(t.shell, sc.storage); t.send(r);
   const res = await replyFor(t, r.requestId);
   assert.equal(res.ok, false);
-  assert.match(res.message, /in time/);
+  assert.equal(res.message, W.WRITE_MESSAGES.timeout);
   assert.equal(w.stats().openDocuments, 0);
   assert.ok(engine.log.sessions.every((s) => s.disposed));
+  w.dispose(); await t.close();
+});
+
+T('S4: a hung getData() times out (the timer is armed before it), and nothing is opened afterwards', async () => {
+  const base = fixture('basic.pdf');
+  const sc = build(base, (cls) => [hl(cls.context.pages, 0, 0)]);
+  const t = await makeShell(base);
+  let release;
+  const getData = t.doc.getData.bind(t.doc);
+  t.doc.getData = () => new Promise((res) => { release = () => res(getData()); });
+  const engine = nodeEngine();
+  const w = W.create(t.shell, { engine, timeoutMs: () => 100, log: () => {} });
+  const r = request(t.shell, sc.storage); t.send(r);
+  const res = await replyFor(t, r.requestId);
+  assert.equal(res.ok, false);
+  assert.equal(res.message, W.WRITE_MESSAGES.timeout);
+  release(); // the bytes arrive after the reply: the write must stop there
+  await sleep(100);
+  assert.equal(engine.log.sessions.length, 0, 'no session started after the timeout');
+  assert.equal(w.stats().openDocuments, 0);
+  t.doc.getData = getData;
+  w.dispose(); await t.close();
+});
+
+T('S4: a session that arrives after the timeout is disposed, and nothing is opened on it', async () => {
+  const base = fixture('basic.pdf');
+  const sc = build(base, (cls) => [hl(cls.context.pages, 0, 0)]);
+  const t = await makeShell(base);
+  const engine = nodeEngine();
+  const orig = engine.createSession.bind(engine);
+  let release;
+  engine.createSession = () => new Promise((res) => { release = () => res(orig()); });
+  const w = W.create(t.shell, { engine, timeoutMs: () => 100, log: () => {} });
+  const r = request(t.shell, sc.storage); t.send(r);
+  const res = await replyFor(t, r.requestId);
+  assert.equal(res.ok, false);
+  assert.equal(res.message, W.WRITE_MESSAGES.timeout);
+  release();
+  for (let i = 0; i < 100 && !engine.log.sessions.length; i++) await sleep(5);
+  await sleep(50);
+  assert.equal(engine.log.sessions.length, 1);
+  assert.ok(engine.log.sessions[0].disposed, 'the late session (its Worker) was terminated');
+  assert.equal(engine.log.opened, 0, 'nothing was opened on it');
+  assert.equal(w.stats().lateSessions, 1);
+  assert.equal(w.stats().openDocuments, 0);
+  w.dispose(); await t.close();
+});
+
+T('S4: a document that finishes opening after the timeout is closed again', async () => {
+  const base = fixture('basic.pdf');
+  const sc = build(base, (cls) => [hl(cls.context.pages, 0, 0)]);
+  const t = await makeShell(base);
+  const engine = nodeEngine({ beforeOpen: async () => { await sleep(250); } });
+  const w = W.create(t.shell, { engine, timeoutMs: () => 100, log: () => {} });
+  const r = request(t.shell, sc.storage); t.send(r);
+  const res = await replyFor(t, r.requestId);
+  assert.equal(res.message, W.WRITE_MESSAGES.timeout);
+  for (let i = 0; i < 200 && engine.log.closed < engine.log.opened + (engine.log.opened ? 0 : 1); i++) await sleep(10);
+  assert.equal(engine.log.opened, 1);
+  assert.equal(engine.log.closed, 1, 'the late document was closed');
+  assert.equal(w.stats().lateDocuments, 1);
+  assert.equal(w.stats().openDocuments, 0);
   w.dispose(); await t.close();
 });
 
@@ -324,7 +389,7 @@ T('a generation change while writing fails the write (stale) instead of replying
   const r = request(t.shell, sc.storage); t.send(r);
   const res = await replyFor(t, r.requestId);
   assert.equal(res.ok, false);
-  assert.match(res.message, /changed|older/);
+  assert.equal(res.message, W.WRITE_MESSAGES.stale);
   assert.equal(w.stats().openDocuments, 0);
   w.dispose(); await t.close();
 });

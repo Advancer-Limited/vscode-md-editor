@@ -70,7 +70,7 @@ test('stale generation through the shell replies ok:false and starts no Worker',
   await settle(t, () => t.posted.some((m) => m.type === 'pdfWriteResult'));
   const res = t.last('pdfWriteResult');
   assert.equal(res.ok, false);
-  assert.match(res.message, /older/);
+  assert.equal(res.message, t.win.PdfWriterApi.WRITE_MESSAGES.stale);
   assert.equal(t.log.workers.length, before);
 });
 
@@ -84,5 +84,5 @@ test('a worker file that cannot be read fails the write cleanly', async () => {
   await settle(t, () => t.posted.some((m) => m.type === 'pdfWriteResult'));
   const res = t.last('pdfWriteResult');
   assert.equal(res.ok, false);
-  assert.match(res.message, /HTTP 404/);
+  assert.equal(res.message, t.win.PdfWriterApi.WRITE_MESSAGES.failed); // the HTTP status only in the console (N9)
 });
