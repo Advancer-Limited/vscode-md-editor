@@ -1052,3 +1052,6 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 
 - **PWP-09** (`266acc8`, Sonnet): `media/pdfSidebar.js/.css` — windowed thumbnails (IntersectionObserver + `thumbnailWindow`, canvases released outside the window), outline tree (`role=tree`, http/https/mailto URLs only), attachments (bytes read with `getAttachmentContent(id)` only on Save; sizes not shown up front — accepted deviation from spec §7.2), document properties dialog. 19 tests. Open for Gate P1: real thumbnails, theming, save dialog, screen reader.
 
+
+- **PWP-10** (`fd242c1`, Sonnet): `media/pdfFind.js/.css` — find bar on pdf.js `PDFFindController` (Ctrl+F, Enter/Shift+Enter, F3, Esc returns focus; match case, whole words, highlight all persisted; "3 of more than 17" until every page is scanned; scanned files disable find with a note; announcements without repeats). 16 tests (11 shim, 5 real pdf.js incl. cjk and large.pdf). Note: the partial count reads pdf.js's private `_pendingFindMatches` (falls back safely) — re-check on a pdf.js upgrade. Merged with PWP-09 by keeping both entries in the provider's script/style lists. Suite 792 pass.
+
