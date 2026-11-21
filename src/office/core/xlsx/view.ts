@@ -157,7 +157,7 @@ export function cellWindow(
     for (const ci of cols) if (c >= ci.min && c <= ci.max && ci.styleIndex !== null) return ci.styleIndex;
     return 0;
   };
-  const annotated = aux.notes.size > 0 || aux.links.size > 0;
+  const annotated = aux.notes.size > 0 || aux.links.size > 0 || aux.linkRanges.length > 0;
   for (let r = r0; r <= r1; r++) {
     const rowStyle = sheet.rowInfo(r)?.styleIndex ?? null;
     for (let c = c0; c <= c1; c++) {
@@ -165,7 +165,8 @@ export function cellWindow(
       const s = rowStyle ?? colStyle(c);
       const a1 = annotated ? rcToA1(r, c) : '';
       const note = aux.notes.get(a1);
-      const link = aux.links.get(a1);
+      // linkAt also covers range hyperlinks ("A1:B3"), so empty cells inside one are clickable too.
+      const link = annotated ? linkAt(aux, r, c) : undefined;
       if (s === 0 && note === undefined && link === undefined) continue;
       const cell: XlsxCell = { r, c, d: '', s, k: 'z' };
       if (link !== undefined) cell.link = link;
@@ -239,18 +240,50 @@ function tsvField(s: string): string {
   return /[\t\r\n"]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
-/** Display strings of `range` (clamped to the used range) as tab-separated rows, quoted like Excel. */
+/** Most cells (empty ones inside the trimmed range included) one copy may produce. */
+export const TSV_MAX_CELLS = 1_000_000;
+
+/** `toTsv` refused: the trimmed range still has more than `TSV_MAX_CELLS` cells. */
+export class CopyTooLargeError extends RangeError {
+  readonly cells: number;
+  constructor(cells: number) {
+    super(`The selection is ${cells} cells; the copy limit is ${TSV_MAX_CELLS}`);
+    this.name = 'CopyTooLargeError';
+    this.cells = cells;
+  }
+}
+
+/**
+ * Display strings of `range` as tab-separated rows, quoted like Excel. The range keeps its start
+ * (so a paste lines up) but its end is trimmed to the last row and column that hold a cell, and
+ * the text is built from the stored cells only (no dense grid). Throws CopyTooLargeError when the
+ * trimmed range is over `TSV_MAX_CELLS` (a sparse sheet with A1 and XFD30000 would otherwise build
+ * gigabytes of tabs in the extension host).
+ */
 export function toTsv(wb: Workbook, sheet: Sheet, styles: StyleTable, range: readonly number[]): string {
   const dims = sheet.dimensions();
   const r0 = range[0], c0 = range[1];
-  const r1 = Math.min(range[2], dims.rows - 1);
-  const c1 = Math.min(range[3], dims.cols - 1);
+  let r1 = Math.min(range[2], dims.rows - 1);
+  let c1 = Math.min(range[3], dims.cols - 1);
   if (r0 > r1 || c0 > c1) return '';
+  const present = sheet.cellsIn([r0, c0, r1, c1]);   // row-major
+  if (!present.length) return '';
+  r1 = present[present.length - 1].r;
+  c1 = c0;
+  for (const cell of present) if (cell.c > c1) c1 = cell.c;
   const width = c1 - c0 + 1;
-  const rows: string[][] = [];
-  for (let r = r0; r <= r1; r++) rows.push(new Array<string>(width).fill(''));
-  for (const cell of sheet.cellsIn([r0, c0, r1, c1])) {
-    rows[cell.r - r0][cell.c - c0] = tsvField(cellText(wb, styles, cell));
+  const total = (r1 - r0 + 1) * width;
+  if (total > TSV_MAX_CELLS) throw new CopyTooLargeError(total);
+  const emptyRow = '\t'.repeat(width - 1);
+  const lines: string[] = [];
+  let i = 0;
+  for (let r = r0; r <= r1; r++) {
+    if (i >= present.length || present[i].r !== r) { lines.push(emptyRow); continue; }
+    const fields = new Array<string>(width).fill('');
+    for (; i < present.length && present[i].r === r; i++) {
+      fields[present[i].c - c0] = tsvField(cellText(wb, styles, present[i]));
+    }
+    lines.push(fields.join('\t'));
   }
-  return rows.map((r) => r.join('\t')).join('\n');
+  return lines.join('\n');
 }

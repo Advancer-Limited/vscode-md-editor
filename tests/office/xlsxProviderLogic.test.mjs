@@ -156,6 +156,46 @@ test('toTsv: display strings, tabs and newlines, Excel-style quoting', async () 
   assert.strictEqual(toTsv(q.wb, qs, q.styles, [0, 0, 1, 1]), '"a\tb"\t"say ""hi"""\n"two\nlines"\t12.5');
 });
 
+test('empty cells inside a range hyperlink carry the link', async () => {
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(fixture('features.xlsx'));
+  const part = 'xl/worksheets/sheet1.xml';
+  const xml = await zip.file(part).async('string');
+  assert.ok(xml.includes('ref="K2"'));
+  zip.file(part, xml.replace('ref="K2"', 'ref="K2:M5"'));
+  const m = model('features.xlsx', new Uint8Array(await zip.generateAsync({ type: 'uint8array' })));
+  const s = await m.wb.sheet(1);
+  assert.strictEqual(s.cell(4, 12), undefined, 'M5 is empty');
+  const cells = win(m, s, [0, 0, 6, 14]).cells;
+  assert.strictEqual(cells.find((x) => x.r === 4 && x.c === 12)?.link, 'https://example.com/');
+  assert.strictEqual(cells.find((x) => x.r === 5 && x.c === 12)?.link, undefined, 'outside the range');
+});
+
+/** A workbook with only `cells` ({ A1: value }) on one sheet. */
+async function sparseModel(cells) {
+  const wbk = new ExcelJS.Workbook();
+  const ws = wbk.addWorksheet('S');
+  for (const [a1, v] of Object.entries(cells)) ws.getCell(a1).value = v;
+  return model('sparse.xlsx', new Uint8Array(await wbk.xlsx.writeBuffer()));
+}
+
+test('S2 toTsv: trims the end to the last stored cell, keeps the start, refuses over the cell budget', async () => {
+  const { TSV_MAX_CELLS, CopyTooLargeError } = core.xlsx.view;
+  const m = await sparseModel({ B2: 'x', D3: 'y' });
+  const s = await m.wb.sheet(1);
+  // Selection far past the data: trimmed to D3, starting at A1 so a paste lines up.
+  assert.strictEqual(toTsv(m.wb, s, m.styles, [0, 0, 999, 99]), '\t\t\t\n\tx\t\t\n\t\t\ty');
+  // A1 + XFD3000: 3000 x 16384 cells, refused quickly instead of building ~50M fields.
+  const big = await sparseModel({ A1: 1, XFD3000: 2 });
+  const bs = await big.wb.sheet(1);
+  const t0 = Date.now();
+  assert.throws(() => toTsv(big.wb, bs, big.styles, [0, 0, 1_048_575, 16_383]),
+    (e) => e instanceof CopyTooLargeError && e.cells === 3000 * 16384 && e.cells > TSV_MAX_CELLS);
+  assert.ok(Date.now() - t0 < 500, 'refusal is cheap');
+  // A selection that stays inside the budget still copies.
+  assert.strictEqual(toTsv(big.wb, bs, big.styles, [0, 0, 0, 2]), '1');
+});
+
 test('find is capped at 1,000 matches and reports truncated', async () => {
   const wbk = new ExcelJS.Workbook();
   const ws = wbk.addWorksheet('Big');
@@ -399,6 +439,62 @@ test('xlsxCopy writes TSV to the clipboard; markdown is ignored', async () => {
   panel.send({ type: 'xlsxCopy', sheetId: 1, range: [0, 0, 1, 3], format: 'tsv' });
   await waitFor(() => S.clipboard !== undefined, 'clipboard');
   assert.strictEqual(S.clipboard, 'Fonts\t\t\t\nBold\tItalic\tUnderline\tStrike');
+});
+
+test('S2 xlsxCopy over the cell budget copies nothing and warns', async () => {
+  const wbk = new ExcelJS.Workbook();
+  const ws = wbk.addWorksheet('S');
+  ws.getCell('A1').value = 1; ws.getCell('XFD3000').value = 2;
+  const { panel } = await open('sparse.xlsx', new Uint8Array(await wbk.xlsx.writeBuffer()));
+  panel.send({ type: 'ready' });
+  panel.send({ type: 'xlsxCopy', sheetId: 1, range: [0, 0, 1_048_575, 16_383], format: 'tsv' });
+  await waitFor(() => S.messages.length > 0, 'warning');
+  assert.strictEqual(S.clipboard, undefined);
+  assert.strictEqual(S.messages[0][0], 'warning');
+  assert.match(S.messages[0][1], /Nothing was copied/);
+});
+
+test('S3 sheet meta is built once per (sheet, version), not per cell request', async () => {
+  const { provider, doc, panel } = await open('styles.xlsx');
+  panel.send({ type: 'ready' });
+  await waitFor(() => panel.last('xlsxWorkbook'), 'xlsxWorkbook');
+  const sheet = await provider.model(doc).wb.sheet(1);
+  let walks = 0;
+  const orig = sheet.rowIndices.bind(sheet);
+  sheet.rowIndices = (...a) => { walks++; return orig(...a); };
+  for (let i = 1; i <= 5; i++) {
+    await ask(panel, { type: 'xlsxRequestCells', requestId: i, sheetId: 1, range: [0, 0, 1, 1] }, 'xlsxCells', i);
+  }
+  const m = await ask(panel, { type: 'xlsxRequestSheetMeta', sheetId: 1 }, 'xlsxSheetMeta');
+  assert.strictEqual(walks, 1, 'one row walk for five cell requests and a meta request');
+  assert.strictEqual(m.meta.version, 0);
+});
+
+test('a newer find cancels the one still running (each still gets one reply)', async () => {
+  const { findInWorkbook } = core.xlsx.find;
+  const m = model('styles.xlsx');
+  let calls = 0;
+  const res = await findInWorkbook(m.wb, 'a', false, null, m.styles, () => ++calls > 0);
+  assert.deepStrictEqual(res, { matches: [], truncated: false, cancelled: true });
+  // Through the provider: two finds back to back both get a reply; the second has the matches.
+  const { panel } = await open('features.xlsx');
+  panel.send({ type: 'ready' });
+  await waitFor(() => panel.last('xlsxWorkbook'), 'xlsxWorkbook');
+  panel.send({ type: 'xlsxFind', requestId: 1, query: 'pears', matchCase: false, sheetId: null });
+  panel.send({ type: 'xlsxFind', requestId: 2, query: 'pears', matchCase: false, sheetId: null });
+  await waitFor(() => panel.all('xlsxFindResult').length === 2, 'two replies');
+  const r2 = panel.all('xlsxFindResult').find((x) => x.requestId === 2);
+  assert.deepStrictEqual(r2.matches, [{ sheetId: 1, r: 2, c: 0 }]);
+});
+
+test('the sheet-unavailable warning is cleared once a sheet loads', async () => {
+  const { panel } = await open('features.xlsx');
+  panel.send({ type: 'ready' });
+  await waitFor(() => panel.last('xlsxWorkbook'), 'xlsxWorkbook');
+  await ask(panel, { type: 'xlsxRequestSheetMeta', sheetId: 99 }, 'notices');   // no such sheet
+  assert.ok(panel.last('notices').notices.some((n) => n.code === 'sheet-unavailable'));
+  await ask(panel, { type: 'xlsxRequestSheetMeta', sheetId: 1 }, 'xlsxSheetMeta');
+  await waitFor(() => !panel.last('notices').notices.some((n) => n.code === 'sheet-unavailable'), 'cleared');
 });
 
 test('a malformed workbook part shows the error view instead of throwing', async () => {
