@@ -4,7 +4,7 @@ Date: 2026-11-21 · Spec: `docs/pdf-viewer-spec.md` (all `§` references are to 
 
 This plan slices the spec into work packages (PWPs). Each is sized for one implementation subagent run (≤ ~1,500 changed lines including tests) and names its files, dependencies, acceptance tests and implementer model. The spec says *what*; this document says *in what order, by whom, in which files, and how it is checked*. Where the two disagree, the spec wins and the plan gets fixed.
 
-The plan is written for the recommended answers to the open questions (spec §16.2). §11 says what changes for each other answer.
+The plan is written for the recommended answers to the open questions (spec §16.2). §11 says what changes for each other answer. **Answered 2026-11-21:** recommended answers for Q1–Q6 and Q8; Q7 is **(b)** — PWP-02 raises `engines.vscode` and `@types/vscode` for the whole extension to the minimum spike S2 measures (see §11, row Q7), and the README states the new minimum.
 
 ---
 

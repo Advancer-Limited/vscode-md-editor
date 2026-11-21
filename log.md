@@ -781,3 +781,8 @@ Documents only; no code, dependency or build change.
 **Open for the user.** Q1-Q8 in spec section 16.2 (v1 edit scope, viewer-first release, page operations, default editor, flatten, signed/encrypted policy, minimum VS Code, order relative to the Office merges).
 
 **Housekeeping to watch.** `docs/**` is not in `.vscodeignore` on `develop` (the Office PR-0 adds it). If this docs PR merges first, add the line before any release so the spec does not ship in the VSIX.
+
+## 2026-11-21 — PDF spec questions answered
+
+- User answered spec §16.2: recommended answers for Q1-Q6 and Q8 (annotations + form filling; viewer-first release; page ops post-v1 as export; default editor; real annotations only; signed = warn, encrypted = view-only; Office merges first). Q7: raise the extension-wide minimum VS Code to the version spike S2 measures.
+- Files changed: `docs/pdf-viewer-spec.md` (§16.2 decision table), `docs/pdf-viewer-plan.md` (header note), `log.md`.

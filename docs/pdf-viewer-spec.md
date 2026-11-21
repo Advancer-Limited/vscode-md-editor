@@ -680,7 +680,20 @@ Editing page content (text, images) — PDF has no paragraph model; content stre
 
 ### 16.2 Open questions for the user
 
-Only the decisions that change the plan. Each has a recommendation; the plan is written for the recommended answers.
+**Answered by the user on 2026-11-21:**
+
+| Q | Decision |
+|---|---|
+| Q1 | (b) annotations (highlight, comment on a mark, ink, delete) **plus** AcroForm form filling |
+| Q2 | (a) viewer-only release after Gate P1; editing follows behind flags |
+| Q3 | (a) no page operations in v1; post-v1 as "Organise pages → save as a new PDF" |
+| Q4 | (a) default editor for `.pdf` (`priority: "default"`) |
+| Q5 | (a) real, removable annotations only; no flattening |
+| Q6 | (a) signed files editable with a warning; password-protected files view-only |
+| Q7 | **(b) raise the minimum VS Code version for the whole extension** to the version spike S2 measures (`engines.vscode` and `@types/vscode` bump in PWP-02). The §10.4 feature check stays as a safety net. This is the only answer that differs from the recommendation. |
+| Q8 | (a) merge the Office viewer and save PRs first; PDF Phase 0 (spikes, scaffolding, fixtures) runs in parallel |
+
+The questions as asked are kept below for the record.
 
 **Q1. Which editing features are in v1?**
 (a) Annotations only: highlight, comment, ink, delete.
