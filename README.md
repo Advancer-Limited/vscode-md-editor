@@ -8,6 +8,7 @@ A rich Markdown editor extension for Visual Studio Code with split preview, [[wi
 - **Mermaid Diagrams** — `\`\`\`mermaid` code fences render as live diagrams in the WYSIWYG/split preview. Diagrams are read-only there (edit the source in Raw/Split mode). A dedicated split-view editor opens `.mmd`/`.mermaid` files directly, with **syntax highlighting**, **error-line marking**, **zoom and pan**, **PNG / print (Save as PDF) export**, and **authoring help** (template gallery, snippet palette, and node-ID completions) — all themed to match VS Code's light or dark theme.
 - **3D Model Viewer** — open a `.gltf` file to get its JSON source alongside a live 3D preview rendered with three.js, with orbit, pan and zoom. The preview updates as you edit and keeps your camera position.
 - **Word and Excel Viewers** — `.docx` and `.xlsx` files open in a read-only viewer: paged Word documents and a scrollable, styled Excel grid, themed to match VS Code. Nothing is ever written to the file.
+- **PDF Viewer** — `.pdf` files open in a read-only viewer with continuous scrolling, zoom, search, a sidebar of thumbnails, bookmarks and attachments, and password prompts, themed to match VS Code. Nothing is ever written to the file.
 - **Task Checklists** — GFM `- [ ] task` / `- [x] task` checkboxes render as clickable checkboxes in the preview and toggle directly in the markdown source. Handy for spec-driven workflows (e.g. GitHub Spec Kit `tasks.md` files).
 - **Toolbar** — Quick-access buttons for bold, italic, headings, links, images, code blocks, lists, and blockquotes.
 - **[[Wikilinks]]** — Link between markdown files using `[[filename]]` or `[[filename|display text]]` syntax (Obsidian-compatible) with autocomplete suggestions.
@@ -110,6 +111,34 @@ Opening a `.docx` or `.xlsx` file in VS Code shows it in a read-only viewer inst
 
 **Privacy and trust.** Documents are opened entirely on your machine; no content is uploaded and the viewer makes no network requests, so pictures linked from the web simply appear broken. Documents cannot run code (macros are never executed).
 
+### PDF viewer (`.pdf`)
+
+Opening a `.pdf` file shows it in a read-only viewer built into the extension, instead of VS Code's "cannot display binary file" message or a separate reader. It never modifies the file and never marks it as changed (editing PDFs is planned for a later release). **Requires VS Code 1.95 or newer**; on an older VS Code the extension cannot load, and a build that does load but lacks the browser features the viewer needs shows a message saying so.
+
+**What you get.** Pages scroll continuously and are drawn on a themed background with the document's own colours (a white page even in a dark theme; pages are not inverted). Zoom from 25% to 500%, Fit width, Fit page and Actual size (Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0), a page box that accepts a page number or label (Ctrl+G), and a rotate button (`R`, Shift+`R`) that turns the view only and is never saved. The sidebar (F4) has thumbnails, the document's bookmarks, and any attached files, which you can save with **Save as...** (they are never opened or run), plus a document properties dialog. Ctrl+F opens a find bar (Enter / Shift+Enter or F3 to step, Esc to close) with match case, whole words and a count; Ctrl+C copies the selected text. Links to `http`, `https` and `mailto` addresses open through VS Code (you are asked to trust a domain first); links inside the document jump to their target. Password-protected files ask for the password (it is kept only in memory for that tab). Zoom, scroll position, rotation and sidebar state are remembered for the tab. A PDF that is damaged, empty, not really a PDF or too large (over 500 MB) shows an explanation with an **Open externally** button.
+
+**What it does not do.** Printing, presentation mode, two-page spreads, layers, and form filling are not available, and **JavaScript in a PDF is never run** (a notice tells you when a file contains scripts). **XFA forms** (Adobe LiveCycle) cannot be shown; a notice says so. Digital signatures are listed but **not verified**. Permission flags on protected files (no copy, no print) are not enforced. Annotations and form fields already in a file are drawn but cannot be changed. Use **Open externally** for anything the viewer cannot do. A file with no text layer (a scan) displays, but its text cannot be selected or searched; a notice says so.
+
+**Known limitations.**
+
+- Ctrl+A selects the text of the pages drawn so far, not the whole document.
+- Search results arrive page by page on long documents; the count reads "more than N" until the scan finishes.
+- Very large files (over 150 MB) show a "large file" notice; PDFs of more than 20,000 pages and files of more than 100 MB are view-only even when editing arrives.
+- A PDF opened from a Git revision or a read-only location is viewed the same way.
+- Tagged PDFs expose headings, lists, tables and figure text to screen readers; an untagged PDF is read in content order. That is a property of the file.
+
+**Switching to another editor.** The viewer becomes the default for `.pdf`. The quickest way to change that is the command **Markdown Editor: Choose Editors for Office and PDF Files...** (Command Palette), which now lists PDF alongside Word and Excel and sets `workbench.editorAssociations` for you. To open a file with something else just once, right-click the tab and choose **Reopen Editor With...**, or right-click the file in the Explorer and choose **Open With...**; pick **Configure default editor for '*.pdf'...** there to change it permanently. Or set it in `settings.json`:
+
+```json
+"workbench.editorAssociations": {
+  "*.pdf": "default"
+}
+```
+
+**Settings and diagnostics.** `vscodeMdEditor.pdf.defaultZoom` sets the initial zoom (see Configuration). If something goes wrong with a file (a blocked resource, a page that could not be drawn), a short line is written to the **VS Code MD Editor** output channel (View > Output); no pop-ups.
+
+**Privacy and trust.** PDFs are opened entirely on your machine; no content is uploaded and the viewer makes no network requests. Documents cannot run code, and links are opened by VS Code only if they are web or mail addresses.
+
 ### Comparing Versions
 
 Compare your markdown files against previous git commits:
@@ -131,6 +160,7 @@ The diff opens in a rendered webview panel with green highlighting for additions
 | `Markdown Editor: Compare with Saved` | Diff working changes against the on-disk saved file |
 | `Markdown Editor: Check Grammar with LanguageTool` | Run grammar and spelling check |
 | `Markdown Editor: Open with VS Code MD Editor` | Open a `.md` file in the custom editor |
+| `Markdown Editor: Choose Editors for Office and PDF Files...` | Pick, per file type (Word, Excel, PDF), whether this extension's viewer, VS Code's default editor or automatic selection opens it |
 | `Markdown Editor: Show Link Graph` | Focus the Markdown Links sidebar |
 | `Markdown Editor: Open Full Graph` | Open the full-screen force-directed link graph |
 
@@ -156,6 +186,12 @@ Grammar checking works out of the box with the free LanguageTool API (1500 chara
 |---------|---------|-------------|
 | `vscodeMdEditor.graph.defaultMode` | `"local"` | Default graph view: `local` or `global` |
 | `vscodeMdEditor.graph.localDepth` | `1` | BFS depth for local graph (1-3 hops) |
+
+### PDF Viewer Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `vscodeMdEditor.pdf.defaultZoom` | `"auto"` | Initial zoom when a PDF opens: `auto` (page width, never larger than actual size), `page-width`, `page-fit` or `actual`. A zoom you set while viewing is remembered for that tab |
 
 ### Office Viewer Settings
 

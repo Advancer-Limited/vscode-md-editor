@@ -408,13 +408,13 @@ No webview is needed to save when the state is empty or `materialised` is curren
 
 ### 7.2 Sidebar
 
-Collapsible, tabs as `role="tablist"`: **Thumbnails** (rendered lazily with an `IntersectionObserver`, one at a time, at most 200 kept; click or Enter goes to the page) · **Outline** (bookmarks from `getOutline()` as a `role="tree"`; a tab shown only when present) · **Comments** (every annotation that has text, existing and new, grouped by page; Enter goes to it; in Edit mode it is also where comments are edited and annotations deleted from the keyboard) · **Attachments** (only when `getAttachments()` returns any: name and size, "Save as…" through a host save dialog; never opened, never executed).
+Collapsible, tabs as `role="tablist"`: **Thumbnails** (rendered lazily with an `IntersectionObserver`, one at a time, at most 200 kept; click or Enter goes to the page) · **Outline** (bookmarks from `getOutline()` as a `role="tree"`; a tab shown only when present) · **Comments** (every annotation that has text, existing and new, grouped by page; Enter goes to it; in Edit mode it is also where comments are edited and annotations deleted from the keyboard) · **Attachments** (only when `getAttachments()` returns any: name and "Save as…" through a host save dialog; sizes are not listed up front because the byte length is only known after the content is read; never opened, never executed).
 
 "Document properties" (toolbar overflow): title, author, subject, keywords, creator, producer, created/modified, PDF version, page count, page size, file size, tagged, encrypted, signatures.
 
 ### 7.3 Text selection and copy
 
-pdf.js text layer; normal mouse selection; Ctrl+C sends the selection through `writeClipboard` (plain text). Select All selects the text of rendered pages only (a limitation of virtualised text layers; stated in the README). A file whose first pages contain no text (a scan) gets the notice "This PDF has no text layer (it looks like a scan). Selecting and searching text aren't available."
+pdf.js text layer; normal mouse selection; Ctrl+C sends the selection through `writeClipboard` (plain text). Select All selects the text of rendered pages only (a limitation of virtualised text layers; stated in the README). A file whose first pages contain no text (a scan) gets the notice "This PDF has no text layer (it may be a scan), so its text can't be selected or found." (wording as built in `factsNotices`)
 
 Permission flags of encrypted files (no-copy, no-print) are **not** enforced, as in pdf.js's own default; editing such files is refused for a different reason (§9.1).
 
