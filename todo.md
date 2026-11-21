@@ -325,6 +325,7 @@
   - [x] WP-08 Host shell
   - [x] WP-09 Common webview chrome
   - [x] WP-10 Word viewer
+    - [x] Review L: external links open once (link click stopped before VS Code's host page)
   - [x] WP-11 Xlsx read model
   - [x] WP-12 Xlsx styles and display formatting
   - [x] WP-13 Grid maths

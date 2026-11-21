@@ -1006,3 +1006,8 @@ Each fix is on the lowest branch owning the code, then merged up the stack with 
 - Writes at Global scope, preserves other keys; reports a workspace/folder override of the same pattern in an info message. Rows are offered only when their viewType is in `contributes.customEditors` (data-driven), so the PDF row can be added on the PDF branch without surfacing early.
 - `tests/office/_vscodeStub.cjs`: added `ConfigurationTarget`, `getConfiguration().inspect/update`, `window.showQuickPick` (queued answers), `state.inspected/updates/quickPicks`. Tests: `tests/office/editorAssociations.test.mjs`.
 - README (switching editors) and CHANGELOG Unreleased updated.
+### 2026-11-21 — Word edit review L: external links opened twice (feature/office-word-viewer)
+- **Bug:** `media/docxEditor.js` `onLinkClick` called `preventDefault()` and posted `openLink`, but VS Code's webview host page posts its own `did-click-link` for every `<a href>` click that reaches it, whatever `defaultPrevented` says, so an http/https/mailto link opened twice.
+- **Fix:** the link handler now runs in the capture phase on `#office-content` and also calls `stopPropagation()` for any non-empty href that is not `#…` (dropped schemes too, so the host page cannot open `file:` links either). Internal `#bookmark` links are unchanged.
+- **Test:** `docxViewer.test.js` link test asserts external clicks are stopped, `#` links and non-links are not.
+- The Excel viewer has no `<a href>` elements (cell links go through `handleLink` on Ctrl+click), so it needs no change.
