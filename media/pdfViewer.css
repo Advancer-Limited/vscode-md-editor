@@ -1,0 +1,183 @@
+/* PDF viewer (spec §7, §10.1): themed chrome and backdrop; the pages stay white paper as authored.
+   Loaded after pdfjs/pdf_viewer.css and officeCommon.css. Theme tokens only; colours appear solely
+   as var() fallbacks or system colours in the forced-colors block. No rule here is injected at run
+   time and nothing in media/pdf*.js sets a style attribute (the CSP has no 'unsafe-inline'). */
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+/* `hidden` must win over the display values below. */
+[hidden] { display: none !important; }
+
+.office-chrome { flex: 0 0 auto; }
+
+.office-app {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#office-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-contrastBorder, transparent));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
+.pdf-toolbar { flex: 1 1 auto; }
+
+.pdf-page-box { display: inline-flex; align-items: center; gap: 4px; }
+.pdf-page-input,
+.pdf-zoom-select,
+.pdf-password-input {
+  font: inherit;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, transparent);
+  border: 1px solid var(--vscode-input-border, var(--vscode-contrastBorder, transparent));
+  border-radius: 2px;
+  padding: 2px 4px;
+}
+.pdf-page-input { width: 4.5em; text-align: right; }
+.pdf-zoom-select {
+  color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+  background: var(--vscode-dropdown-background, var(--vscode-input-background, transparent));
+  border-color: var(--vscode-dropdown-border, var(--vscode-contrastBorder, transparent));
+}
+.pdf-page-input:focus-visible,
+.pdf-zoom-select:focus-visible,
+.pdf-password-input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.pdf-page-input:disabled,
+.pdf-zoom-select:disabled { opacity: 0.5; }
+.pdf-page-count { color: var(--vscode-descriptionForeground); white-space: nowrap; }
+
+.brand-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.85;
+}
+.brand-button:hover { background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
+.brand-button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.brand-button svg { display: block; }
+
+#office-banner:empty { display: none; }
+
+/* Themed backdrop; the sidebar and the page area share it. */
+.pdf-backdrop {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  background: var(--vscode-editorGroup-background, var(--vscode-editor-background));
+}
+.pdf-layout { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
+
+.pdf-sidebar {
+  flex: 0 0 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  border-right: 1px solid var(--vscode-panel-border, var(--vscode-contrastBorder, transparent));
+}
+.pdf-sidebar-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-contrastBorder, transparent));
+}
+.pdf-sidebar-tab {
+  font: inherit;
+  padding: 4px 10px;
+  color: var(--vscode-panelTitle-inactiveForeground, var(--vscode-foreground));
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.pdf-sidebar-tab[aria-selected="true"] {
+  color: var(--vscode-panelTitle-activeForeground, var(--vscode-foreground));
+  border-bottom-color: var(--vscode-panelTitle-activeBorder, var(--vscode-focusBorder));
+  font-weight: 600;
+}
+.pdf-sidebar-tab:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.pdf-sidebar-panels { flex: 1 1 auto; min-height: 0; position: relative; }
+.pdf-sidebar-panel { position: absolute; inset: 0; overflow: auto; }
+
+/* pdf.js requires its scroll container to be absolutely positioned. */
+.pdf-main { flex: 1 1 auto; min-width: 0; min-height: 0; position: relative; }
+.pdf-container { position: absolute; inset: 0; overflow: auto; }
+.pdf-container:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+
+/* Pages are paper: white, never inverted (pdf_viewer.css paints them; this only frames them). */
+.pdf-container .pdfViewer .page {
+  box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+}
+body.vscode-high-contrast .pdf-container .pdfViewer .page,
+body.vscode-high-contrast-light .pdf-container .pdfViewer .page {
+  box-shadow: none;
+  outline: 1px solid var(--vscode-contrastBorder);
+}
+
+/* §9.4: one page failed; the rest of the document works. */
+.pdf-page-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  color: var(--vscode-errorForeground, var(--vscode-foreground));
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+/* §9.1: password box in the page area. */
+.pdf-password {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 24px;
+  overflow: auto;
+  color: var(--vscode-foreground);
+}
+.pdf-password-label { font-size: 1.1em; font-weight: 600; }
+.pdf-password-input { width: 20em; max-width: 100%; box-sizing: border-box; padding: 4px 6px; }
+.pdf-password-input[aria-invalid="true"] { border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); }
+.pdf-password-error { color: var(--vscode-errorForeground, var(--vscode-foreground)); font-weight: 600; }
+.pdf-password-actions { display: flex; gap: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-container, .pdf-sidebar-panel { scroll-behavior: auto !important; }
+}
+
+@media (forced-colors: active) {
+  .pdf-container .pdfViewer .page { box-shadow: none; outline: 1px solid CanvasText; }
+  .pdf-sidebar, .pdf-sidebar-tabs { border-color: CanvasText; }
+  .pdf-sidebar-tab[aria-selected="true"] { border-bottom-color: Highlight; }
+  .pdf-page-input, .pdf-zoom-select, .pdf-password-input { border: 1px solid ButtonText; }
+  .pdf-page-error { color: CanvasText; background: Canvas; border: 1px solid CanvasText; }
+}
