@@ -19,7 +19,7 @@
     "url": "https://github.com/Advancer-Limited/vscode-md-editor/issues"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
     "Other"
@@ -101,6 +101,16 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.pdf",
+        "displayName": "PDF Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "commands": [
@@ -158,9 +168,29 @@
     "configuration": {
       "title": "VS Code MD Editor",
       "properties": {
+        "vscodeMdEditor.pdf.defaultZoom": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "page-width",
+            "page-fit",
+            "actual"
+          ],
+          "enumDescriptions": [
+            "Automatic: page width, but never larger than actual size.",
+            "Fit the page width to the window.",
+            "Fit the whole page in the window.",
+            "Show pages at actual size (100%)."
+          ],
+          "default": "auto",
+          "description": "Initial zoom when a PDF opens in the PDF Viewer. A zoom you set while viewing is remembered for that tab."
+        },
         "vscodeMdEditor.office.sheetAppearance": {
           "type": "string",
-          "enum": ["theme", "light"],
+          "enum": [
+            "theme",
+            "light"
+          ],
           "enumDescriptions": [
             "Follow the VS Code color theme.",
             "Always show the sheet on a light background, as authored."
@@ -290,9 +320,11 @@
     "test": "node esbuild.js --test-bundle && node --test \"tests/**/*.test.{js,mjs}\""
   },
   "devDependencies": {
+    "@cantoo/pdf-lib": "2.11.1",
+    "@hyzyla/pdfium": "3.0.0",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^20.19.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.95.0",
     "esbuild": "^0.28.0",
     "exceljs": "4.4.0",
     "saxes": "6.0.0",
@@ -307,6 +339,7 @@
     "markdown-it": "^14.3.2",
     "mermaid": "^12.1.0",
     "numfmt": "4.1.4",
+    "pdfjs-dist": "6.5.438",
     "three": "^0.185.1",
     "turndown": "^7.2.2"
   }

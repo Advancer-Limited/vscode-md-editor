@@ -55,7 +55,7 @@ Be respectful and constructive. We want this to be a welcoming project for every
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 18+ to build; **Node.js 22.13+ to run `npm test`** (pdf.js's `saveDocument()`, which the PDF writer, contract and verifier suites run, needs it). On an older Node those suites are skipped and `tests/pdf/nodeVersion.test.mjs` fails the run, so a green run always means they ran; set `PDF_TESTS_ALLOW_OLD_NODE=1` to accept a partial run knowingly.
 - VS Code 1.85+
 
 ### Build Commands

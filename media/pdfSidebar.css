@@ -1,0 +1,106 @@
+/* PDF sidebar panels and the properties dialog (spec §7.2, §10.1). Loaded after pdfViewer.css.
+   Theme tokens only; no style attribute is ever set by media/pdfSidebar.js (CSP). */
+
+/* thumbnails */
+.pdf-thumbs { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px; }
+.pdf-thumb {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 3px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.pdf-thumb[aria-current="page"] { border-color: var(--vscode-focusBorder, Highlight); }
+.pdf-thumb:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.pdf-thumb-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  min-height: 124px;
+  background: var(--vscode-editorWidget-background, transparent);
+}
+.pdf-thumb-canvas { display: block; max-width: 96px; height: auto; background: #fff; box-shadow: 0 1px 3px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35)); }
+.pdf-thumb-label { font-size: 0.9em; }
+
+/* outline */
+.pdf-outline { padding: 4px 0; }
+.pdf-outline-item { outline: none; }
+.pdf-outline-row { display: flex; align-items: baseline; gap: 2px; padding: 2px 6px; cursor: pointer; }
+.pdf-outline-row:hover { background: var(--vscode-list-hoverBackground); }
+.pdf-outline-item:focus-visible > .pdf-outline-row { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.pdf-outline-item[aria-selected="true"] > .pdf-outline-row { background: var(--vscode-list-inactiveSelectionBackground); }
+.pdf-outline-item[aria-selected="true"]:focus > .pdf-outline-row {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+.pdf-outline-twist { flex: 0 0 1em; text-align: center; }
+.pdf-outline-twist::before { content: "\25B8"; }
+.pdf-outline-item[aria-expanded="true"] > .pdf-outline-row > .pdf-outline-twist::before { content: "\25BE"; }
+.pdf-outline-leaf::before { content: "" !important; }
+.pdf-outline-title { overflow-wrap: anywhere; }
+.pdf-outline-bold { font-weight: 700; }
+.pdf-outline-italic { font-style: italic; }
+.pdf-outline-group { padding-left: 14px; }
+
+/* attachments */
+.pdf-attachments { list-style: none; margin: 0; padding: 4px 0; }
+.pdf-attachment { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; }
+.pdf-attachment-info { display: flex; flex-direction: column; min-width: 0; }
+.pdf-attachment-name { overflow-wrap: anywhere; }
+.pdf-attachment-size, .pdf-attachment-desc { color: var(--vscode-descriptionForeground, inherit); font-size: 0.9em; overflow-wrap: anywhere; }
+.pdf-attachment-save,
+.pdf-dialog-close {
+  font: inherit;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  padding: 3px 10px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.pdf-attachment-save:hover, .pdf-dialog-close:hover { background: var(--vscode-button-hoverBackground); }
+.pdf-attachment-save:disabled { opacity: 0.6; cursor: default; }
+.pdf-attachment-save:focus-visible, .pdf-dialog-close:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+
+/* properties dialog */
+.pdf-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+.pdf-dialog {
+  box-sizing: border-box;
+  max-width: min(36em, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 12px 16px;
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.5));
+}
+.pdf-dialog-title { margin: 0 0 8px; font-size: 1.1em; }
+.pdf-props { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 12px; }
+.pdf-props-name { color: var(--vscode-descriptionForeground, inherit); }
+.pdf-props-value { margin: 0; overflow-wrap: anywhere; }
+
+@media (forced-colors: active) {
+  .pdf-thumb[aria-current="page"] { border-color: Highlight; }
+  .pdf-outline-item[aria-selected="true"] > .pdf-outline-row { background: Highlight; color: HighlightText; }
+  .pdf-dialog { border-color: CanvasText; }
+  .pdf-attachment-save, .pdf-dialog-close { border-color: ButtonText; }
+}
+.pdf-thumbs-note,
+.pdf-outline-truncated { margin: 8px; font-size: 0.9em; color: var(--vscode-descriptionForeground); }

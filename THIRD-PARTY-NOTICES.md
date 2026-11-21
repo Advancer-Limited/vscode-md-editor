@@ -286,3 +286,21 @@ Apache License
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+## pdf.js (pdfjs-dist) 6.5.438
+
+- Licence: Apache-2.0
+- Copyright (c) Mozilla Foundation and contributors
+- Bundled into `media/pdfjs-bundle.js` (legacy display build and viewer components); worker, stylesheet and data files copied to `media/pdfjs/` (`pdf.worker.min.mjs`, `pdf_viewer.css`, `images/`, `cmaps/`, `standard_fonts/`, `iccs/`, `wasm/`)
+- Licence text: the Apache-2.0 text above (also shipped as `media/pdfjs/LICENSE`)
+- Not shipped: the JavaScript sandbox (`pdf.sandbox*`, `wasm/quickjs-eval.*`), `image_decoders/`, source maps, `*_nowasm_fallback.js`
+- Version policy: the pin moves only through the upgrade procedure in the PDF viewer spec (section 13.6), which also updates this entry
+
+Data files bundled with pdf.js, each shipped with its licence file beside it in `media/pdfjs/`:
+
+- `cmaps/`: Adobe CMap resources, BSD-3-Clause (`cmaps/LICENSE`)
+- `standard_fonts/`: Foxit fonts, BSD-3-Clause (`LICENSE_FOXIT`), and Liberation fonts, SIL Open Font License 1.1 (`LICENSE_LIBERATION`)
+- `wasm/openjpeg.wasm`: OpenJPEG, BSD-2-Clause (`LICENSE_OPENJPEG`, `LICENSE_PDFJS_OPENJPEG`)
+- `wasm/jbig2.wasm`: PDFium JBIG2 decoder, BSD-3-Clause (`LICENSE_JBIG2`, `LICENSE_PDFJS_JBIG2`)
+- `wasm/qcms_bg.wasm`: qcms colour management, MIT (`LICENSE_QCMS`, `LICENSE_PDFJS_QCMS`)
+- `iccs/`: ICC profile, CC0 1.0 (`iccs/LICENSE`)

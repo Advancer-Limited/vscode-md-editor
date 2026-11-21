@@ -1,0 +1,53 @@
+/* PDF find bar (PWP-10): a floating widget at the top right of the page area. */
+.pdf-find {
+  position: absolute;
+  top: 8px;
+  right: 24px;
+  z-index: 10;
+  max-width: calc(100% - 32px);
+  padding: 4px 6px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, var(--vscode-contrastBorder, transparent)));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+.pdf-find[hidden], .pdf-find-note[hidden] { display: none; }
+.pdf-find-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.pdf-find-input {
+  flex: 1 1 180px;
+  min-width: 120px;
+  font: inherit;
+  padding: 3px 6px;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, transparent);
+  border: 1px solid var(--vscode-input-border, var(--vscode-contrastBorder, transparent));
+}
+.pdf-find-input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.pdf-find-input[aria-invalid="true"] { border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); }
+.pdf-find-btn {
+  font: inherit;
+  min-width: 24px;
+  padding: 2px 6px;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.pdf-find-btn:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.pdf-find-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.pdf-find-btn:disabled { opacity: 0.5; cursor: default; }
+.pdf-find-btn[aria-pressed="true"] {
+  background: var(--vscode-inputOption-activeBackground, rgba(0, 120, 212, 0.35));
+  border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, transparent));
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+}
+.pdf-find-count { min-width: 90px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+.pdf-find-count.pdf-find-none { color: var(--vscode-errorForeground); }
+.pdf-find-note { margin-top: 4px; max-width: 420px; color: var(--vscode-descriptionForeground); }
+
+@media (forced-colors: active) {
+  .pdf-find, .pdf-find-input { border: 1px solid CanvasText; }
+  .pdf-find-btn[aria-pressed="true"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+}

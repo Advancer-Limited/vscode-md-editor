@@ -380,6 +380,39 @@
   - [ ] Gate R4
   - [ ] Gate R-final (Fable)
 - [ ] Post-v1: Excel range → Markdown table; Word → Markdown; Markdown → Word; Office files in wikilinks/graph
+## 2026-11-21 PDF viewer with basic editing (feature/pdf-viewer-docs)
+
+- [x] Read the Office spec, plan and gate checklist as the template; assess which Office code is reusable (chrome, common protocol, provider base: as is; `officeDocument.ts` save/undo/backup: after extracting a shared base)
+- [x] Check library claims against the published packages (pdfjs-dist 6.5.438, pdf-lib 1.17.1, @cantoo/pdf-lib 2.11.1) in a scratch install, including an incremental-save experiment under Node
+- [x] Write `docs/pdf-viewer-spec.md`
+- [x] Write `docs/pdf-viewer-plan.md`
+- [ ] User: answer open questions Q1-Q8 (spec section 16.2)
+- [ ] User: supply ten everyday PDFs for the spike corpus and the PENDING fixtures (spec section 13.3)
+- [ ] PR-P0 feature/pdf-viewer-docs -> develop (make sure `docs/**` is in `.vscodeignore` before any release)
+- [ ] Phase 0: PWP-01 spikes S1-S8, PWP-02 scaffolding, PWP-03 fixtures, Gate P0
+- [ ] Phase 1 (viewer): PWP-04 to PWP-12, Gate P1, viewer-first release
+- [ ] Phase 2 (edit core): PWP-13 to PWP-21, Gate P2 (independent review)
+- [ ] Phase 3 (annotations): PWP-22 to PWP-26, Gate P3, flip `pdfEdit`
+- [ ] Phase 4 (forms + release): PWP-27 to PWP-30, Gate P4, flip `pdfForms`, Gate P-final
+
+## PDF build (feature/pdf-base = Office viewers PR-5 + PDF docs; stacked because the user asked to build everything now)
+- [x] PWP-01 Spikes (spike/pdf-viewer; reader openings pending the user: spike/pdf/out/for-user/CHECKLIST.md)
+- [x] PWP-02 Scaffolding (pdfjs-dist 6.5.438, engines ^1.95.0, bundle + vendor, barrel, limits, smoke tests)
+- [x] PWP-04 Protocol (view half frozen, edit half draft; 172 tests)
+- [x] PWP-07 View maths (15 tests)
+- [x] PWP-03 Fixtures (26 committed; 8 PENDING user-supplied, see tests/fixtures/pdf/README.md)
+- [x] PWP-05 Host shell (PdfDocument, provider not registered, sniff, load errors, §12 CSP)
+- [x] PWP-06 Shared chrome ('pdf' kind)
+- [x] PWP-08 Viewer core (media/pdfViewer.js/.css, PdfViewerShell hooks; 57 tests; ran in an isolated dev host on 19 fixtures, 0 CSP violations)
+- [x] PWP-09 Sidebar (thumbnails, outline, attachments, properties)
+- [x] PWP-10 Find bar · PWP-11 Notices/registration (done: da390a5)
+- [x] PWP-12 Phase 1 docs: README PDF section, CHANGELOG, `docs/pdf-gate-checklist.md` (97 Gate P1 items)
+- [x] Host-log message for CSP violations / worker fallback (`pdfLog`, output channel)
+- [x] Independent review fixes: links opened once, find never disabled by the facts sample, outline/thumbnail caps, `pdfFacts.generation`, CSP form-action/base-uri, page-area role, error titles, dead worker replaced, macOS attachment check, worker no-eval smoke test
+- [ ] Office owner: `media/docxEditor.js` link click has the same double-open pattern (needs stopPropagation for external hrefs)
+- [x] PWP-11: emit data-default-zoom in bodyHtml
+- [ ] Merge note: PWP-05 generalised src/office/officeEditorProviderBase.ts (OfficeHostDocument, createDocument, bodyHtml(webview)); the Office editing branches also change that file, so expect a conflict when the PDF stack is rebased after Office
+- [ ] Decision: keep 100 MB PDF edit limit (save peak ~8x file size) or lower it
 
 ## Word editing, group D (feature/office-docx-model; started 2026-11-21 without the S3 result, using the documented Ctrl+Z fallback)
 - [x] WP-25 Docx block and segment model incl. table cells (`core/docx/model.ts`, 17 tests)
@@ -403,3 +436,23 @@
 - [ ] WP-34/35: keep Edit enabled for `tracked-changes-on` (host asks the Edit-anyway modal on `setEditMode`)
 - [ ] WP-30 follow-ups: allocate new numIds above any numId referenced by paragraphs (not only defined ones); check VSMDBullet/VSMDNumber names survive a Word re-save; remove the dead stub branch in the WP-29 dispatch test
 - [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)
+- [ ] Gate P1 (human): run `docs/pdf-gate-checklist.md` section 3 (about 2 h; item G2 is this one): check that a .pdf opened at window startup (command line / restored tab) opens in the PDF Viewer, not as text (seen once in the PWP-11 harness)
+- [ ] User: Gate P1 sweep; spike reader checks (`docs/pdf-gate-checklist.md` section 2); supply linearized/xfa/scanner/latex PDFs (then acrobat-* and certified for P3/P4)
+
+## PDF edit core (feature/pdf-edit-core)
+- [x] PWP-21 verify-pdf-open.mjs + PG6 helpers
+- [x] PWP-14 strict reader`n- [ ] PWP-15 edit state/geometry (done) · PWP-16 classification · PWP-17 storage adapter · PWP-18 verifier
+- [x] hybrid-xref.pdf fixed (generator bug)
+- [x] Hybrid-xref files (Word 'Save as PDF') editable (user decision; reader + spec updated)
+- [ ] PWP-13 (BinaryDocumentBase) waits for Office Gate R2
+
+- [ ] PWP-18/27: decide fields with /AA (pdf.js supersedes the AcroForm with /NeedAppearances) — recommend not fillable
+- [ ] Tagged PDFs: added annotations get no StructParent (accessibility gap; post-v1 or note in README)
+- [x] PWP-19 writer service
+- [ ] Gate P2/P3: real-window check that the viewed PDF still renders after several writes (writer uses its own Worker)
+- [x] PWP-27 form classification and field rules
+- [ ] PWP-29: protocol amendment so lockedFields carry a reason
+- [x] PWP-28 form verification rules + PG suites
+- [x] Edit-core independent review: B1 (PV5 bypass) + S1–S5 + nits N1–N10 fixed (`feature/pdf-core-fixes`)
+- [ ] Review residuals: user text containing object-boundary words refuses the save; widget appearance text not compared with /V
+- [ ] Remaining PDF editing (PWP-13 → 20, 22–26, 29, 30) blocked on Office Gate R2

@@ -12,20 +12,49 @@
 // `onDidChangeCustomDocument` is set at registration, so that getter is undefined while the kind's
 // edit flag is off: with the flags off VS Code sees exactly the Phase 1 read-only provider (no
 // dirty state, no Save As, no backups).
+//
+// The PDF viewer (src/pdf/pdfEditorProvider.ts) reuses this base with its own document class: the
+// base is generic over `OfficeHostDocument`, the read-only surface it needs (PWP-05 hook; the
+// default is OfficeDocument). The edit pipeline above (edit mode kept on the document, flushes,
+// save, backup) is OfficeDocument's; any other document keeps a per-panel edit mode and is never
+// editable through this base (the 'pdf' kind always registers read-only here).
 
 import * as vscode from 'vscode';
 import { getNonce } from '../utils.js';
 import { showAboutDialog } from '../about.js';
 import { OfficeDocument } from './officeDocument.js';
 import type { OfficeDocumentStateChange } from './officeDocument.js';
-import type { OfficeKind } from './core/package.js';
+import type { LoadErrorView } from './loadErrors.js';
 import type { EditBuilder } from './core/edits.js';
 import type { Validator } from './core/save.js';
 import { editFlagFor } from './featureFlags.js';
 import { parseCommonToHost } from './protocol.js';
 import type {
-  DocxToWebview, OfficeCommonToHost, OfficeError, OfficeNotice, XlsxToWebview,
+  DocxToWebview, OfficeCommonToHost, OfficeCommonToWebview, OfficeError, OfficeNotice, XlsxToWebview,
 } from './protocol.js';
+import type { PdfToWebview } from '../pdf/protocol.js';
+
+type InitMessage = Extract<OfficeCommonToWebview, { type: 'init' }>;
+/** Kinds served by this shell: the `init.kind` union. */
+export type ShellKind = InitMessage['kind'];
+
+/** What the shell needs from a document. OfficeDocument and PdfDocument both satisfy it. */
+export interface OfficeHostDocument extends vscode.CustomDocument {
+  readonly fileName: string;
+  readonly version: number;
+  readonly canEdit: boolean;
+  readonly readOnlyReason: InitMessage['readOnlyReason'];
+  readonly loadError: LoadErrorView | null;
+  readonly notices: OfficeNotice[];
+  readonly onDidChangeState: vscode.Event<OfficeDocumentStateChange>;
+  /** Re-read from disk (Retry); fires `reloaded` when it completes. */
+  reload(): Promise<void>;
+}
+
+/** The application named in "Open in …" messages. */
+function externalAppName(kind: ShellKind): string {
+  return kind === 'docx' ? 'Word' : kind === 'xlsx' ? 'Excel' : 'a PDF reader';
+}
 
 /** Schemes the host will open from a document link (spec §12). Everything else is dropped. */
 export const ALLOWED_LINK_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:', 'mailto:']);
@@ -57,13 +86,16 @@ export function officeCsp(cspSource: string, nonce: string, allowBlobAndData: bo
     + `img-src ${cspSource}${extra}; font-src ${cspSource}${extra};`;
 }
 
-const MEDIA_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/** A media file name, optionally in sub-folders (`pdfjs/pdf_viewer.css`); no segment starts with a dot. */
+const MEDIA_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 interface PanelState {
+  /** Edit mode of a document that does not keep its own (anything but OfficeDocument). */
+  editMode: boolean;
   showingError: boolean;
   /** The webview sent `ready` (it can answer `flushPendingEdits`). */
   ready: boolean;
@@ -74,19 +106,22 @@ interface PanelState {
 /** How long the link-blocked warning stays up. */
 export const LINK_BLOCKED_MS = 10_000;
 
-export abstract class OfficeEditorProviderBase implements vscode.CustomEditorProvider<OfficeDocument> {
-  protected abstract readonly kind: OfficeKind;
+export abstract class OfficeEditorProviderBase<D extends OfficeHostDocument = OfficeDocument>
+implements vscode.CustomEditorProvider<D> {
+  protected abstract readonly kind: ShellKind;
 
   private readonly panelStates = new WeakMap<vscode.WebviewPanel, PanelState>();
-  private readonly editEmitter = new vscode.EventEmitter<vscode.CustomDocumentEditEvent<OfficeDocument>>();
+  private readonly editEmitter = new vscode.EventEmitter<vscode.CustomDocumentEditEvent<D>>();
 
   /**
-   * Undefined while the kind's edit flag is off, so VS Code registers this provider as read-only
-   * (it looks at the property when `registerCustomEditorProvider` is called). The declared type
-   * says the event is always there because `CustomEditorProvider` requires it.
+   * Undefined while the kind's edit flag is off (and always for 'pdf', whose documents have no
+   * save pipeline here), so VS Code registers this provider as read-only (it looks at the property
+   * when `registerCustomEditorProvider` is called). The declared type says the event is always
+   * there because `CustomEditorProvider` requires it.
    */
-  get onDidChangeCustomDocument(): vscode.Event<vscode.CustomDocumentEditEvent<OfficeDocument>> {
-    return (editFlagFor(this.kind) ? this.editEmitter.event : undefined) as vscode.Event<vscode.CustomDocumentEditEvent<OfficeDocument>>;
+  get onDidChangeCustomDocument(): vscode.Event<vscode.CustomDocumentEditEvent<D>> {
+    const editable = this.kind !== 'pdf' && editFlagFor(this.kind);
+    return (editable ? this.editEmitter.event : undefined) as vscode.Event<vscode.CustomDocumentEditEvent<D>>;
   }
 
   constructor(protected readonly context: vscode.ExtensionContext) {}
@@ -96,15 +131,15 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
   /** Media file names of the stylesheets. */
   protected abstract styles(): string[];
   /** Static body markup. Must not contain document-derived text. */
-  protected abstract bodyHtml(): string;
+  protected abstract bodyHtml(webview: vscode.Webview): string;
   protected abstract csp(webview: vscode.Webview, nonce: string): string;
   /** After `init` was sent for a loaded document: send the first payload. */
-  protected abstract onReady(doc: OfficeDocument, panel: vscode.WebviewPanel): void;
+  protected abstract onReady(doc: D, panel: vscode.WebviewPanel): void;
   /** A message that is not a well-formed common message. Validate with the kind's parser. */
-  protected abstract onMessage(doc: OfficeDocument, panel: vscode.WebviewPanel, raw: unknown): void;
+  protected abstract onMessage(doc: D, panel: vscode.WebviewPanel, raw: unknown): void;
 
   /** After the document reloaded (and `init` was re-sent): tell the webview its state changed. */
-  protected onReloaded(_doc: OfficeDocument, _panel: vscode.WebviewPanel): void {
+  protected onReloaded(_doc: D, _panel: vscode.WebviewPanel): void {
     // kind providers post their `…StateChanged`
   }
 
@@ -113,12 +148,12 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
    * to `onReloaded` (both post the kind's `…StateChanged`); kinds with caches over the package
    * override it (WP-23, WP-33).
    */
-  protected onEdited(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+  protected onEdited(doc: D, panel: vscode.WebviewPanel): void {
     this.onReloaded(doc, panel);
   }
 
   /** Kind-specific notices added to the document's host notices (WP-10, WP-14). */
-  protected kindNotices(_doc: OfficeDocument): OfficeNotice[] {
+  protected kindNotices(_doc: D): OfficeNotice[] {
     return [];
   }
 
@@ -138,13 +173,25 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
    * Called before a `setEditMode` request is applied. A kind may lift a read-only reason here (Word's
    * "Edit anyway" for Track Changes, §8.7) and re-send state; the default does nothing.
    */
-  protected async beforeSetEditMode(_doc: OfficeDocument, _panel: vscode.WebviewPanel, _editMode: boolean): Promise<void> {
+  protected async beforeSetEditMode(_doc: D, _panel: vscode.WebviewPanel, _editMode: boolean): Promise<void> {
     // nothing
   }
 
   /** `vscodeMdEditor.office.startInEditMode` (§4.1, §6.4). */
   protected startInEditMode(): boolean {
     return vscode.workspace.getConfiguration('vscodeMdEditor.office').get<boolean>('startInEditMode', false) === true;
+  }
+
+  /** The document as an OfficeDocument (edit mode, flushes, save pipeline), or null (PDF). */
+  private static officeDoc(doc: OfficeHostDocument): OfficeDocument | null {
+    return doc instanceof OfficeDocument ? doc : null;
+  }
+
+  /** The OfficeDocument behind a save/revert/backup call. Only Office documents are ever editable here. */
+  private static editableDoc(doc: OfficeHostDocument): OfficeDocument {
+    const office = OfficeEditorProviderBase.officeDoc(doc);
+    if (!office) throw new Error('This document cannot be saved by this editor.');
+    return office;
   }
 
   // -------------------------------------------------------------------------------------------
@@ -154,39 +201,46 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     uri: vscode.Uri,
     openContext: vscode.CustomDocumentOpenContext,
     _token: vscode.CancellationToken,
-  ): Promise<OfficeDocument> {
+  ): Promise<D> {
     // untitledDocumentData is ignored: no "new file" support in v1 (§6.1).
+    return this.createDocument(uri, openContext.backupId);
+  }
+
+  /** Open the kind's document. Never throws for bad content. The default serves Word and Excel. */
+  protected async createDocument(uri: vscode.Uri, backupId: string | undefined): Promise<D> {
+    if (this.kind === 'pdf') throw new Error('PDF providers must override createDocument');
     const prepare = this.beforeFirstSerialize;
-    const doc = await OfficeDocument.create(uri, this.kind, openContext.backupId, {
+    const doc = await OfficeDocument.create(uri, this.kind, backupId, {
       validators: () => this.validators(),
       beforeFirstSerialize: prepare ? (b) => prepare.call(this, b) : undefined,
       startInEditMode: () => this.startInEditMode(),
     });
+    const hostDoc = doc as unknown as D;
     // The document's emitter is disposed with it, which drops this listener.
-    doc.onDidEdit((e) => this.editEmitter.fire({ document: doc, label: e.label, undo: e.undo, redo: e.redo }));
-    return doc;
+    doc.onDidEdit((e) => this.editEmitter.fire({ document: hostDoc, label: e.label, undo: e.undo, redo: e.redo }));
+    return hostDoc;
   }
 
-  saveCustomDocument(doc: OfficeDocument, cancellation: vscode.CancellationToken): Promise<void> {
-    return doc.save(cancellation);
+  saveCustomDocument(doc: D, cancellation: vscode.CancellationToken): Promise<void> {
+    return OfficeEditorProviderBase.editableDoc(doc).save(cancellation);
   }
 
-  saveCustomDocumentAs(doc: OfficeDocument, destination: vscode.Uri, cancellation: vscode.CancellationToken): Promise<void> {
-    return doc.saveAs(destination, cancellation);
+  saveCustomDocumentAs(doc: D, destination: vscode.Uri, cancellation: vscode.CancellationToken): Promise<void> {
+    return OfficeEditorProviderBase.editableDoc(doc).saveAs(destination, cancellation);
   }
 
-  revertCustomDocument(doc: OfficeDocument, cancellation: vscode.CancellationToken): Promise<void> {
-    return doc.revert(cancellation);
+  revertCustomDocument(doc: D, cancellation: vscode.CancellationToken): Promise<void> {
+    return OfficeEditorProviderBase.editableDoc(doc).revert(cancellation);
   }
 
   backupCustomDocument(
-    doc: OfficeDocument, context: vscode.CustomDocumentBackupContext, cancellation: vscode.CancellationToken,
+    doc: D, context: vscode.CustomDocumentBackupContext, cancellation: vscode.CancellationToken,
   ): Promise<vscode.CustomDocumentBackup> {
-    return doc.backup(context.destination, cancellation);
+    return OfficeEditorProviderBase.editableDoc(doc).backup(context.destination, cancellation);
   }
 
   async resolveCustomEditor(
-    doc: OfficeDocument,
+    doc: D,
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
@@ -195,18 +249,21 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
     };
     panel.webview.html = this.buildHtml(panel.webview);
-    const state: PanelState = { showingError: false, ready: false };
+    const state: PanelState = { editMode: false, showingError: false, ready: false };
     this.panelStates.set(panel, state);
 
     const subs: vscode.Disposable[] = [
       panel.webview.onDidReceiveMessage((raw: unknown) => this.dispatch(doc, panel, raw)),
       doc.onDidChangeState((e) => this.onDocumentState(doc, panel, e)),
-      doc.addFlushTarget((flushId) => {
+    ];
+    const office = OfficeEditorProviderBase.officeDoc(doc);
+    if (office) {
+      subs.push(office.addFlushTarget((flushId) => {
         if (!state.ready || state.showingError) return false;   // nothing can be pending there
         this.post(panel, { type: 'flushPendingEdits', flushId });
         return true;
-      }),
-    ];
+      }));
+    }
     panel.onDidDispose(() => {
       for (const s of subs) s.dispose();
       const st = this.panelStates.get(panel);
@@ -218,7 +275,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
   // -------------------------------------------------------------------------------------------
   // Messages
 
-  protected post(panel: vscode.WebviewPanel, msg: DocxToWebview | XlsxToWebview): void {
+  protected post(panel: vscode.WebviewPanel, msg: DocxToWebview | XlsxToWebview | PdfToWebview): void {
     try {
       panel.webview.postMessage(msg).then(undefined, () => { /* panel gone */ });
     } catch {
@@ -238,7 +295,6 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     }
   }
 
-  /** All notices to show: the document's host notices plus the kind's. */
   /**
    * Notices about this panel only (xlsx: a sheet that could not be displayed), kept when the
    * link-blocked warning is shown or dropped (review N7: its timer used to wipe them).
@@ -247,12 +303,16 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     return [];
   }
 
-  protected allNotices(doc: OfficeDocument): OfficeNotice[] {
-    return doc.pkg ? [...doc.notices, ...this.kindNotices(doc)] : [...doc.notices];
+  /** All notices to show: the document's host notices plus the kind's. */
+  protected allNotices(doc: D): OfficeNotice[] {
+    // An OfficeDocument's kind notices read its package, which is null after a failed load or dispose.
+    const office = OfficeEditorProviderBase.officeDoc(doc);
+    const loaded = office ? office.pkg !== null : !doc.loadError;
+    return loaded ? [...doc.notices, ...this.kindNotices(doc)] : [...doc.notices];
   }
 
   /** `loadError` when the document failed to load, else `init`. */
-  protected sendState(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+  protected sendState(doc: D, panel: vscode.WebviewPanel): void {
     const state = this.panelStates.get(panel);
     if (doc.loadError) {
       if (state) state.showingError = true;
@@ -261,7 +321,15 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
       return;
     }
     if (state) state.showingError = false;
-    if (!doc.canEdit) doc.setEditMode(false);
+    const office = OfficeEditorProviderBase.officeDoc(doc);
+    let editMode: boolean;
+    if (office) {
+      if (!office.canEdit) office.setEditMode(false);
+      editMode = office.editMode;
+    } else {
+      if (state && !doc.canEdit) state.editMode = false;
+      editMode = state?.editMode ?? false;
+    }
     this.post(panel, {
       type: 'init',
       kind: this.kind,
@@ -269,13 +337,13 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
       version: doc.version,
       canEdit: doc.canEdit,
       readOnlyReason: doc.readOnlyReason,
-      editMode: doc.editMode,
+      editMode,
       notices: this.allNotices(doc),
     });
   }
 
   /** Returns the handling promise so tests (and nothing else) can await it. */
-  private dispatch(doc: OfficeDocument, panel: vscode.WebviewPanel, raw: unknown): Promise<void> {
+  private dispatch(doc: D, panel: vscode.WebviewPanel, raw: unknown): Promise<void> {
     const common = parseCommonToHost(raw);
     if (common) {
       return this.handleCommon(doc, panel, common).catch((e) => {
@@ -290,7 +358,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     return Promise.resolve();
   }
 
-  private async handleCommon(doc: OfficeDocument, panel: vscode.WebviewPanel, msg: OfficeCommonToHost): Promise<void> {
+  private async handleCommon(doc: D, panel: vscode.WebviewPanel, msg: OfficeCommonToHost): Promise<void> {
     switch (msg.type) {
       case 'ready': {
         const state = this.panelStates.get(panel);
@@ -301,12 +369,20 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
       }
       case 'setEditMode': {
         await this.beforeSetEditMode(doc, panel, msg.editMode);
-        const editMode = doc.setEditMode(msg.editMode);
+        const office = OfficeEditorProviderBase.officeDoc(doc);
+        let editMode: boolean;
+        if (office) {
+          editMode = office.setEditMode(msg.editMode);
+        } else {
+          const state = this.panelStates.get(panel);
+          editMode = msg.editMode && doc.canEdit;
+          if (state) state.editMode = editMode;
+        }
         this.post(panel, { type: 'editModeChanged', editMode });
         return;
       }
       case 'flushed':
-        doc.flushed(msg.flushId);
+        OfficeEditorProviderBase.officeDoc(doc)?.flushed(msg.flushId);   // only Office documents ask for flushes
         return;
       case 'openLink':
         await this.openLink(doc, panel, msg.href);
@@ -331,7 +407,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
   }
 
   /** §12: only http/https/mailto, through openExternal (which applies VS Code's trusted-domain prompt). */
-  private async openLink(doc: OfficeDocument, panel: vscode.WebviewPanel, href: string): Promise<void> {
+  private async openLink(doc: D, panel: vscode.WebviewPanel, href: string): Promise<void> {
     const state = this.panelStates.get(panel);
     const url = allowedExternalLink(href);
     if (!url) {
@@ -350,7 +426,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
   }
 
   /** Re-post the notices without the link-blocked warning, if it is showing. */
-  private clearLinkBlocked(doc: OfficeDocument, panel: vscode.WebviewPanel): void {
+  private clearLinkBlocked(doc: D, panel: vscode.WebviewPanel): void {
     const state = this.panelStates.get(panel);
     if (!state?.linkBlockedTimer) return;
     clearTimeout(state.linkBlockedTimer);
@@ -358,8 +434,8 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     if (!doc.loadError) this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), ...this.panelNotices(panel)] });
   }
 
-  private async openExternally(doc: OfficeDocument): Promise<void> {
-    const app = this.kind === 'docx' ? 'Word' : 'Excel';
+  private async openExternally(doc: D): Promise<void> {
+    const app = externalAppName(this.kind);
     if (doc.uri.scheme !== 'file') {
       void vscode.window.showInformationMessage(`Open in ${app} is only available for files on this computer.`);
       return;
@@ -375,7 +451,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     if (!ok) void vscode.window.showWarningMessage(`Couldn't open ${doc.fileName} in ${app}.`);
   }
 
-  private onDocumentState(doc: OfficeDocument, panel: vscode.WebviewPanel, e: OfficeDocumentStateChange): void {
+  private onDocumentState(doc: D, panel: vscode.WebviewPanel, e: OfficeDocumentStateChange): void {
     if (e.kind === 'notices') {
       if (!doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
       return;
@@ -399,10 +475,11 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
     const cacheBust = Date.now();
     const media = (file: string): string => {
       if (!MEDIA_FILE_RE.test(file)) throw new Error(`Invalid media file name: ${file}`);
-      const uri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', file));
+      const uri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', ...file.split('/')));
       return `${uri}?v=${cacheBust}`;
     };
-    const title = this.kind === 'docx' ? 'Word Document Viewer' : 'Excel Workbook Viewer';
+    const title = this.kind === 'docx' ? 'Word Document Viewer'
+      : this.kind === 'xlsx' ? 'Excel Workbook Viewer' : 'PDF Viewer';
     const styles = this.styles().map((f) => `  <link href="${media(f)}" rel="stylesheet">`).join('\n');
     const scripts = this.scripts().map((f) => `  <script nonce="${nonce}" src="${media(f)}"></script>`).join('\n');
     return /* html */ `<!DOCTYPE html>
@@ -415,7 +492,7 @@ ${styles}
   <title>${title}</title>
 </head>
 <body data-office-kind="${this.kind}">
-${this.bodyHtml()}
+${this.bodyHtml(webview)}
 ${scripts}
 </body>
 </html>`;
