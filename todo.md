@@ -350,7 +350,7 @@
   - [ ] WP-25 Docx block/segment model
   - [ ] WP-26 Docx styles + numbering, read side
   - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
-  - [ ] WP-28 Paragraph writer
+  - [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
   - [ ] WP-29 Paragraph structure ops
   - [ ] WP-30 Styles and lists, write side
   - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
@@ -376,7 +376,7 @@
 - [x] WP-26 Docx styles + numbering, read side (`core/docx/styles.ts`, `numbering.ts`, 13 tests)
 - [x] WP-32 Island DOM <-> segments (`media/docxIsland.js`, 60 tests)
 - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
-- [ ] WP-28 Paragraph writer
+- [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
 - [ ] WP-29 Paragraph structure ops
 - [ ] WP-30 Styles and lists, write side
 - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
@@ -385,3 +385,4 @@
 - [ ] WP-35 Word edit toolbar, shortcuts, CSS
 - [ ] Gate R3 (needs S3 result and the LibreOffice/Google/German fixtures)
 - [ ] WP-34/35: add `span[id^="__vsmd_"]{display:none}` to `media/docxEditor.css`; load `media/docxMap.js` in the docx webview; WP-33 sends `buildRenderCopyAsync` bytes with block infos
+- [ ] WP-29/33/34: call `model.refresh()` after finishing the builder; use `BuildOptions.omit` for split halves; rebuild the island when `commitParagraph` returns `changed:false, reinsertedAtoms:true`
