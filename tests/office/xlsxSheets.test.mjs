@@ -325,6 +325,26 @@ test('rename: formulas and names rewritten with quoting; touched set exact', asy
   assert.strictEqual(w.getWorksheet('Data 2024').getCell('A1').value !== undefined, true);
 });
 
+// Review B1 / S1: names Excel refuses bare in a reference (or that our validator refused) must be
+// written quoted; the outputs (tests/.out/xlsxSheets/rename-b1-*.xlsx) are opened in real Excel by
+// scripts/verify-office-open.ps1.
+test('B1: rename to non-ASCII and TRUE/FALSE names writes quoted references and saves', async () => {
+  const NAMES = ['€x', '€', '•a', 'a»b', '€1', '©', '£1', 'a¬b', '　', 'TRUE', 'FALSE', '\u{1F600}', 'a–b', 'a×b'];
+  for (const name of NAMES) {
+    const { wb, bytes } = load('formulas.xlsx');
+    await loadAll(wb);
+    const { edit, error } = op(wb, 'rename', byName(wb, 'Data'), name);
+    assert.ok(!error, `${name}: ${JSON.stringify(error)}`);
+    const tag = [...name].map((ch) => ch.codePointAt(0).toString(16)).join('_');
+    const after = await checkEdit(wb, edit, bytes, [WB, ...CALC, 'xl/worksheets/sheet1.xml', 'xl/worksheets/sheet2.xml', 'xl/worksheets/sheet4.xml'], `rename-b1-${tag}`);
+    const q = `'${name}'`;
+    const now = formulasOf(after);
+    assert.strictEqual(now['xl/worksheets/sheet1.xml!C2'], `'My Sheet'!A1+${q}!A2`, name);
+    assert.strictEqual(now['xl/worksheets/sheet4.xml!A4'], `SUM(${q}!A2:A10)`, name);
+    assert.ok(partText(after, WB).includes(`<definedName name="TaxRate">${q}!$G$1</definedName>`), `${name}: defined name quoted`);
+  }
+});
+
 test("rename: a quoted name with an apostrophe to a bare name, and a bare one to one with an apostrophe", async () => {
   {
     const { wb, bytes } = load('formulas.xlsx');

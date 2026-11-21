@@ -390,10 +390,38 @@ describe('formulaMentionsSheet', () => {
 describe('quoteSheetName', () => {
   const cases = [
     ['Sheet1', 'Sheet1'], ['Data', 'Data'], ['My Sheet', "'My Sheet'"], ["It's", "'It''s'"], ["O'Brien", "'O''Brien'"],
-    ['2024', "'2024'"], ['A1', "'A1'"], ['R1C1', "'R1C1'"], ['RC', "'RC'"], ['Données', 'Données'], ['a-b', "'a-b'"],
+    ['2024', "'2024'"], ['A1', "'A1'"], ['R1C1', "'R1C1'"], ['RC', "'RC'"], ['Données', "'Données'"], ['a-b', "'a-b'"],
     ['_x', '_x'], ['Q1.2024', 'Q1.2024'], ['(x)', "'(x)'"],
   ];
   for (const [name, expected] of cases) test(`${name} -> ${expected}`, () => assert.strictEqual(quoteSheetName(name), expected));
+});
+
+// Review B1: Excel refused these names unquoted (€x, €, •a, a»b, €1) or our validator refused them
+// (©, £1, a¬b, ideographic space, TRUE/FALSE), so a rename wrote an unopenable or unsaveable workbook.
+// Emoji, en dash and × were accepted unquoted by Excel; quoting them is accepted too.
+describe('B1: renaming to a non-ASCII or TRUE/FALSE name quotes the prefix and the result validates', () => {
+  const NAMES = ['€x', '€', '•a', 'a»b', '€1', '©', '£1', 'a¬b', '　', 'a　b', 'TRUE', 'FALSE', 'true', 'False',
+    '\u{1F600}', 'a–b', 'a×b', 'été', '日本', 'a b', '\\a', 'R2C3', 'rc', 'XFD1048576', 'A1', "It's"];
+  for (const name of NAMES) {
+    test(JSON.stringify(name), () => {
+      const q = (s) => `'${s.replace(/'/g, "''")}'`;
+      assert.strictEqual(quoteSheetName(name), q(name));
+      const out = renameSheetInFormula('Sheet1!A1+SUM(Sheet1:Sheet2!B1)', 'Sheet1', name);
+      assert.strictEqual(out, `${q(name)}!A1+SUM(${q(name + ':Sheet2')}!B1)`);
+      assert.deepStrictEqual(R.validateFormula(out), { ok: true }, out);
+      // Typed by hand without quotes it is refused (by the parser or with the "needs quotes" message).
+      // (A no-break space parses as the intersection operator, so `a b!A1` is a different formula.)
+      if (name.includes(' ')) return;
+      const bare = R.validateFormula(`${name}!A1`);
+      assert.strictEqual(bare.ok, false, `${name}!A1 must be refused`);
+    });
+  }
+  for (const name of ['Sheet1', 'Data', '_x', 'Q1.2024', 'Tax_2024', 'TRUEx', 'ABCD1']) {
+    test(`${name} stays bare`, () => {
+      assert.strictEqual(renameSheetInFormula('Sheet1!A1', 'Sheet1', name), `${name}!A1`);
+      assert.deepStrictEqual(R.validateFormula(`${name}!A1`), { ok: true });
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------------------------------
