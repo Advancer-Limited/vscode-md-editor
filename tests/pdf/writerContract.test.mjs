@@ -22,6 +22,8 @@ import { assertPg6 } from './_readers.mjs';
 
 const S = core.state;
 const SA = core.storageAdapter;
+const V = core.verify;
+const C = core.classify;
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(here, '..', '.out', 'pdf', 'writerContract');
@@ -685,6 +687,31 @@ async function contract(fx, name, ops, { inv: givenInv, needAppearances = false 
     else if (w.radioButton) assert.equal(w.fieldValue === w.buttonValue, value, `${fx}/${name}: radio ${id}`);
     else if (w.fieldType === 'Ch') assert.deepStrictEqual([].concat(w.fieldValue), [].concat(value), `${fx}/${name}: choice ${id}`);
     else assert.equal(w.fieldValue, value, `${fx}/${name}: text ${id}`);
+  }
+
+  // PWP-18: the host verifier (spec §6.5 PV1-PV6) accepts every real pdf.js output, with `observed` as the writer
+  // service reports it: pdf.js's count for each touched page (untouched pages: the classified count, which the PG6
+  // check below proves unchanged) and the read-back of each requested field.
+  const cls = C.classifySync(base);
+  assert.ok(cls.editable, `${fx}: classification refuses the base (${cls.detail})`);
+  const observed = {
+    pageCount: after.numPages,
+    annotsPerPage: cls.pages.map((pg, i) => (after.pages.has(i) ? after.pages.get(i).annots.length : pg.annots.length)),
+    fields: fieldEntries.map(([id]) => {
+      const w = after.pages.get(fieldPage.get(id)).annots.find((a) => a.id === id);
+      const value = w.checkBox ? w.fieldValue === w.exportValue : w.radioButton ? w.fieldValue === w.buttonValue
+        : w.fieldType === 'Ch' && Array.isArray(w.fieldValue) && !w.multiSelect ? w.fieldValue[0] : w.fieldValue;
+      return { ref: refOf(id), value };
+    }),
+  };
+  const verdict = V.verifySaveSync({ base, out, classification: cls, state: s, author: 'Contract Tester', observed });
+  if (needAppearances) {
+    // Decision (PWP-18): PV4 keeps the AcroForm row strict (`ACROFORM_SUPERSEDE_RULE` = null) until PWP-27.
+    assert.ok(verdict.findings.some((f) => f.check === 'PV4' && f.code === 'acroform-superseded'), `${fx}/${name}: expected acroform-superseded
+${V.formatFindings(verdict)}`);
+  } else {
+    assert.ok(verdict.ok, `${fx}/${name}: verifier refused a real pdf.js output
+${V.formatFindings(verdict)}`);
   }
 
   // PDFium and pdf-lib: the same counts and annotations.
