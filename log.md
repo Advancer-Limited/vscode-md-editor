@@ -1508,3 +1508,8 @@ Documents only; nothing implemented. New: `docs/pptx-viewer-spec.md`, `docs/pptx
 
 - User answered spec §15.2: Q1 (a) open-source renderer, Q2 (a) all six file types, Q3 (b) no Present mode in v1 (XWP-16 moves to post-v1), Q4 (a) hold the registration PR until Gate X2. Files: `docs/pptx-viewer-spec.md`, `docs/pptx-viewer-plan.md`, `log.md`.
 
+
+## 2026-11-21 — Release 1.6.0 version bump
+
+- `npm version 1.6.0` (package.json, package-lock.json). CHANGELOG already has `[1.6.0] - 2026-11-21`. Marketplace was at 1.5.0.
+

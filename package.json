@@ -2,7 +2,7 @@
   "name": "vscode-md-editor",
   "displayName": "MD Editor & Office Viewer: Markdown, Word, Excel, PDF",
   "description": "Edit Markdown, view and edit Word and Excel files, and read PDFs in VS Code, with Mermaid diagrams, wikilinks, a link graph and grammar checking.",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "license": "MIT",
   "author": {
     "name": "Advancer Limited",
