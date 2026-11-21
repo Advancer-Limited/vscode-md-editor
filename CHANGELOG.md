@@ -212,6 +212,6 @@ First release.
 - A formatting toolbar for bold, italic, headings, links, images, code, lists and quotes.
 - `[[Wikilinks]]` with autocomplete suggestions.
 - A Markdown sidebar listing files with their incoming and outgoing links.
-- A full-screen interactive link graph with Obsidian-style controls.
+- A full-screen interactive link graph with filter and display controls.
 - Grammar and spelling checking with LanguageTool, with inline highlights and quick fixes, checked as you type.
 - Renaming a Markdown file updates all `[[wikilink]]` references to it.

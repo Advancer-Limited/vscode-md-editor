@@ -23,7 +23,6 @@
   },
   "categories": [
     "Visualization",
-    "Formatters",
     "Other"
   ],
   "keywords": [
@@ -50,7 +49,7 @@
     "grammar",
     "languagetool",
     "diagram",
-    "obsidian",
+    "notes",
     "backlinks",
     "knowledge graph",
     "word editor",

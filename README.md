@@ -20,7 +20,7 @@ One extension for the documents you work with every day. Write rich **Markdown**
 2. Open a file. `.md`, `.markdown`, `.mmd`, `.mermaid`, `.gltf`, `.docx`, `.xlsx` and `.pdf` files open in this extension's editors automatically.
 3. Word and Excel files open in **View** mode so that looking at a file never changes it. Click **Edit** in the toolbar (or press **Ctrl+E**, **Cmd+E** on macOS) to start editing, then save as usual with Ctrl+S.
 
-The Activity Bar icon (the Advancer "A") opens a sidebar listing your Markdown and Mermaid files, with backlinks and a button for the link graph.
+The Activity Bar icon (the Advancer "A") opens the **MD & MMD Editor** sidebar, which lists your Markdown and Mermaid files, with backlinks and a button for the link graph.
 
 **Requires VS Code 1.95 or newer.**
 
@@ -37,18 +37,18 @@ Open any `.md` file. Use the toolbar for bold, italic, headings, links, images, 
 
 ### Wikilinks and the link graph
 
-Type `[[` to link to another Markdown file, with autocomplete. Use `[[file|display text]]` to show different text. Renaming a file updates its links across your workspace.
+In the **Raw** or **Split** view, type `[[` to link to another Markdown file and pick it from the autocomplete list. In the **Edit** view, use the **Insert Link** button on the toolbar to choose the file. Use `[[file|display text]]` to show different text. Renaming a file updates its links across your workspace.
 
-The sidebar lists your Markdown files with their incoming and outgoing links. **Show Graph** opens an interactive graph; **Open Full Graph** gives you a full-screen version with filters, display options and drag-to-pin.
+The **MD & MMD Editor** sidebar lists your Markdown files (with their incoming and outgoing links) and your Mermaid files. Its **Show Graph** button, or the **Open Full Graph** command, opens an interactive link graph with filters, display options and drag-to-pin.
 
 ### Word documents
 
-Word files open as pages. Zoom from 50% to 200% (or Fit width), search with Ctrl+F, and click links to open them. Press **Edit** (Ctrl+E) to change the document:
+Word files open as pages. Zoom from 50% to 200% (Ctrl+= and Ctrl+-, or Fit width), search with Ctrl+F, and click links to open them. Press **Edit** (Ctrl+E) to change the document:
 
 - Click a paragraph, or a paragraph inside a table cell, and type.
 - Ctrl+B, Ctrl+I and Ctrl+U for bold, italic and underline.
 - Ctrl+Alt+1 to 6 for Heading 1 to 6, Ctrl+Alt+0 for normal text.
-- Ctrl+Shift+8 for a bullet list, Ctrl+Shift+7 for a numbered list, Tab and Shift+Tab to change the list level.
+- Ctrl+Shift+8 for a bullet list, Ctrl+Shift+7 for a numbered list. Tab and Shift+Tab at the start of a list item change its level; in a table they move to the next or previous cell.
 - Enter splits a paragraph; Shift+Enter inserts a line break.
 - Undo and redo (Ctrl+Z, Ctrl+Y) work as they do anywhere else in VS Code.
 
@@ -142,8 +142,6 @@ Open Settings and search for **VS Code MD Editor**.
 
 | Setting | Default | What it does |
 | ------- | ------- | ------------ |
-| `vscodeMdEditor.graph.defaultMode` | `local` | Start the graph showing just the current note's links (`local`) or every note (`global`). |
-| `vscodeMdEditor.graph.localDepth` | `1` | How many links away from the current note the local graph reaches (1 to 3). |
 | `vscodeMdEditor.exclude` | `node_modules`, `.git`, `.claude/worktrees` | Folders the file lists and the link graph should ignore. Your `files.exclude` and `search.exclude` settings are respected too. |
 
 ## Commands
@@ -157,7 +155,8 @@ Open the Command Palette (Ctrl+Shift+P, Cmd+Shift+P on macOS) and type **Markdow
 | Set VS Code MD Editor as Default for .md and .markdown Files | Make this the default Markdown editor |
 | Check Grammar with LanguageTool | Check the current document now |
 | Compare with Previous Version / Compare with Commit... / Compare with Saved | Show what changed in a Markdown file |
-| Show Link Graph / Open Full Graph / Toggle Graph Mode (Local/Global) | Explore your notes as a graph |
+| Show Link Graph | Show the MD & MMD Editor sidebar |
+| Open Full Graph | Explore your notes as an interactive graph |
 
 ## Privacy
 
