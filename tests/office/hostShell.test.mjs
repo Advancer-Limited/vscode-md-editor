@@ -326,6 +326,74 @@ test('changed on disk while clean: reloads, bumps version and generation, posts 
   assert.ok(S.watchers[0].disposed);
 });
 
+test('a file over the size limit is refused from its stat, without being read', async () => {
+  const uri = vscode.Uri.file('/ws/huge.docx');
+  // Only stat sees this "file": a fake whose length is over the limit.
+  S.files.set(uri.toString(), { data: { length: core.limits.LIMITS.maxFileBytes + 1 }, mtime: 1000 });
+  const provider = new host.DocxEditorProvider(ctx);
+  const doc = await provider.openCustomDocument(uri, { backupId: undefined, untitledDocumentData: undefined }, token);
+  assert.strictEqual(doc.pkg, null);
+  assert.match(doc.loadError.title, /too large/);
+  assert.deepStrictEqual(S.reads, [], 'the bytes were never read');
+});
+
+test('the disk stamp is taken before the read: a write landing during the read still triggers a reload', async () => {
+  const uri = vscode.Uri.file('/ws/basic.docx');
+  S.writeFile(uri, fixture('basic.docx'), 1000);
+  const realRead = vscode.workspace.fs.readFile;
+  vscode.workspace.fs.readFile = async (u) => {
+    const data = await realRead(u);
+    S.writeFile(uri, fixture('rich.docx'), 2000);   // a writer finishes right after our read
+    vscode.workspace.fs.readFile = realRead;
+    return data;
+  };
+  try {
+    const provider = new host.DocxEditorProvider(ctx);
+    const doc = await provider.openCustomDocument(uri, { backupId: undefined, untitledDocumentData: undefined }, token);
+    assert.deepStrictEqual(doc.diskStamp, { mtime: 1000, size: fixture('basic.docx').length });
+    S.watchers[0].fireChange();
+    await waitFor(() => doc.version === 1, 'reload after the racing write');
+  } finally {
+    vscode.workspace.fs.readFile = realRead;
+  }
+});
+
+test('a name with glob characters is watched through its directory and filtered by URI', async () => {
+  const { doc, panel, uri } = await open('Budget [2024].docx', fixture('basic.docx'));
+  await panel.send({ type: 'ready' });
+  assert.strictEqual(S.watchers.length, 1);
+  assert.strictEqual(S.watchers[0].pattern.pattern, '*');
+  // Another file in the directory changing does nothing.
+  S.writeFile(uri, fixture('rich.docx'), 5000);
+  S.watchers[0].fireChange(vscode.Uri.file('/ws/other.docx'));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(doc.version, 0);
+  // The file itself changing reloads it.
+  S.watchers[0].fireChange(vscode.Uri.file('/ws/Budget [2024].docx'));
+  await waitFor(() => doc.version === 1, 'reload of the bracketed name');
+});
+
+test('the link-blocked warning is cleared when the next link opens', async () => {
+  const { panel } = await open('basic.docx', fixture('basic.docx'));
+  await panel.send({ type: 'ready' });
+  await panel.send({ type: 'openLink', href: 'javascript:alert(1)' });
+  assert.ok(panel.last('notices').notices.some((n) => n.code === 'link-blocked'));
+  await panel.send({ type: 'openLink', href: 'https://example.com/' });
+  assert.deepStrictEqual(panel.last('notices').notices, []);
+  // A further allowed link posts nothing more (nothing to clear).
+  const n = panel.sent.length;
+  await panel.send({ type: 'openLink', href: 'https://example.com/b' });
+  assert.strictEqual(panel.sent.length, n);
+});
+
+test('Open in Word in a remote window explains instead of opening a remote path locally', async () => {
+  const { panel } = await open('basic.docx', fixture('basic.docx'));
+  vscode.env.remoteName = 'ssh-remote';
+  await panel.send({ type: 'openExternally' });
+  assert.deepStrictEqual(S.opened, []);
+  assert.ok(S.messages.some((m) => m[0] === 'info' && /remote window/.test(m[1])));
+});
+
 test('changed on disk while dirty: warning notice, state left alone', async () => {
   const { doc, panel, uri } = await open('basic.docx', fixture('basic.docx'));
   await panel.send({ type: 'ready' });

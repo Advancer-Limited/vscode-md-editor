@@ -23,6 +23,7 @@ import type { XmlDoc, XmlElement, XmlNode } from '../xml.js';
 import { attr, child, childrenOf, escapeAttr, qnameAt, serialize, textContent } from '../xml.js';
 import type { EditBuilder } from '../edits.js';
 import { partNameFromTarget, readRelationships } from '../opc.js';
+import type { Relationship } from '../opc.js';
 import { LIMITS } from '../limits.js';
 import type { CellRead, CellValue, ColInfo, Range, RowInfo, TableInfo } from './types.js';
 import { decodeXstring, isMainNs, stringItemText } from './sharedStrings.js';
@@ -919,7 +920,7 @@ export class Sheet {
         const location = attr(el, '', 'location');
         let target: string | undefined;
         if (id !== undefined) {
-          rels ??= new Map(readRelationships(this.ctx.pkg, this.part).map((x) => [x.id, x.target]));
+          rels ??= new Map(safeRelationships(this.ctx.pkg, this.part).map((x) => [x.id, x.target]));
           target = rels.get(id);
         }
         if (location !== undefined && location !== '') target = (target ?? '') + '#' + location;
@@ -936,7 +937,7 @@ export class Sheet {
     const out: TableInfo[] = [];
     const tp = child(this.doc.root, this.ns, 'tableParts');
     if (tp) {
-      const rels = readRelationships(this.ctx.pkg, this.part);
+      const rels = safeRelationships(this.ctx.pkg, this.part);
       for (const el of childrenOf(tp, this.ns, 'tablePart')) {
         const id = attr(el, NS_R, 'id') ?? attr(el, NS_R_STRICT, 'id');
         const rel = id !== undefined ? rels.find((x) => x.id === id) : undefined;
@@ -945,7 +946,9 @@ export class Sheet {
         try { part = partNameFromTarget(this.part, rel.target); } catch { continue; }
         if (!this.ctx.pkg.has(part)) continue;
         const name = this.ctx.pkg.partNames().find((n) => n.toLowerCase() === part.toLowerCase()) ?? part;
-        const root = this.ctx.pkg.xml(name).root;
+        // A malformed table part is skipped, not fatal: tables only decorate the grid.
+        let root: XmlElement;
+        try { root = this.ctx.pkg.xml(name).root; } catch { continue; }
         if (root.local !== 'table' || !isMainNs(root.ns)) continue;
         const ref = attr(root, '', 'ref');
         const range = ref !== undefined ? a1ToRange(ref) : undefined;
@@ -981,6 +984,14 @@ function isNonEmpty(el: XmlElement, ns: string): boolean {
     if (g.type === 'el' && g.ns === ns && (g.local === 'v' || g.local === 'f' || g.local === 'is')) return true;
   }
   return false;
+}
+
+/**
+ * The part's relationships, or none when its .rels part is malformed. Used for decorations
+ * (hyperlinks, tables) so a damaged .rels cannot make every cell request fail.
+ */
+function safeRelationships(pkg: OfficePackage, part: string): Relationship[] {
+  try { return readRelationships(pkg, part); } catch { return []; }
 }
 
 /** Sort parallel arrays by column and drop duplicate columns (first occurrence wins). */
