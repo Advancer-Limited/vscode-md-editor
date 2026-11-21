@@ -12,6 +12,7 @@ export interface DocumentTypeDef {
 export const DOCUMENT_TYPES: readonly DocumentTypeDef[] = [
   { pattern: '*.docx', viewType: 'vscodeMdEditor.docx', label: 'Word Document Viewer' },
   { pattern: '*.xlsx', viewType: 'vscodeMdEditor.xlsx', label: 'Excel Workbook Viewer' },
+  { pattern: '*.pdf', viewType: 'vscodeMdEditor.pdf', label: 'PDF Viewer' },
 ];
 
 export type Associations = Record<string, string>;

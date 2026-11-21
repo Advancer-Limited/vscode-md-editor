@@ -1060,3 +1060,6 @@ Spike code and evidence live under `spike/pdf/` on this branch only (never merge
 - Writes at Global scope, preserves other keys; reports a workspace/folder override of the same pattern in an info message. Rows are offered only when their viewType is in `contributes.customEditors` (data-driven), so the PDF row can be added on the PDF branch without surfacing early.
 - `tests/office/_vscodeStub.cjs`: added `ConfigurationTarget`, `getConfiguration().inspect/update`, `window.showQuickPick` (queued answers), `state.inspected/updates/quickPicks`. Tests: `tests/office/editorAssociations.test.mjs`.
 - README (switching editors) and CHANGELOG Unreleased updated.
+
+### 2026-11-21 — PDF row in the editor-choice command (feature/pdf-base)
+- `src/office/editorAssociations.ts` `DOCUMENT_TYPES` gains `*.pdf` -> `vscodeMdEditor.pdf` ("PDF Viewer"); it is offered only when that viewType is in `contributes.customEditors` (PWP-11 registers it). Test in `tests/office/editorAssociations.test.mjs`.

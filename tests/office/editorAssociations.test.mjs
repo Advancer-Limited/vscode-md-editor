@@ -107,3 +107,12 @@ test('command: cancelling either step writes nothing; workspace override is repo
   assert.strictEqual(S.messages.filter((x) => x[0] === 'info').length, 2);
   assert.match(S.messages[1][1], /workspace/i);
 });
+
+test('PDF row is offered only once vscodeMdEditor.pdf is a contributed custom editor', () => {
+  const have = pkg.contributes.customEditors.map((e) => e.viewType);
+  const pdfContributed = have.includes('vscodeMdEditor.pdf');
+  assert.strictEqual(m.availableTypes(have).some((t) => t.pattern === '*.pdf'), pdfContributed);
+  assert.deepStrictEqual(m.availableTypes(['vscodeMdEditor.docx']).map((t) => t.pattern), ['*.docx']);
+  const withPdf = m.availableTypes([...have, 'vscodeMdEditor.pdf']).find((t) => t.pattern === '*.pdf');
+  assert.deepStrictEqual(withPdf && [withPdf.viewType, withPdf.label], ['vscodeMdEditor.pdf', 'PDF Viewer']);
+});
