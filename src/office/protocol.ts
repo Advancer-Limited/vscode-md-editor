@@ -46,6 +46,8 @@ export interface DocxBlockInfo {
 export interface DocxRunCss {
   color?: string; fontSizePt?: number; fontFamily?: string;
   highlight?: string; strike?: boolean; vertAlign?: 'super' | 'sub'; styleClass?: string;
+  /** The toggles the run itself sets (directly or through its character style); the others come from the paragraph's cascade. */
+  own?: ('b' | 'i' | 'u')[];
 }
 
 export type DocxSegment =

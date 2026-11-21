@@ -141,7 +141,7 @@ test('HTML: §12 CSP, nonce on every script, ?v= on every asset, media/ is the o
   assert.ok(!/connect-src|frame-src/.test(csp));
   const scripts = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1]);
   assert.deepStrictEqual(scripts.map((a) => /src="https:\/\/webview\/ext\/media\/([^?"]+)\?v=\d+"/.exec(a)?.[1]),
-    ['jszip.min.js', 'docx-preview.min.js', 'officeCommon.js', 'docxEditor.js']);
+    ['jszip.min.js', 'docx-preview.min.js', 'officeCommon.js', 'docxMap.js', 'docxIsland.js', 'docxEdit.js', 'docxEditor.js']);
   for (const a of scripts) assert.ok(a.includes(`nonce="${nonce}"`), a);
   const links = [...html.matchAll(/<link href="([^"]+)" rel="stylesheet">/g)].map((m) => m[1]);
   assert.strictEqual(links.length, 2);

@@ -353,15 +353,17 @@
 - [ ] Phase 3 — Word editing
   - [ ] WP-25 Docx block/segment model
   - [ ] WP-26 Docx styles + numbering, read side
-  - [ ] WP-27 Render copy + DOM mapping
-  - [ ] WP-28 Paragraph writer
-  - [ ] WP-29 Paragraph structure ops
-  - [ ] WP-30 Styles and lists, write side
-  - [ ] WP-31 Docx validators + protection detection
+  - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
+  - [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
+  - [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
+  - [x] WP-30 Styles and lists, write side (`stylesWrite.ts`: setStyle/setList/setListLevel; missing heading/List Paragraph styles and the numbering part created; 13 tests; 20/20 outputs open in Word)
+  - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
   - [ ] WP-32 Island DOM <-> segments
-  - [ ] WP-33 Docx provider edit path
-  - [ ] WP-34 Island controller and re-render scheduling
-  - [ ] WP-35 Word edit toolbar, shortcuts, CSS
+  - [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
+  - [x] WP-34 Island controller and re-render scheduling (`media/docxEdit.js`; detached render + DocxMap; marker CSS; scripts loaded; Edit stays available for tracked-changes-on; 35 tests)
+  - [x] WP-35 Word edit toolbar, shortcuts, CSS (38 tests; flag flip left for PR-11 after Gate R3)
+  - [x] Word editing review fixes (feature/office-docx-fixes): B1 typed text never lost, S1 forgiveness by identity, S2 commit timing, S3 keyboard access, S4 model view-only reasons, S5 cascade formatting, S6 pre-wrap, nits N1–N5, N7; L on feature/office-word-viewer
+    - [ ] B/I/U pressed state from table-style formatting (tblStylePr): not done, segment flags exclude it
   - [ ] Gate R3
 - [ ] Phase 4 — Excel structure (rows/columns/sheets)
   - [x] WP-36 Reference shifting
@@ -379,4 +381,25 @@
   - [ ] Gate R-final (Fable)
 - [ ] Post-v1: Excel range → Markdown table; Word → Markdown; Markdown → Word; Office files in wikilinks/graph
 
+## Word editing, group D (feature/office-docx-model; started 2026-11-21 without the S3 result, using the documented Ctrl+Z fallback)
+- [x] WP-25 Docx block and segment model incl. table cells (`core/docx/model.ts`, 17 tests)
+- [x] WP-26 Docx styles + numbering, read side (`core/docx/styles.ts`, `numbering.ts`, 13 tests)
+- [x] WP-32 Island DOM <-> segments (`media/docxIsland.js`, 60 tests)
+- [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
+- [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
+- [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
+- [x] WP-30 Styles and lists, write side (`stylesWrite.ts`: setStyle/setList/setListLevel; missing heading/List Paragraph styles and the numbering part created; 13 tests; 20/20 outputs open in Word)
+- [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
+- [x] WP-33 Docx provider edit path (render copy + blockInfos, block model, `docxEdit` via `applyDocxEdit`/`recordApplied`, protection and Edit-anyway modal; 14 tests; flag still off)
+- [x] WP-34 Island controller and re-render scheduling (`media/docxEdit.js`; detached render + DocxMap; marker CSS; scripts loaded; Edit stays available for tracked-changes-on; 35 tests)
+- [x] WP-35 Word edit toolbar, shortcuts, CSS (38 tests; flag flip left for PR-11 after Gate R3)
+- [ ] Gate R3 (needs S3 result and the LibreOffice/Google/German fixtures)
+- [ ] WP-34/35: add `span[id^="__vsmd_"]{display:none}` to `media/docxEditor.css`; load `media/docxMap.js` in the docx webview; WP-33 sends `buildRenderCopyAsync` bytes with block infos
+- [ ] WP-29/33/34: call `model.refresh()` after finishing the builder; use `BuildOptions.omit` for split halves; rebuild the island when `commitParagraph` returns `changed:false, reinsertedAtoms:true`
+- [ ] Make `prettyDocx()` (tests/office/_roundtrip.mjs) a package Word opens, or stop writing `pretty-edit.docx` to tests/.out for the Word check
+
+- [ ] Fold the WP-29 deviations (log.md 2026-11-21) into spec §8.5/§6.3
+- [ ] After WP-30 merges: add `setStyle`/`setList` cases to `docxEditWiring.test.mjs`
+- [ ] WP-34/35: keep Edit enabled for `tracked-changes-on` (host asks the Edit-anyway modal on `setEditMode`)
+- [ ] WP-30 follow-ups: allocate new numIds above any numId referenced by paragraphs (not only defined ones); check VSMDBullet/VSMDNumber names survive a Word re-save; remove the dead stub branch in the WP-29 dispatch test
 - [x] Command "Choose Editors for Office and PDF Files…" (`vscodeMdEditor.chooseDocumentEditors`): friendly front end to `workbench.editorAssociations` (feature/office-editor-choice; PDF row appears once `vscodeMdEditor.pdf` is contributed)

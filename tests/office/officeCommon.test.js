@@ -155,6 +155,21 @@ test('Edit toggle hidden when canEdit is false and shows the reason', () => {
   assert.strictEqual(reason.hidden, true);
 });
 
+test('tracked-changes-on keeps the Edit toggle and asks the host (Edit anyway); protected does not', () => {
+  const t = setup();
+  const edit = () => t.q((e) => e.getAttribute('title') === 'Edit (Ctrl+E)')[0];
+  t.OC.setInit(initMsg({ canEdit: false, readOnlyReason: 'tracked-changes-on' }));
+  assert.strictEqual(edit().hidden, false);
+  const before = t.posted.length;
+  edit().click();
+  assert.strictEqual(JSON.stringify(t.posted.slice(before)), JSON.stringify([{ type: 'setEditMode', editMode: true }]));
+  t.OC.setInit(initMsg({ canEdit: false, readOnlyReason: 'protected' }));
+  assert.strictEqual(edit().hidden, true);
+  const n = t.posted.length;
+  t.win.dispatch('keydown', { key: 'e', ctrlKey: true, preventDefault() {} });
+  assert.strictEqual(t.posted.length, n, 'protected never asks');
+});
+
 test('READ_ONLY_TEXT covers every ReadOnlyReason', () => {
   const reasons = ['view-mode', 'non-writable-scheme', 'too-large', 'protected', 'strict-ooxml',
     'unsupported-xml-layout', 'utf16-part', 'tracked-changes-on'];

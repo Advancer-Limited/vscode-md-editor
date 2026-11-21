@@ -134,6 +134,14 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
    */
   protected beforeFirstSerialize?(b: EditBuilder): void;
 
+  /**
+   * Called before a `setEditMode` request is applied. A kind may lift a read-only reason here (Word's
+   * "Edit anyway" for Track Changes, §8.7) and re-send state; the default does nothing.
+   */
+  protected async beforeSetEditMode(_doc: OfficeDocument, _panel: vscode.WebviewPanel, _editMode: boolean): Promise<void> {
+    // nothing
+  }
+
   /** `vscodeMdEditor.office.startInEditMode` (§4.1, §6.4). */
   protected startInEditMode(): boolean {
     return vscode.workspace.getConfiguration('vscodeMdEditor.office').get<boolean>('startInEditMode', false) === true;
@@ -292,6 +300,7 @@ export abstract class OfficeEditorProviderBase implements vscode.CustomEditorPro
         return;
       }
       case 'setEditMode': {
+        await this.beforeSetEditMode(doc, panel, msg.editMode);
         const editMode = doc.setEditMode(msg.editMode);
         this.post(panel, { type: 'editModeChanged', editMode });
         return;

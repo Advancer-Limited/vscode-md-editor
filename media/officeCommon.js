@@ -15,8 +15,12 @@
     'strict-ooxml': 'Read-only: this file uses Strict Open XML, which this editor cannot edit safely.',
     'unsupported-xml-layout': 'Read-only: this file uses an XML layout this editor cannot edit safely.',
     'utf16-part': 'Read-only: this file contains UTF-16 encoded parts this editor cannot edit safely.',
-    'tracked-changes-on': 'Read-only: Track Changes is on in this document. Turn it off in Word to edit it here.',
+    'tracked-changes-on': 'Read-only: Track Changes is on in this document. Press Edit to edit it anyway (changes will not be tracked).',
   };
+
+  /** A read-only reason the user can override from the Edit toggle (the host asks first, spec §8.7). */
+  const OVERRIDABLE = { 'tracked-changes-on': true };
+  function overridable() { return !state.canEdit && !!state.readOnlyReason && OVERRIDABLE[state.readOnlyReason] === true; }
 
   const EDIT_HINT = 'Press Edit (Ctrl+E) to make changes';
   const HINT_MS = 4000;
@@ -173,6 +177,12 @@
   function post(msg) { if (state.vscode) { state.vscode.postMessage(msg); } }
 
   function requestEditMode(editMode) {
+    if (!state.canEdit && editMode && overridable()) {
+      // The host shows the "Edit anyway" confirmation and, on accept, re-sends init with the reason lifted.
+      post({ type: 'setEditMode', editMode: true });
+      syncEditButton();
+      return;
+    }
     if (!state.canEdit) {
       // With a reason, say why editing is unavailable. Without one, this build has no editing at
       // all (no Edit button), so there is nothing to tell the user to press.
@@ -195,7 +205,7 @@
 
   function syncEditButton() {
     if (!state.editBtn) { return; }
-    state.editBtn.hidden = !state.canEdit;
+    state.editBtn.hidden = !state.canEdit && !overridable();
     state.editBtn.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
   }
 
