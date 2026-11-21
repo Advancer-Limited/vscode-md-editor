@@ -125,8 +125,17 @@
     function announce(text) { if (OC && OC.announce) { OC.announce(text); } }
     function setVersion(v) { if (typeof v === 'number' && Number.isFinite(v) && v > version) { version = v; } }
 
+    /** Tells the viewer its toolbar may be out of date (island opened/closed, blocks changed); coalesced. */
+    let changePending = false;
+    function changed() {
+      if (!hooks.onState || changePending) { return; }
+      changePending = true;
+      Promise.resolve().then(() => { changePending = false; hooks.onState(); });
+    }
+
     function setBlocks(list) {
       if (!Array.isArray(list)) { return; }
+      changed();
       blocks = list;
       info = new Map();
       for (const b of list) { if (b && typeof b.id === 'number') { info.set(b.id, b); } }
@@ -283,6 +292,7 @@
 
     /** After a swap: index the mapped <p>s, mark locked and editable ones, open a pending focus. */
     function onRendered(mapping, job) {
+      changed();
       byId = mapping && mapping.byId ? mapping.byId : new Map();
       if (job && Array.isArray(job.blocks) && job.blocks.length && (typeof job.version !== 'number' || job.version >= version)) {
         setBlocks(job.blocks);
@@ -435,6 +445,7 @@
       p.setAttribute('data-docx-island', '1');
       p.setAttribute('spellcheck', 'true');
       isl.suspended = false;
+      changed();
       if (typeof p.focus === 'function') { p.focus(); }
     }
 
@@ -449,12 +460,14 @@
       p.removeAttribute('spellcheck');
       if (isl.saved.role !== null) { p.setAttribute('role', isl.saved.role); } else { p.removeAttribute('role'); }
       if (isl.saved.level !== null) { p.setAttribute('aria-level', isl.saved.level); }
+      changed();
     }
 
     function suspend(isl) {
       if (isl.idleTimer !== null) { clearTimer(isl.idleTimer); isl.idleTimer = null; }
       isl.suspended = true;
       isl.p.setAttribute('contenteditable', 'false');
+      changed();
     }
 
     function resumeIsland(isl, at) {
@@ -560,6 +573,7 @@
       abandonQueue();
       if (renderTimer !== null) { clearTimer(renderTimer); renderTimer = null; }
       if (had && tell) { hint(DISCARDED); }
+      changed();
       return had;
     }
 
@@ -1006,6 +1020,7 @@
       const to = ev.relatedTarget;
       if (to && within(island.p, to)) { return; }
       if (to && hooks.toolbar && within(hooks.toolbar, to)) { return; }   // toolbar buttons act on the island
+      if (to && hooks.keepsIsland && hooks.keepsIsland(to)) { return; }   // so do the style and context menus
       if (doc.hasFocus && !doc.hasFocus()) { commit(); return; }        // window lost focus: keep it open
       closeIsland(true);
     }

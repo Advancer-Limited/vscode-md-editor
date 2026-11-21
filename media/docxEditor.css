@@ -95,7 +95,12 @@ body.vscode-high-contrast-light .docx-host .docx-wrapper > section.docx {
    (visible empty spans moved text by ~0.55 px); hidden ones are still found by id. */
 span[id^="__vsmd_"] { display: none; }
 
-/* The open paragraph island. Hover outline, lock styling and chips: WP-35. */
+/* Word editing chrome (spec §8.8, §11.1, §11.2; WP-35). The pages stay light paper; only the
+   editing affordances use theme tokens. Nothing relies on colour alone: locked paragraphs get a
+   dotted outline AND a "Locked" chip in the hover bar AND a tooltip. */
+.docx-backdrop { position: relative; }
+
+/* The open paragraph island. */
 .docx-host p[data-docx-island] {
   outline: 1px solid var(--vscode-focusBorder, #0078d4);
   outline-offset: 2px;
@@ -103,3 +108,135 @@ span[id^="__vsmd_"] { display: none; }
 }
 .docx-host p[data-docx-island]:focus { outline-width: 2px; }
 .docx-lock-descriptions { display: none; }
+
+/* Hover outline: editable paragraphs get a dashed outline in Edit mode, locked ones a dotted one. */
+.docx-backdrop[data-docx-edit="1"] .docx-host p[data-docx-editable]:not([data-docx-island]):hover {
+  outline: 1px dashed var(--vscode-focusBorder, #0078d4);
+  outline-offset: 2px;
+  cursor: text;
+}
+.docx-backdrop[data-docx-edit="1"] .docx-host p[data-docx-locked]:hover {
+  outline: 1px dotted var(--vscode-editorWarning-foreground, #b89500);
+  outline-offset: 2px;
+  cursor: not-allowed;
+}
+
+/* Focus ring on the table cell that holds the open island (in addition to the island's own outline). */
+.docx-backdrop[data-docx-edit="1"] .docx-host td:focus-within,
+.docx-backdrop[data-docx-edit="1"] .docx-host th:focus-within {
+  outline: 2px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: -2px;
+}
+
+/* Atom chips inside an island (images, fields, links, footnotes, breaks...): visible, read-only. */
+.docx-chip {
+  display: inline-block;
+  box-sizing: border-box;
+  margin: 0 1px;
+  padding: 0 6px;
+  border: 1px solid var(--vscode-contrastBorder, var(--vscode-badge-background, #4d4d4d));
+  border-radius: 3px;
+  background: var(--vscode-badge-background, #4d4d4d);
+  color: var(--vscode-badge-foreground, #ffffff);
+  font: 0.8em/1.5 var(--vscode-font-family, sans-serif);
+  vertical-align: baseline;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+.docx-chip-image::before { content: "\25A3\00a0"; }
+.docx-chip-footnote::before { content: "\2020\00a0"; }
+.docx-chip-field::before { content: "\2261\00a0"; }
+.docx-chip-hyperlink::before { content: "\2197\00a0"; }
+
+/* Hover actions (mouse path of Insert paragraph after / Remove paragraph; Shift+F10 is the keyboard path). */
+.docx-hover-actions {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 2px;
+  transform: translate(-100%, 0);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-contrastBorder, #454545));
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  font: 12px/1.4 var(--vscode-font-family, sans-serif);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.docx-hover-actions[hidden], .docx-hover-actions [hidden] { display: none; }
+.docx-lock-chip {
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.docx-lock-chip::before { content: "\1F512\00a0"; }
+.docx-hover-btn {
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.docx-hover-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.25)); }
+.docx-hover-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+
+/* Style picker and block context menu. */
+.docx-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, var(--vscode-contrastBorder, #454545)));
+  border-radius: 4px;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  font: var(--vscode-font-size, 13px) var(--vscode-font-family, sans-serif);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.docx-menu-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border: none;
+  padding: 4px 16px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.docx-menu-item:hover,
+.docx-menu-item:focus {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-menu-selectionForeground, inherit);
+  outline: none;
+}
+.docx-menu-item:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.docx-menu-item[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.docx-menu-item[aria-checked="true"] .docx-menu-label::before { content: "\2713\00a0"; }
+.docx-menu-key { color: var(--vscode-descriptionForeground); }
+
+body.vscode-high-contrast .docx-menu,
+body.vscode-high-contrast-light .docx-menu,
+body.vscode-high-contrast .docx-hover-actions,
+body.vscode-high-contrast-light .docx-hover-actions {
+  border-color: var(--vscode-contrastBorder, currentColor);
+}
+
+@media (forced-colors: active) {
+  .docx-backdrop[data-docx-edit="1"] .docx-host p[data-docx-editable]:not([data-docx-island]):hover { outline: 1px dashed Highlight; }
+  .docx-backdrop[data-docx-edit="1"] .docx-host p[data-docx-locked]:hover { outline: 1px dotted GrayText; }
+  .docx-host p[data-docx-island], .docx-host td:focus-within { outline-color: Highlight; }
+  .docx-chip { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
+  .docx-hover-actions, .docx-menu { background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none; }
+  .docx-menu-item:hover, .docx-menu-item:focus { background: Highlight; color: HighlightText; }
+  .docx-menu-key { color: inherit; }
+  .docx-lock-chip { border-color: CanvasText; }
+}
