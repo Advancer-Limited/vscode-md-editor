@@ -57,7 +57,9 @@ export type PdfEditOp =
   | { op: 'addAnnotation'; spec: PdfAnnotSpec }
   | { op: 'updateAnnotation'; localId: number; patch: { comment?: string; color?: PdfColor } }  // session-created only
   | { op: 'removeAnnotation'; target: { localId: number } | { ref: PdfObjRef } }
-  | { op: 'setFields'; values: Array<{ ref: PdfObjRef; value: PdfFieldValue }> };
+  // `loaded`: the field's value when the generation was loaded, sent with the first change to a field;
+  // the host uses it only to drop a value set back to it (spec §6.3). Amendment 2026-11-21 (PWP-15).
+  | { op: 'setFields'; values: Array<{ ref: PdfObjRef; value: PdfFieldValue; loaded?: PdfFieldValue }> };
 
 export interface PdfStateView {                                 // what the webview draws
   version: number;
@@ -263,7 +265,16 @@ function parseEditOp(v: unknown): PdfEditOp | null {
     }
     case 'setFields': {
       const values = parseFields(v.values, L.MAX_FIELDS_PER_SET);
-      return values && values.length > 0 ? { op: 'setFields', values } : null;
+      if (!values || values.length === 0) return null;
+      const out: Array<{ ref: PdfObjRef; value: PdfFieldValue; loaded?: PdfFieldValue }> = [];
+      for (let i = 0; i < values.length; i++) {
+        const raw = (v.values as unknown[])[i] as Rec;
+        if (raw.loaded === undefined) { out.push(values[i]); continue; }
+        const loaded = parseFieldValue(raw.loaded);
+        if (loaded === null) return null;
+        out.push({ ...values[i], loaded });
+      }
+      return { op: 'setFields', values: out };
     }
     default: return null;
   }

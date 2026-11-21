@@ -52,6 +52,7 @@ const ok = [
   edit({ op: 'removeAnnotation', target: { localId: 3 } }),
   edit({ op: 'removeAnnotation', target: { ref } }),
   edit({ op: 'setFields', values: [{ ref, value: 'text' }, { ref, value: true }, { ref, value: ['a', 'b'] }, { ref, value: [] }, { ref, value: '' }] }),
+  edit({ op: 'setFields', values: [{ ref, value: 'new', loaded: 'old' }, { ref, value: true, loaded: false }, { ref, value: ['a'], loaded: [] }] }),
   wr(),
   { type: 'pdfWriteResult', requestId: 1, ok: false, message: 'boom' },
 ];
@@ -212,6 +213,9 @@ const bad = {
   'fields text too long': edit({ op: 'setFields', values: [{ ref, value: big(L.MAX_TEXT_VALUE + 1) }] }),
   'fields array with number': edit({ op: 'setFields', values: [{ ref, value: ['a', 1] }] }),
   'fields array item too long': edit({ op: 'setFields', values: [{ ref, value: [big(L.MAX_TEXT_VALUE + 1)] }] }),
+  'fields loaded number': edit({ op: 'setFields', values: [{ ref, value: 'a', loaded: 5 }] }),
+  'fields loaded null': edit({ op: 'setFields', values: [{ ref, value: 'a', loaded: null }] }),
+  'fields loaded too long': edit({ op: 'setFields', values: [{ ref, value: 'a', loaded: big(L.MAX_TEXT_VALUE + 1) }] }),
   'fields array too many items': edit({ op: 'setFields', values: [{ ref, value: many(L.MAX_CHOICE_VALUES + 1, () => 'a') }] }),
   // pdfWriteResult
   'write no requestId': wr({ requestId: undefined }),
