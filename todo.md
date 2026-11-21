@@ -332,6 +332,7 @@
   - [x] WP-15 Grid component
   - [x] WP-16 Excel viewer shell
   - [x] WP-17 Phase 1 docs and gate run
+  - [x] Independent review of PRs #85/#88/#89/#90 fixed: B1, S1–S7, S9 and the cheap nits (S8 left for the user to check in a live window)
   - [ ] Gate R1 — automated checks green (WP-17); human checks in `docs/office-gate-checklist.md` section 3 (57 R1 items incl. setup and S3, ~50 min for the must items) are waiting on the user
   - [x] Follow-up: synthetic fixtures for a hidden or very hidden sheet, a chartsheet and a damaged sheet part (make-synthetic.mjs, no COM)
   - [ ] Note: small `.gltf`/`.mmd` samples for the regression checks are still to do

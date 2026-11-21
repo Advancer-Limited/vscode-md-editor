@@ -14,7 +14,7 @@ import { getBrandButtonHtml } from '../utils.js';
 import { OfficeEditorProviderBase, officeCsp } from './officeEditorProviderBase.js';
 import type { OfficeDocument } from './officeDocument.js';
 import { parseXlsxToHost } from './protocol.js';
-import type { OfficeError, OfficeNotice, XlsxEditOp, XlsxSheetInfo, XlsxToHost } from './protocol.js';
+import type { OfficeError, OfficeNotice, XlsxEditOp, XlsxSheetInfo, XlsxSheetMeta, XlsxToHost } from './protocol.js';
 import type { OfficePackage } from './core/package.js';
 import { OfficeLoadError } from './core/sniff.js';
 import { attr, child } from './core/xml.js';
@@ -24,7 +24,7 @@ import { StyleTable } from './core/xlsx/styles.js';
 import { editSeed } from './core/xlsx/format.js';
 import { applyXlsxEdit, refreshAfterEdit } from './core/xlsx/ops.js';
 import { displayFormula } from './core/xlsx/sharedFormula.js';
-import { cellWindow, clampRange, sheetMeta, toTsv } from './core/xlsx/view.js';
+import { CopyTooLargeError, TSV_MAX_CELLS, cellWindow, clampRange, sheetMeta, toTsv } from './core/xlsx/view.js';
 import { findInWorkbook } from './core/xlsx/find.js';
 import { describeLoadFailure, describeUnexpectedError } from './loadErrors.js';
 import { packageValidator } from './core/save.js';
@@ -101,6 +101,12 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private readonly editQueues = new WeakMap<OfficeDocument, Promise<void>>();
   /** The generation at which a document was last edited; the stale-formulas banner shows while it matches. */
   private readonly editedAt = new WeakMap<OfficeDocument, number>();
+  /** Last meta built per sheet (see `metaFor`). */
+  private metaCache = new WeakMap<Sheet, XlsxSheetMeta>();
+  /** Panels showing the sheet-unavailable warning (cleared when a sheet then loads). */
+  private readonly unavailableShown = new WeakSet<vscode.WebviewPanel>();
+  /** requestId of the newest find per panel; older finds still running stop at their next yield. */
+  private readonly latestFind = new WeakMap<vscode.WebviewPanel, number>();
 
   protected scripts(): string[] {
     return ['officeCommon.js', 'xlsxGridMath.js', 'xlsxGrid.js', 'xlsxEditor.js', 'xlsxCellEditor.js', 'xlsxStructureUi.js'];
@@ -300,9 +306,12 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
         type: 'notices',
         notices: [...this.allNotices(doc), { severity: 'warning', code: 'sheet-unavailable', message: r.error.message }],
       });
+      this.unavailableShown.add(panel);
       return;
     }
-    this.post(panel, { type: 'xlsxSheetMeta', meta: sheetMeta(m.wb, r.sheet, m.styles, sheetId, version) });
+    this.post(panel, { type: 'xlsxSheetMeta', meta: this.metaFor(m, r.sheet, sheetId, version) });
+    // A sheet that loads replaces the one that could not: drop its warning.
+    if (this.unavailableShown.delete(panel) && !doc.loadError) this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
     this.sendWorkbook(doc, panel, false);   // the sheet's own read-only reason is known now
   }
 
@@ -314,7 +323,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const version = doc.version;
     const r = await this.loadSheet(m, sheetId);
     if ('error' in r) { this.fail(panel, requestId, r.error.code, r.error.message); return; }
-    const meta = sheetMeta(m.wb, r.sheet, m.styles, sheetId, version);
+    const meta = this.metaFor(m, r.sheet, sheetId, version);
     const clamped = clampRange(meta, range);
     if (!clamped) { this.fail(panel, requestId, 'invalid', 'That range is outside the sheet.'); return; }
     const w = cellWindow(m.wb, r.sheet, m.styles, clamped, this.resultsMayBeStale(doc));
@@ -330,7 +339,7 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     if (!m) { this.sendState(doc, panel); return; }
     const r = await this.loadSheet(m, sheetId);
     if ('error' in r) { this.fail(panel, requestId, r.error.code, r.error.message); return; }
-    const meta = sheetMeta(m.wb, r.sheet, m.styles, sheetId, doc.version);
+    const meta = this.metaFor(m, r.sheet, sheetId, doc.version);
     if (!clampRange(meta, [row, col, row, col])) { this.fail(panel, requestId, 'invalid', 'That cell is outside the sheet.'); return; }
     const cell = r.sheet.cell(row, col);
     let input = cell ? editSeed(cell, m.styles, m.wb.date1904) : '';
@@ -377,6 +386,20 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const pkg = doc.pkg;
     if (!m || !pkg) { fail({ code: 'internal', message: "This workbook can't be edited." }); return; }
 
+    try {
+      await this.runEditLoop(doc, panel, msg, m, pkg, fail, stale);
+    } finally {
+      // applyXlsxEdit changes the sheet in place across awaits, before the version moves on (or
+      // without it moving, when the edit fails, is cancelled or is not recorded): a meta cached
+      // meanwhile could describe a state that never had its version. Drop the cache.
+      this.metaCache = new WeakMap();
+    }
+  }
+
+  private async runEditLoop(
+    doc: OfficeDocument, panel: vscode.WebviewPanel, msg: EditMsg, m: Model, pkg: OfficePackage,
+    fail: (error: OfficeError) => void, stale: () => void,
+  ): Promise<void> {
     // The core gives no new-sheet id back: the sheet list before the edit tells which one was added or
     // which neighbour to select after a delete (spec 9.7).
     const sheetsBefore = m.wb.sheets.map((s) => ({ id: s.id, state: s.state }));
@@ -452,7 +475,9 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const m = this.model(doc);
     if (!m) { this.sendState(doc, panel); return; }
     if (sheetId !== null && !m.wb.entry(sheetId)) { this.fail(panel, requestId, 'invalid', 'That sheet does not exist.'); return; }
-    const res = await findInWorkbook(m.wb, query, matchCase, sheetId, m.styles);
+    // A newer find on this panel supersedes this one: stop searching (it still gets its one reply).
+    this.latestFind.set(panel, requestId);
+    const res = await findInWorkbook(m.wb, query, matchCase, sheetId, m.styles, () => this.latestFind.get(panel) !== requestId);
     this.post(panel, { type: 'xlsxFindResult', requestId, matches: res.matches, truncated: res.truncated });
   }
 
@@ -464,6 +489,30 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     if (!m) return;
     const r = await this.loadSheet(m, sheetId);
     if ('error' in r) return;
-    await vscode.env.clipboard.writeText(toTsv(m.wb, r.sheet, m.styles, range));
+    let text: string;
+    try {
+      text = toTsv(m.wb, r.sheet, m.styles, range);
+    } catch (e) {
+      if (!(e instanceof CopyTooLargeError)) throw e;
+      void vscode.window.showWarningMessage(
+        `Nothing was copied: the selection holds ${e.cells.toLocaleString('en-US')} cells and the limit is `
+        + `${TSV_MAX_CELLS.toLocaleString('en-US')}. Select a smaller range, or open the workbook in Excel.`);
+      return;
+    }
+    await vscode.env.clipboard.writeText(text);
+  }
+
+  /**
+   * The sheet's meta for `version` (the version the caller's answer is built for, captured before
+   * any await), computed once per (sheet, version): building it walks every row, the merges and
+   * the notices, far too slow to repeat per cell request (181 ms on a 300k-row sheet).
+   * Every change to a sheet bumps `doc.version`, and a reload makes a new Sheet, so the key is safe.
+   */
+  private metaFor(m: Model, sheet: Sheet, sheetId: number, version: number): XlsxSheetMeta {
+    const hit = this.metaCache.get(sheet);
+    if (hit && hit.version === version && hit.sheetId === sheetId) return hit;
+    const meta = sheetMeta(m.wb, sheet, m.styles, sheetId, version);
+    this.metaCache.set(sheet, meta);
+    return meta;
   }
 }
