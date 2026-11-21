@@ -14,10 +14,11 @@
 //  Edited sheet
 //   sheetData           one `node` change per row that changes: the row replaced by its rewritten text
 //                       (built from the source text, so only what moves or changes differs — G4), or
-//                       removed with the whitespace node before it. Per-attribute changes would cost a
-//                       node-path walk per cell (quadratic on a large sheet); a whole-part change would
-//                       orphan the Sheet's tree. Cost is linear in the rows that change: the rewritten
-//                       rows are re-parsed once (and again on undo/redo). Inside a row: row/@r, c/@r, `spans` removed
+//                       removed with the whitespace node before it; or, when many rows change in a tall
+//                       sheet (PER_ROW_BUDGET), one `node` change replacing sheetData with the same text
+//                       (a per-row change locates its row by a search of the children: quadratic then).
+//                       Per-attribute changes would cost a node-path walk per cell; a whole-part change
+//                       would orphan the Sheet's tree. Inside a row: row/@r, c/@r, `spans` removed
 //                       from every row on column operations, formulas shifted (references to this sheet,
 //                       unqualified or qualified), array / data-table `f/@ref` (moved whole; a range
 //                       that would grow, shrink or split is refused — Tier B), data-table `r1`/`r2`.
@@ -963,6 +964,57 @@ function checkTable(op: Op, name: string, rg: Range, headerRows: number, totalsR
 // ---------------------------------------------------------------------------------------------------
 // Sheets
 
+/**
+ * Above this many (changed rows x rows in sheetData), sheetData is replaced as one node instead of one
+ * change per row: a per-row change locates its row by position (EditBuilder / xml.replaceNode search the
+ * parent's children, and a removal shifts them), so per-row recording is O(changed x rows) — quadratic
+ * when an insert near the top renumbers every row (review S3: 100k rows took 10.7 s, undo 12.9 s).
+ * Below it, a few changed rows in a big sheet re-parse only those rows.
+ */
+const PER_ROW_BUDGET = 20_000_000;
+
+/**
+ * sheetData of the edited sheet. Few changed rows: one `node` change per row that changes (replaced, or
+ * removed with the whitespace node before it). Many: one `node` change replacing sheetData with the same
+ * text those per-row changes would have produced (unchanged rows copied from their serialised source),
+ * so the result, undo and redo are byte-identical either way and the cost is linear in the sheet.
+ */
+function planSheetData(op: Op, b: EditBuilder, part: string, sd: XmlElement, ns: string,
+  rewrites: Map<XmlElement, FormulaRewrite>, dropSpans: boolean, writes: Write[]): void {
+  const plans: Array<[XmlElement, string | null]> = [];
+  for (const node of sd.children) {
+    if (node.type !== 'el' || node.ns !== ns || node.local !== 'row') continue;
+    const text = rewriteRow(op, node, ns, rewrites, dropSpans);
+    if (text !== undefined) plans.push([node, text]);
+  }
+  if (plans.length === 0) return;
+  if (plans.length * sd.children.length <= PER_ROW_BUDGET) {
+    for (const [node, text] of plans) {
+      if (text === null) writes.push(() => removeEl(b, part, node));
+      else writes.push(() => { b.replaceNode(part, node, text, { rootScoped: false }); });
+    }
+    return;
+  }
+  const byRow = new Map(plans);
+  const full = serialize(sd);
+  const pieces: string[] = [startTagOf(full)];
+  let lastWs = false;
+  for (const node of sd.children) {
+    const text = node.type === 'el' ? byRow.get(node) : undefined;
+    if (text === undefined) {
+      pieces.push(node.type === 'el' ? serialize(node) : node.raw);
+      lastWs = isWs(node);
+      continue;
+    }
+    if (text === null) { if (lastWs) pieces.pop(); }   // removed with the whitespace before it (removeEl)
+    else pieces.push(text);
+    lastWs = false;
+  }
+  const inner = pieces.slice(1).join('');
+  const next = withInner(sd, full, pieces[0], inner);
+  writes.push(() => { b.replaceNode(part, sd, next, { rootScoped: false }); });
+}
+
 /** Plan the edited sheet: sheetData plus every Tier A element. */
 function planEditedSheet(op: Op, b: EditBuilder, sheet: Sheet, writes: Write[]): void {
   const root = sheet.doc.root;
@@ -978,14 +1030,7 @@ function planEditedSheet(op: Op, b: EditBuilder, sheet: Sheet, writes: Write[]):
     // spans (column-extent hints) go on column operations that move or delete any cell; a column op
     // beyond every cell leaves them correct and changes nothing.
     const dropSpans = !op.rows && anyCellAtOrAfter(sd, ns, op.at);
-    // One change per row that changes (a replaced row, or a removed one with the whitespace before it):
-    // only those rows are re-parsed, on apply and on undo/redo alike.
-    for (const node of sd.children) {
-      if (node.type !== 'el' || node.ns !== ns || node.local !== 'row') continue;
-      const text = rewriteRow(op, node, ns, rewrites, dropSpans);
-      if (text === null) writes.push(() => removeEl(b, part, node));
-      else if (text !== undefined) writes.push(() => { b.replaceNode(part, node, text, { rootScoped: false }); });
-    }
+    planSheetData(op, b, part, sd, ns, rewrites, dropSpans, writes);
   }
   for (const el of elements(root, ns)) {
     switch (el.local) {

@@ -796,17 +796,77 @@ test('large.xlsx (200,000 cells): insert/delete a row at the top is linear and e
   applyEdit(fx.pkg, invertEdit(del.edit));
   applyEdit(fx.pkg, invertEdit(top.edit));
   assertBytesEqual(fx.pkg.serialize(), orig, 'large: insert, delete, undo both');
-  // Linearity: shifting half the rows costs at most ~ the full shift (an O(n²) shift would be ~4x apart).
-  const fx2 = load('large.xlsx');
-  await fx2.wb.sheet(1);
-  const t2 = performance.now();
-  await structural(fx2.wb, 1, insR(2001));
-  const halfMs = performance.now() - t2;
-  t.diagnostic(`insert row 1: ${top.ms.toFixed(0)} ms (4,000 rows / 200,000 cells renumbered); undo ${undoMs.toFixed(0)} ms; delete row 1: ${del.ms.toFixed(0)} ms; insert at row 2001 (half): ${halfMs.toFixed(0)} ms`);
+  t.diagnostic(`insert row 1: ${top.ms.toFixed(0)} ms (4,000 rows / 200,000 cells renumbered); undo ${undoMs.toFixed(0)} ms; delete row 1: ${del.ms.toFixed(0)} ms`);
   assert.ok(top.ms < 20000, `insert at the top took ${top.ms} ms`);
   writeOut(OUT, 'large-insert-top.xlsx', bytes);
 });
 
+/** basic.xlsx with Sheet1 replaced by `n` rows of two cells (A = row number, B = A*2), rows separated by `sep`. */
+async function tallWorkbook(n, sep = '') {
+  const rows = [];
+  for (let r = 1; r <= n; r++) rows.push(`<row r="${r}"><c r="A${r}"><v>${r}</v></c><c r="B${r}"><f>A${r}*2</f></c></row>`);
+  const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + `<dimension ref="A1:B${n}"/><sheetData>${sep}${rows.join(sep)}${sep}</sheetData></worksheet>`;
+  return patched('basic.xlsx', { [S1]: xml });
+}
+
+// Review S3: per-row changes located each row by a search of sheetData's children, so an insert at the
+// top of a 100k-row sheet took 10.7 s (undo 12.9 s). Many changed rows are now one sheetData change.
+test('S3: insert/delete at the top of a tall sheet is linear (two sizes), and undo/redo are exact', async (t) => {
+  const run = async (n) => {
+    const fx = load('basic.xlsx', await tallWorkbook(n));
+    await fx.wb.sheet(1);
+    const orig = fx.pkg.serialize();
+    const t0 = performance.now();
+    const edit = await structural(fx.wb, 1, insR(1));
+    const applyMs = performance.now() - t0;
+    const t1 = performance.now();
+    outsideUndo(fx.wb, edit, true);
+    const undoMs = performance.now() - t1;
+    assertBytesEqual(fx.pkg.serialize(), orig, `${n}: undo restores the bytes`);
+    outsideUndo(fx.wb, edit, false);
+    return { applyMs, undoMs, changes: edit.changes.length };
+  };
+  await run(5000);   // warm-up
+  const small = await run(25000);
+  const big = await run(100000);
+  t.diagnostic(`insert row 1: 25k rows ${small.applyMs.toFixed(0)} ms (undo ${small.undoMs.toFixed(0)} ms); 100k rows ${big.applyMs.toFixed(0)} ms (undo ${big.undoMs.toFixed(0)} ms); ${big.changes} changes`);
+  // 4x the rows: linear ~4x, quadratic ~16x. Allow noise up to 9x.
+  assert.ok(big.applyMs < 9 * Math.max(small.applyMs, 50), `apply: ${small.applyMs} ms -> ${big.applyMs} ms is not linear`);
+  assert.ok(big.undoMs < 9 * Math.max(small.undoMs, 50), `undo: ${small.undoMs} ms -> ${big.undoMs} ms is not linear`);
+  assert.ok(big.changes < 10, 'the sheetData rows are not recorded one change per row');
+});
+
+test('S3: one sheetData change gives the same bytes as per-row changes (whitespace between rows, deletes)', async () => {
+  // Pretty-printed rows: a deleted row goes with the whitespace before it, as removeEl does per row.
+  const n = 6000;   // 6,000 x 6,000 is over PER_ROW_BUDGET: one sheetData change
+  for (const sep of ['', '\n  ']) {
+    const fx = load('basic.xlsx', await tallWorkbook(n, sep));
+    const { bytes, edit } = await check(fx, 1, delR(2, 5), [S1], `tall-delete${sep ? '-ws' : ''}`);
+    assert.ok(edit.changes.filter((c) => c.part === S1).length < 10, 'one sheetData change');
+    const rows = [];
+    for (let r = 1; r <= n - 5; r++) {
+      const o = r === 1 ? 1 : r + 5;
+      const f = r === 1 ? 'A1*2' : `A${r}*2`;
+      rows.push(`<row r="${r}"><c r="A${r}"><v>${o}</v></c><c r="B${r}"><f>${f}</f></c></row>`);
+    }
+    const want = `<sheetData>${sep}${rows.join(sep)}${sep}</sheetData>`;
+    const got = /<sheetData>[\s\S]*<\/sheetData>/.exec(partText(bytes, S1))[0];
+    assert.strictEqual(got, want);
+    // A few changed rows in a tall sheet stay per-row changes (only those rows re-parsed).
+    const fx2 = load('basic.xlsx', await tallWorkbook(n, sep));
+    const { edit: e2 } = await check(fx2, 1, insR(n - 2), [S1], `tall-insert-near-bottom${sep ? '-ws' : ''}`);
+    assert.ok(e2.changes.filter((c) => c.part === S1 && c.kind === 'node').length === 3, 'three rows replaced one by one');
+  }
+});
+
+
+/** Undo (or redo) from outside, as the provider's stack does it. */
+function outsideUndo(wb, edit, undo) {
+  const e = undo ? invertEdit(edit) : edit;
+  applyEdit(wb.pkg, e);
+  refreshAfterEdit(wb, e);
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Grid (view.cellWindow) after structural ops, undo and redo: view.ts caches hyperlinks, notes and
