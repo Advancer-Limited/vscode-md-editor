@@ -37,6 +37,9 @@ const ok = [
   { type: 'pdfRequestDocument' },
   { type: 'pdfFacts', facts: facts() },
   { type: 'pdfFacts', facts: facts({ signatures: [], pageCount: 0 }) },
+  { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'img-src blob:x' },
+  { type: 'pdfLog', level: 'info', code: 'worker-fallback' },
+  { type: 'pdfLog', level: 'error', code: 'page-render-failed', detail: '' },
   { type: 'pdfSaveAttachment', requestId: 4, name: 'a.txt', bytes: new Uint8Array(3) },
   { type: 'pdfSaveAttachment', requestId: 4, name: '', bytes: Buffer.from('abc') },
   edit({ op: 'addAnnotation', spec: hl() }),
@@ -88,6 +91,14 @@ const bad = {
   'openLink too long': { type: 'openLink', href: big(32768) },
   'setEditMode not bool': { type: 'setEditMode', editMode: 'yes' },
   'flushed negative': { type: 'flushed', flushId: -1 },
+  // pdfLog
+  'log level unknown': { type: 'pdfLog', level: 'debug', code: 'csp-violation' },
+  'log level missing': { type: 'pdfLog', code: 'csp-violation' },
+  'log code unknown': { type: 'pdfLog', level: 'warn', code: 'whatever' },
+  'log code missing': { type: 'pdfLog', level: 'warn' },
+  'log code not string': { type: 'pdfLog', level: 'warn', code: 5 },
+  'log detail not string': { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 5 },
+  'log detail too long': { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'x'.repeat(2001) },
   // pdfFacts
   'facts missing': { type: 'pdfFacts' },
   'facts null': { type: 'pdfFacts', facts: null },
@@ -290,4 +301,14 @@ test('isPdfToHost is true for every accepted type and false for host-bound types
   for (const t of ['init', 'pdfDocument', 'pdfState', 'pdfEditInfo', 'pdfEditResult', 'pdfWrite', 'pdfSaveAttachmentResult', 'nope']) {
     assert.strictEqual(isPdfToHost({ type: t }), false);
   }
+});
+
+test('pdfLog: detail is capped at 2,000, query strings and fragments are stripped, control characters replaced, extra keys dropped', () => {
+  assert.strictEqual(L.MAX_LOG_DETAIL, 2000);
+  assert.ok(parsePdfToHost({ type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'x'.repeat(2000) }));
+  const out = parsePdfToHost({ type: 'pdfLog', level: 'warn', code: 'csp-violation', extra: 1,
+    detail: 'img-src https://h.example/a.png?token=secret#frag\nforged line' });
+  assert.deepStrictEqual(out, { type: 'pdfLog', level: 'warn', code: 'csp-violation',
+    detail: 'img-src https://h.example/a.png forged line' });
+  assert.ok(isPdfToHost({ type: 'pdfLog' }));
 });

@@ -558,3 +558,40 @@ test('load-error table: every failure code has a title and Open externally; size
   assert.strictEqual(host.PDF_VIEWER_TEXT.engineTooOld, 'The PDF viewer needs a newer version of VS Code.');
   assert.ok(Object.isFrozen(host.PDF_VIEWER_TEXT));
 });
+
+// ---------------------------------------------------------------------------------------------
+// pdfLog (spec §5, §12; amendment 2026-11-21)
+
+test('pdfLog: appended to one lazily created output channel, never a toast, disposed with the extension', async () => {
+  const c = { ...ctx, subscriptions: [] };
+  const uri = vscode.Uri.file('/ws/log.pdf');
+  S.writeFile(uri, pdf(), 1000);
+  const provider = new host.PdfEditorProvider(c);
+  const doc = await provider.openCustomDocument(uri, { backupId: undefined, untitledDocumentData: undefined }, token);
+  const panel = makePanel();
+  await provider.resolveCustomEditor(doc, panel, token);
+  assert.strictEqual(S.channels.length, 0, 'nothing is created until a line arrives');
+  panel.send({ type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'img-src https://h.example/a.png?x=1' });
+  panel.send({ type: 'pdfLog', level: 'warn', code: 'worker-fallback' });
+  panel.send({ type: 'pdfLog', level: 'bogus', code: 'worker-fallback' });   // invalid: not logged
+  await tick();
+  assert.strictEqual(S.channels.length, 1);
+  assert.strictEqual(S.channels[0].name, 'VS Code MD Editor');
+  assert.deepStrictEqual(S.channels[0].lines, [
+    '[PdfViewer] [warn] csp-violation (log.pdf): img-src https://h.example/a.png',
+    '[PdfViewer] [warn] worker-fallback (log.pdf)',
+  ]);
+  assert.deepStrictEqual(S.messages, [], 'no toast');
+  assert.ok(c.subscriptions.includes(S.channels[0]));
+});
+
+test('pdfLog: at most 50 lines per document load, a later reload would start afresh', async () => {
+  const { panel } = await open('flood.pdf', pdf());
+  for (let i = 0; i < 80; i++) panel.send({ type: 'pdfLog', level: 'error', code: 'page-render-failed', detail: 'page ' + i });
+  await tick();
+  const lines = S.channels[0].lines;
+  assert.strictEqual(lines.length, host.PDF_LOG_LINE_LIMIT + 1, '50 lines plus one "dropped" note');
+  assert.match(lines[lines.length - 1], /dropped/);
+  assert.strictEqual(lines.filter((l) => l.includes('page 49')).length, 1);
+  assert.strictEqual(lines.filter((l) => l.includes('page 50')).length, 0);
+});

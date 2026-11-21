@@ -951,3 +951,29 @@ test('helpers: normaliseScaleValue and allowedScheme', () => {
   deq(['https://a', 'HTTP://a', 'mailto:a@b', 'javascript:1', 'file:///a', 'a.pdf', '#x', ' https://a'].map((h) => api.allowedScheme(h)),
     ['https', 'http', 'mailto', null, null, null, null, 'https']);
 });
+
+// ---------- pdfLog (spec §5, §12; amendment 2026-11-21) ----------
+
+test('a CSP violation posts one pdfLog with directive and blocked URI minus its query; identical ones are not repeated', () => {
+  const t = setup();
+  t.shell.start();
+  const v = { effectiveDirective: 'img-src', blockedURI: 'https://h.example/a.png?token=secret#f' };
+  t.document.fire('securitypolicyviolation', v);
+  t.document.fire('securitypolicyviolation', v);
+  t.document.fire('securitypolicyviolation', { effectiveDirective: 'font-src', blockedURI: 'data' });
+  const logs = t.posted.filter((m) => m.type === 'pdfLog');
+  deq(logs, [
+    { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'img-src https://h.example/a.png' },
+    { type: 'pdfLog', level: 'warn', code: 'csp-violation', detail: 'font-src data' },
+  ]);
+  eq(t.shell.diagnostics().cspViolations.length, 3, 'the console/diagnostics behaviour is kept');
+});
+
+test('the main-thread worker fallback and a failed page each post a pdfLog (the page once)', async () => {
+  const t = await setup().open({ pdf: makePdf(3), fakeWorker: true });
+  deq(t.posted.filter((m) => m.type === 'pdfLog'), [{ type: 'pdfLog', level: 'warn', code: 'worker-fallback' }]);
+  const div = t.document.createElement('div');
+  for (let i = 0; i < 2; i++) { t.viewer.eventBus.dispatch('pagerendered', { source: { div }, pageNumber: 2, error: new Error('bad stream with text') }); }
+  const pages = t.posted.filter((m) => m.type === 'pdfLog' && m.code === 'page-render-failed');
+  deq(pages, [{ type: 'pdfLog', level: 'warn', code: 'page-render-failed', detail: 'page 2: Error' }]);
+});

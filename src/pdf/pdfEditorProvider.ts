@@ -23,7 +23,7 @@ import { sameFile } from '../office/officeDocument.js';
 import type { OfficeNotice } from '../office/protocol.js';
 import { PdfDocument } from './pdfDocument.js';
 import { parsePdfToHost } from './protocol.js';
-import type { PdfFacts } from './protocol.js';
+import type { PdfFacts, PdfLogCode, PdfLogLevel } from './protocol.js';
 
 /**
  * The PDF webview CSP (spec §12, final after spike S1). Only the webview resource origin appears;
@@ -56,6 +56,15 @@ export function sanitizeAttachmentName(name: string): string {
     n = n.slice(0, MAX_NAME - ext.length) + ext;
   }
   return n || 'attachment';
+}
+
+/** At most this many `pdfLog` lines per document load (generation), so a hostile PDF cannot flood the log. */
+export const PDF_LOG_LINE_LIMIT = 50;
+const OUTPUT_CHANNEL_NAME = 'VS Code MD Editor';
+
+/** One output-channel line for a `pdfLog` message (no document text beyond the sanitised detail). */
+export function formatPdfLogLine(fileName: string, level: PdfLogLevel, code: PdfLogCode, detail: string | undefined): string {
+  return `[PdfViewer] [${level}] ${code} (${fileName})${detail ? ': ' + detail : ''}`;
 }
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
@@ -126,6 +135,24 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
   /** Facts-derived notices per document, for the generation the webview reported them for. */
   private readonly facts = new WeakMap<PdfDocument, { generation: number; notices: OfficeNotice[] }>();
 
+  /** Lazily created on the first `pdfLog`; disposed with the extension through `context.subscriptions`. */
+  private output: vscode.OutputChannel | undefined;
+  /** `pdfLog` lines written per document load (a reload is a new generation). */
+  private readonly logCounts = new WeakMap<PdfDocument, { generation: number; lines: number }>();
+
+  private appendLog(doc: PdfDocument, level: PdfLogLevel, code: PdfLogCode, detail: string | undefined): void {
+    let c = this.logCounts.get(doc);
+    if (!c || c.generation !== doc.generation) { c = { generation: doc.generation, lines: 0 }; this.logCounts.set(doc, c); }
+    if (c.lines >= PDF_LOG_LINE_LIMIT) return;
+    c.lines++;
+    if (!this.output) {
+      this.output = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
+      this.context.subscriptions.push(this.output);
+    }
+    this.output.appendLine(formatPdfLogLine(doc.fileName, level, code, detail));
+    if (c.lines === PDF_LOG_LINE_LIMIT) this.output.appendLine(`[PdfViewer] further log lines for ${doc.fileName} are dropped`);
+  }
+
   protected createDocument(uri: vscode.Uri, backupId: string | undefined): Promise<PdfDocument> {
     return PdfDocument.create(uri, backupId);
   }
@@ -183,6 +210,9 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
         if (doc.loadError) return;
         this.facts.set(doc, { generation: doc.generation, notices: factsNotices(msg.facts) });
         this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
+        return;
+      case 'pdfLog':
+        this.appendLog(doc, msg.level, msg.code, msg.detail);   // never a toast (spec §12)
         return;
       case 'pdfSaveAttachment':
         void this.saveAttachment(doc, panel, msg.requestId, msg.name, msg.bytes)

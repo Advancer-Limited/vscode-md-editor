@@ -246,6 +246,17 @@
     }
     function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
     function post(msg) { vscode.postMessage(msg); }
+    /** `pdfLog` (spec §5, §12): identical reports are sent once per document; URLs lose query and fragment. */
+    const loggedOnce = new Set();
+    function stripUrl(s) { return String(s || '').replace(/[?#].*$/, '').slice(0, 200); }
+    function hostLog(level, code, detail, key) {
+      const k = code + '|' + (key !== undefined ? key : detail || '');
+      if (loggedOnce.has(k)) { return; }
+      if (loggedOnce.size < 200) { loggedOnce.add(k); }
+      const m = { type: 'pdfLog', level, code };
+      if (detail) { m.detail = String(detail).slice(0, 1000); }
+      try { post(m); } catch (e) { /* logging never breaks the viewer */ }
+    }
     function prevent(ev) { if (ev && ev.preventDefault) { ev.preventDefault(); } }
     function warn() {
       if (win.console && win.console.warn) { win.console.warn.apply(win.console, ['[PdfViewer]'].concat([].slice.call(arguments))); }
@@ -1079,6 +1090,7 @@
           note.setAttribute('role', 'note');
           div.appendChild(note);
           warn('page', e.pageNumber, 'failed to render:', e.error && e.error.message);
+          hostLog('warn', 'page-render-failed', 'page ' + e.pageNumber + ': ' + String((e.error && e.error.name) || 'Error').slice(0, 60), 'page ' + e.pageNumber);
         }
       }
       emit('pagerendered', {
@@ -1139,6 +1151,7 @@
       pdfDocument = null;
       pageLabels = null;
       pwUpdate = null;
+      loggedOnce.clear();   // a new document may report the same things again
       if (activeTool) { setTool(null); }
       if (viewer) {
         try { viewer.setDocument(null); } catch (e) { warn('closing the view failed:', e && e.message); }
@@ -1209,7 +1222,9 @@
       candidate = null;
       // Fallback detection: the document must be served by our worker, not a main-thread fake one.
       workerIsOurs = !!(task._worker && task._worker.port === worker) && !win.pdfjsWorker;
-      if (!workerIsOurs) { warn('pdf.js is not using the dedicated worker (main-thread fallback).'); }
+      if (!workerIsOurs) { warn('pdf.js is not using the dedicated worker (main-thread fallback).');
+        hostLog('warn', 'worker-fallback', '', 'w' + generation);
+      }
 
       pdfDocument = pdf;
       phase = 'ready';
@@ -1303,6 +1318,7 @@
           directive: String(e.effectiveDirective || e.violatedDirective || ''),
           blocked: String(e.blockedURI || '').slice(0, 200),
         };
+        hostLog('warn', 'csp-violation', v.directive + ' ' + stripUrl(v.blocked));
         if (violations.length < MAX_VIOLATIONS) { violations.push(v); }
         if (win.console && win.console.error) { win.console.error('[PdfViewer] CSP violation', v.directive, v.blocked); }
         emit('cspviolation', v);

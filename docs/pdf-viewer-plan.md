@@ -176,6 +176,8 @@ Office spike S3 (Ctrl+Z inside a focused text input) applies unchanged and is no
 ### PWP-04 — Protocol (Sonnet)
 `src/pdf/protocol.ts` verbatim from spec §5, with runtime validators `parsePdfToHost(raw)` enforcing `PDF_PROTOCOL_LIMITS`; `src/types.ts` re-export under a "PDF Viewer Types" banner; `tests/pdf/protocol.test.mjs` (≥ 40 table-driven rejections; every shape in §5 accepted).
 
+**Amendment 2026-11-21 (user-approved, view half):** `pdfLog` webview → host message (spec §5, §12): `protocol.ts` validator; the PWP-05 provider appends it to the output channel "VS Code MD Editor" (50 lines per load); the PWP-08 viewer posts it for CSP violations, worker fallback and failed pages.
+
 ### PWP-05 — Host shell (Opus)
 **Why Opus:** lifecycle and CSP are where a mistake is invisible until a gate.
 `src/pdf/core/sniff.ts`, `src/pdf/loadErrors.ts`, `src/pdf/featureFlags.ts`, `src/pdf/pdfDocument.ts` (read-only: bytes, disk stamp, watcher-driven reload when clean; **no parsing**), `src/pdf/pdfEditorProvider.ts` (extends the Office provider base; CSP string of spec §12 as finalised by S1; `pdfRequestDocument` → `pdfDocument`; `pdfFacts` → notices; `pdfSaveAttachment` → save dialog, base name only; link allow-list). Not registered yet.
