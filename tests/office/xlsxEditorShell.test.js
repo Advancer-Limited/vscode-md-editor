@@ -94,6 +94,14 @@ function setup(opts = {}) {
     window: win, document: doc, console,
     setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {},
   };
+  const observers = [];
+  if (opts.observers) {
+    doc.documentElement = new FakeEl('html', doc);
+    sandbox.MutationObserver = class {
+      constructor(fn) { this.fn = fn; this.targets = []; observers.push(this); }
+      observe(target, o) { this.targets.push({ target, filter: o.attributeFilter }); }
+    };
+  }
   vm.createContext(sandbox);
   vm.runInContext(COMMON_SRC, sandbox);
   vm.runInContext(MATH_SRC, sandbox);
@@ -144,7 +152,7 @@ function setup(opts = {}) {
     create(container, o) { g.opts = o; container.appendChild(grid.rootElement); return grid; },
   };
 
-  const t = { win, doc, posted, content, toolbar, banner, app, g, grid, timers, brandBtn };
+  const t = { win, doc, posted, content, toolbar, banner, app, g, grid, timers, brandBtn, observers };
   t.shell = sandbox.window.XlsxEditor.create({
     document: doc, window: win, OfficeCommon: win.OfficeCommon, XlsxGrid: XlsxGridStub, math: sandbox.XlsxGridMath,
     vscode: { postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))) },
@@ -171,6 +179,21 @@ function setup(opts = {}) {
 }
 
 const cell = (r, c, d, k, extra) => Object.assign({ r, c, d, s: 0, k: k || 's' }, extra);
+
+test('N7: the theme observer watches body class/style/data-vscode-theme-* and <html> style (dark -> dark changes)', () => {
+  const t = setup({ observers: true });
+  assert.strictEqual(t.observers.length, 1);
+  const o = t.observers[0];
+  const onBody = o.targets.find((x) => x.target === t.doc.body);
+  const onHtml = o.targets.find((x) => x.target === t.doc.documentElement);
+  assert.ok(onBody && onHtml, 'observes body and html');
+  for (const a of ['class', 'data-vscode-theme-id', 'data-vscode-theme-kind', 'style']) assert.ok(onBody.filter.includes(a), a);
+  assert.ok(onHtml.filter.includes('style'));
+  let refreshed = 0;
+  t.grid.refreshTheme = () => { refreshed++; };
+  o.fn([{ type: 'attributes', attributeName: 'data-vscode-theme-id' }]);
+  assert.strictEqual(refreshed, 1, 'a theme id change (same kind) refreshes the grid colours');
+});
 
 test('start posts ready, passes sheetAppearance to the grid and builds the toolbar', () => {
   const t = setup({ appearance: 'light' });

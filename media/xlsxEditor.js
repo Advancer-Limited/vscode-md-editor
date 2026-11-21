@@ -906,11 +906,18 @@
         onCellClick,
       });
       shell.gridApi = gridApi;
-      // VS Code swaps body classes (vscode-light/-dark/-high-contrast) on a live theme change;
-      // the grid caches resolved theme colours, so tell it to recompute.
+      // VS Code swaps body classes (vscode-light/-dark/-high-contrast) on a live theme change; a change
+      // between two themes of the same kind (dark -> dark) only changes body's data-vscode-theme-*
+      // attributes and the colour variables on <html>'s style (review N7). The grid caches resolved
+      // theme colours, so tell it to recompute on any of them.
       if (typeof MutationObserver === 'function' && document.body) {
-        new MutationObserver(() => { if (gridApi && gridApi.refreshTheme) { gridApi.refreshTheme(); } })
-          .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        const themeObserver = new MutationObserver(() => { if (gridApi && gridApi.refreshTheme) { gridApi.refreshTheme(); } });
+        themeObserver.observe(document.body, {
+          attributes: true, attributeFilter: ['class', 'style', 'data-vscode-theme-id', 'data-vscode-theme-kind', 'data-vscode-theme-name'],
+        });
+        if (document.documentElement) {
+          themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
+        }
       }
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('mousedown', (ev) => {

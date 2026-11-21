@@ -26,7 +26,8 @@ const MIN_COLS = 26;
 
 interface SheetAux {
   links: Map<string, string>;                 // "B2" -> target (single-cell refs)
-  linkRanges: Array<[Range, string]>;         // range refs
+  linkRanges: Array<[Range, string]>;         // range refs, in file order (the first containing range wins)
+  linkIndex: RangeIndex;                      // linkRanges by row block (review N7: linkAt was O(ranges) per cell)
   notes: Map<string, string>;                 // "B2" -> legacy comment text
   locked: Range[];                            // multi-cell array formulas and table header rows
   generation: number;                         // Sheet.structureGeneration it was built at
@@ -77,18 +78,48 @@ function auxFor(wb: Workbook, sheet: Sheet): SheetAux {
   for (const t of sheet.tables()) {
     if (t.headerRows > 0) locked.push([t.ref[0], t.ref[1], t.ref[0] + t.headerRows - 1, t.ref[3]]);
   }
-  const aux = { links, linkRanges, notes: legacyNotes(wb, sheet), locked, generation: sheet.structureGeneration };
+  const aux = { links, linkRanges, linkIndex: indexRanges(linkRanges), notes: legacyNotes(wb, sheet), locked, generation: sheet.structureGeneration };
   auxCache.set(sheet, aux);
   return aux;
 }
 
 const inRange = (rg: Range, r: number, c: number): boolean => r >= rg[0] && r <= rg[2] && c >= rg[1] && c <= rg[3];
 
+/** Rows per bucket of RangeIndex; a range spanning more than WIDE_BLOCKS buckets goes on the `wide` list. */
+const ROW_BLOCK = 64;
+const WIDE_BLOCKS = 64;
+
+/** Positions (into the indexed list) of the ranges touching each block of ROW_BLOCK rows, ascending. */
+interface RangeIndex { blocks: Map<number, number[]>; wide: number[] }
+
+function indexRanges(list: ReadonlyArray<readonly [Range, string]>): RangeIndex {
+  const blocks = new Map<number, number[]>();
+  const wide: number[] = [];
+  list.forEach(([rg], i) => {
+    const b0 = Math.floor(rg[0] / ROW_BLOCK);
+    const b1 = Math.floor(rg[2] / ROW_BLOCK);
+    if (b1 - b0 >= WIDE_BLOCKS) { wide.push(i); return; }
+    for (let b = b0; b <= b1; b++) {
+      const at = blocks.get(b);
+      if (at) at.push(i); else blocks.set(b, [i]);
+    }
+  });
+  return { blocks, wide };
+}
+
 function linkAt(aux: SheetAux, r: number, c: number): string | undefined {
   const hit = aux.links.get(rcToA1(r, c));
   if (hit !== undefined) return hit;
-  for (const [rg, target] of aux.linkRanges) if (inRange(rg, r, c)) return target;
-  return undefined;
+  // The first range in file order that contains (r, c), as a scan of linkRanges would find.
+  let best = -1;
+  for (const list of [aux.linkIndex.blocks.get(Math.floor(r / ROW_BLOCK)), aux.linkIndex.wide]) {
+    if (!list) continue;
+    for (const i of list) {
+      if (best >= 0 && i >= best) break;   // ascending: nothing earlier left in this list
+      if (inRange(aux.linkRanges[i][0], r, c)) { best = i; break; }
+    }
+  }
+  return best >= 0 ? aux.linkRanges[best][1] : undefined;
 }
 
 // ---------------------------------------------------------------------------------------------

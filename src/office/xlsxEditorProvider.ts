@@ -116,8 +116,8 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
   private readonly editedAt = new WeakMap<OfficeDocument, number>();
   /** Last meta built per sheet (see `metaFor`). */
   private metaCache = new WeakMap<Sheet, XlsxSheetMeta>();
-  /** Panels showing the sheet-unavailable warning (cleared when a sheet then loads). */
-  private readonly unavailableShown = new WeakSet<vscode.WebviewPanel>();
+  /** Panels showing the sheet-unavailable warning, with it (cleared when a sheet then loads). */
+  private readonly unavailableShown = new WeakMap<vscode.WebviewPanel, OfficeNotice>();
   /** requestId of the newest find per panel; older finds still running stop at their next yield. */
   private readonly latestFind = new WeakMap<vscode.WebviewPanel, number>();
 
@@ -263,6 +263,11 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     return doc.pkg !== null && this.models.get(doc.pkg)?.fullCalcAtLoad === true;
   }
 
+  protected panelNotices(panel: vscode.WebviewPanel): OfficeNotice[] {
+    const n = this.unavailableShown.get(panel);
+    return n ? [n] : [];
+  }
+
   /** The stale-formulas banner (spec §9.5). */
   protected kindNotices(doc: OfficeDocument): OfficeNotice[] {
     return this.resultsMayBeStale(doc) ? [STALE_FORMULAS_NOTICE] : [];
@@ -323,11 +328,9 @@ export class XlsxEditorProvider extends OfficeEditorProviderBase {
     const r = await this.loadSheet(m, sheetId);
     if ('error' in r) {
       // `xlsxRequestSheetMeta` has no requestId: report through the notices bar.
-      this.post(panel, {
-        type: 'notices',
-        notices: [...this.allNotices(doc), { severity: 'warning', code: 'sheet-unavailable', message: r.error.message }],
-      });
-      this.unavailableShown.add(panel);
+      const notice: OfficeNotice = { severity: 'warning', code: 'sheet-unavailable', message: r.error.message };
+      this.unavailableShown.set(panel, notice);
+      this.post(panel, { type: 'notices', notices: [...this.allNotices(doc), notice] });
       return;
     }
     this.post(panel, { type: 'xlsxSheetMeta', meta: this.metaFor(m, r.sheet, sheetId, version) });
