@@ -1038,8 +1038,29 @@
       linkService.setViewer(viewer);
     }
 
+    /**
+     * §10.2: every page container is a landmark named "Page N of M" (pdf.js leaves the name to its
+     * l10n, which this viewer does not use). Names are numbers only: page labels are document text
+     * and stay out of attributes.
+     */
+    function labelPages() {
+      const count = pageCount();
+      if (!viewer || typeof viewer.getPageView !== 'function') { return; }
+      for (let i = 0; i < count; i++) {
+        const pv = viewer.getPageView(i);
+        const div = pv && pv.div;
+        if (div && typeof div.setAttribute === 'function') {
+          // pdf.js names the page through its l10n id ("Page ⁨N⁩" with bidi marks); ours is plain text.
+          if (typeof div.removeAttribute === 'function') { div.removeAttribute('data-l10n-id'); div.removeAttribute('data-l10n-args'); }
+          div.setAttribute('role', 'region');
+          div.setAttribute('aria-label', 'Page ' + (i + 1) + ' of ' + count);
+        }
+      }
+    }
+
     function wireBus() {
       eventBus.on('pagesinit', () => {
+        labelPages();
         const v = pendingView || {};
         pendingView = null;
         viewer.currentScaleValue = v.scale || defaultScale;

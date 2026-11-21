@@ -101,6 +101,16 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "vscodeMdEditor.pdf",
+        "displayName": "PDF Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "commands": [
@@ -158,6 +168,23 @@
     "configuration": {
       "title": "VS Code MD Editor",
       "properties": {
+        "vscodeMdEditor.pdf.defaultZoom": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "page-width",
+            "page-fit",
+            "actual"
+          ],
+          "enumDescriptions": [
+            "Automatic: page width, but never larger than actual size.",
+            "Fit the page width to the window.",
+            "Fit the whole page in the window.",
+            "Show pages at actual size (100%)."
+          ],
+          "default": "auto",
+          "description": "Initial zoom when a PDF opens in the PDF Viewer. A zoom you set while viewing is remembered for that tab."
+        },
         "vscodeMdEditor.office.sheetAppearance": {
           "type": "string",
           "enum": [

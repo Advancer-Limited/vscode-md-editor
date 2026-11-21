@@ -144,6 +144,11 @@ function makeBundle(log) {
   class PDFFindController { constructor(o) { log.findOptions = o; } }
   const PRESETS = { 'auto': 1.1, 'page-actual': 1, 'page-fit': 0.6, 'page-width': 1.3 };
   class PDFViewer {
+    /** Page containers, created on demand: only their attributes are observable. */
+    getPageView(i) {
+      this.pageViews = this.pageViews || [];
+      return this.pageViews[i] || (this.pageViews[i] = { div: { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } } });
+    }
     constructor(o) {
       log.viewerOptions.push(o);
       log.viewers.push(this);

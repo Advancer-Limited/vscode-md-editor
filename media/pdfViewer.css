@@ -174,6 +174,18 @@ body.vscode-high-contrast-light .pdf-container .pdfViewer .page {
   .pdf-container, .pdf-sidebar-panel { scroll-behavior: auto !important; }
 }
 
+/* High contrast: selection and find matches use the theme's own tokens, on top of the white page. */
+body.vscode-high-contrast .pdf-container .textLayer ::selection,
+body.vscode-high-contrast-light .pdf-container .textLayer ::selection {
+  background: var(--vscode-editor-selectionBackground, Highlight);
+  color: var(--vscode-editor-selectionForeground, HighlightText);
+}
+body.vscode-high-contrast .pdf-container .textLayer .highlight,
+body.vscode-high-contrast-light .pdf-container .textLayer .highlight {
+  outline: 1px solid var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
+}
+.pdf-container .pdfViewer .page:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+
 @media (forced-colors: active) {
   .pdf-container .pdfViewer .page { box-shadow: none; outline: 1px solid CanvasText; }
   .pdf-sidebar, .pdf-sidebar-tabs { border-color: CanvasText; }

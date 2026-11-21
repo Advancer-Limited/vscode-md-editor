@@ -433,6 +433,30 @@ test('pdfFacts -> notices (display only); a reload drops them until the webview 
   assert.deepStrictEqual(panel.last('init').notices, []);
 });
 
+test('defaultZoom setting is emitted as data-default-zoom (actual -> page-actual; junk -> auto)', async () => {
+  const zoomOf = async (v) => {
+    if (v === undefined) delete S.config['vscodeMdEditor.pdf.defaultZoom']; else S.config['vscodeMdEditor.pdf.defaultZoom'] = v;
+    const { panel } = await open('z.pdf', pdf());
+    return /data-default-zoom="([^"]*)"/.exec(panel.webview.html)[1];
+  };
+  assert.strictEqual(await zoomOf(undefined), 'auto');
+  assert.strictEqual(await zoomOf('page-width'), 'page-width');
+  assert.strictEqual(await zoomOf('page-fit'), 'page-fit');
+  assert.strictEqual(await zoomOf('actual'), 'page-actual');
+  assert.strictEqual(await zoomOf('"><script>'), 'auto');
+  delete S.config['vscodeMdEditor.pdf.defaultZoom'];
+});
+
+test('more than 20,000 pages: view-only reason and a notice (webview fact applied by the host)', async () => {
+  const { doc, panel } = await open('many.pdf', pdf());
+  await panel.send({ type: 'ready' });
+  await panel.send({ type: 'pdfFacts', facts: { ...FACTS, pageCount: 20001 } });
+  assert.strictEqual(doc.readOnlyReason, 'too-large');
+  assert.ok(panel.last('notices').notices.some((n) => n.code === 'pdf-many-pages'));
+  await panel.send({ type: 'pdfFacts', facts: { ...FACTS, pageCount: 20000 } });
+  assert.ok(!panel.last('notices').notices.some((n) => n.code === 'pdf-many-pages'));
+});
+
 test('openLink: the shared allow-list (http, https, mailto); javascript:/file: dropped with a notice', async () => {
   const { panel } = await open('a.pdf', pdf());
   await panel.send({ type: 'ready' });

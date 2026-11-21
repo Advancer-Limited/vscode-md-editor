@@ -280,6 +280,13 @@ test('the default zoom can be given by the host markup', async () => {
   eq(bad.viewer.currentScaleValue, 'auto');
 });
 
+test('every page container is a region named "Page N of M" (numbers only, never page labels)', async () => {
+  const t = await setup().open({ pdf: makePdf(3, { getPageLabels: async () => ['<b>x</b>', 'ii', 'iii'] }) });
+  const attrs = [0, 1, 2].map((i) => t.viewer.getPageView(i).div.attrs);
+  deq(attrs.map((a) => a.role), ['region', 'region', 'region']);
+  deq(attrs.map((a) => a['aria-label']), ['Page 1 of 3', 'Page 2 of 3', 'Page 3 of 3']);
+});
+
 test('page box: number or label, bad input, previous/next, and labels are only ever text', async () => {
   const labels = ['i', 'ii', '<img src=x onerror=alert(1)>', '1', '2'];
   const t = await setup().open({ pdf: makePdf(5, { getPageLabels: async () => labels }) });

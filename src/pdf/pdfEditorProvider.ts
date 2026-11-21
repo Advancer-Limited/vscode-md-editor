@@ -10,7 +10,7 @@
 //   pdfSaveAttachment  -> Save dialog, base name only -> pdfSaveAttachmentResult
 //   pdfEdit            -> pdfEditResult ok:false 'read-only' (until Phase 2)
 //
-// NOT REGISTERED: package.json and extension.ts are untouched until PWP-11 calls `register`.
+// Registered by extension.ts (PWP-11) and contributed as the default editor for *.pdf in package.json.
 //
 // Bytes are sent only on request. The webview asks after every `init` (first load, Retry, reload
 // on an external change) once its engine check passes, so an engine that is too old never receives
@@ -22,6 +22,7 @@ import { OfficeEditorProviderBase } from '../office/officeEditorProviderBase.js'
 import { sameFile } from '../office/officeDocument.js';
 import type { OfficeNotice } from '../office/protocol.js';
 import { PdfDocument } from './pdfDocument.js';
+import { PDF_LIMITS } from './core/limits.js';
 import { parsePdfToHost } from './protocol.js';
 import type { PdfFacts, PdfLogCode, PdfLogLevel } from './protocol.js';
 
@@ -67,6 +68,9 @@ export function formatPdfLogLine(fileName: string, level: PdfLogLevel, code: Pdf
   return `[PdfViewer] [${level}] ${code} (${fileName})${detail ? ': ' + detail : ''}`;
 }
 
+const DEFAULT_ZOOMS = ['auto', 'page-width', 'page-fit', 'actual'] as const;
+type PdfDefaultZoom = typeof DEFAULT_ZOOMS[number];
+
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 /** §7.6 notices from the webview's facts. Display only: nothing here decides what the host does. */
@@ -96,6 +100,12 @@ export function factsNotices(facts: PdfFacts): OfficeNotice[] {
       message: "This PDF has no text layer (it may be a scan), so its text can't be selected or found.",
     });
   }
+  if (facts.pageCount > PDF_LIMITS.maxEditPages) {
+    out.push({
+      severity: 'info', code: 'pdf-many-pages',
+      message: `This PDF has ${facts.pageCount.toLocaleString('en-US')} pages, more than can be changed here. It is shown view-only.`,
+    });
+  }
   if (facts.attachmentCount > 0) {
     out.push({
       severity: 'info', code: 'pdf-attachments',
@@ -121,7 +131,7 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
     supportsMultipleEditorsPerDocument: false,
   } as const;
 
-  /** For PWP-11. Cheap: nothing is read until a .pdf is opened. Not called anywhere yet. */
+  /** Cheap: nothing is read until a .pdf is opened. Called from extension.ts. */
   public static register(context: vscode.ExtensionContext): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
       PdfEditorProvider.viewType,
@@ -166,12 +176,18 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
     return ['pdfjs/pdf_viewer.css', 'officeCommon.css', 'pdfViewer.css', 'pdfSidebar.css', 'pdfFind.css'];
   }
 
+  /** `vscodeMdEditor.pdf.defaultZoom` (spec §4.1): one of four literals, anything else is "auto". */
+  private defaultZoom(): PdfDefaultZoom {
+    const v = vscode.workspace.getConfiguration('vscodeMdEditor.pdf').get<string>('defaultZoom');
+    return (DEFAULT_ZOOMS as readonly string[]).includes(v ?? '') ? (v as PdfDefaultZoom) : 'auto';
+  }
+
   protected bodyHtml(webview: vscode.Webview): string {
     // Static markup. `data-pdfjs-base` is the folder of the worker and pdf.js data files (cMaps,
     // standard fonts, wasm, ICC), ending in '/'; `data-cache-bust` is appended as `?v=` to the
     // worker URL. Neither is document-derived.
     const base = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'pdfjs')).toString();
-    return /* html */ `  <div id="office-app" class="office-app" data-pdfjs-base="${escapeAttr(base.endsWith('/') ? base : base + '/')}" data-cache-bust="${Date.now()}">
+    return /* html */ `  <div id="office-app" class="office-app" data-pdfjs-base="${escapeAttr(base.endsWith('/') ? base : base + '/')}" data-cache-bust="${Date.now()}" data-default-zoom="${this.defaultZoom() === 'actual' ? 'page-actual' : this.defaultZoom()}">
     <div id="office-toolbar" class="office-toolbar"></div>
     <div id="office-banner" class="office-banner"></div>
     <div id="office-content" class="office-content pdf-backdrop"></div>
@@ -209,6 +225,8 @@ export class PdfEditorProvider extends OfficeEditorProviderBase<PdfDocument> {
       case 'pdfFacts':
         if (doc.loadError) return;
         this.facts.set(doc, { generation: doc.generation, notices: factsNotices(msg.facts) });
+        // The page-count half of the view-only rule (§9.3) is only known to the webview; it can only tighten.
+        if (msg.facts.pageCount > PDF_LIMITS.maxEditPages && doc.readOnlyReason === null) doc.readOnlyReason = 'too-large';
         this.post(panel, { type: 'notices', notices: this.allNotices(doc) });
         return;
       case 'pdfLog':

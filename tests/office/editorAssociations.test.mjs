@@ -110,8 +110,10 @@ test('command: cancelling either step writes nothing; workspace override is repo
 
 test('PDF row is offered only once vscodeMdEditor.pdf is a contributed custom editor', () => {
   const have = pkg.contributes.customEditors.map((e) => e.viewType);
-  const pdfContributed = have.includes('vscodeMdEditor.pdf');
-  assert.strictEqual(m.availableTypes(have).some((t) => t.pattern === '*.pdf'), pdfContributed);
+  assert.ok(have.includes('vscodeMdEditor.pdf'), 'PWP-11 contributes the PDF viewer');
+  assert.ok(m.availableTypes(have).some((t) => t.pattern === '*.pdf'), 'so the command lists *.pdf');
+  const pdfEditor = pkg.contributes.customEditors.find((e) => e.viewType === 'vscodeMdEditor.pdf');
+  assert.deepStrictEqual([pdfEditor.displayName, pdfEditor.priority, pdfEditor.selector], ['PDF Viewer', 'default', [{ filenamePattern: '*.pdf' }]]);
   assert.deepStrictEqual(m.availableTypes(['vscodeMdEditor.docx']).map((t) => t.pattern), ['*.docx']);
   const withPdf = m.availableTypes([...have, 'vscodeMdEditor.pdf']).find((t) => t.pattern === '*.pdf');
   assert.deepStrictEqual(withPdf && [withPdf.viewType, withPdf.label], ['vscodeMdEditor.pdf', 'PDF Viewer']);
