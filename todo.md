@@ -351,7 +351,7 @@
   - [ ] WP-26 Docx styles + numbering, read side
   - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
   - [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
-  - [ ] WP-29 Paragraph structure ops
+  - [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
   - [ ] WP-30 Styles and lists, write side
   - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
   - [ ] WP-32 Island DOM <-> segments
@@ -377,7 +377,7 @@
 - [x] WP-32 Island DOM <-> segments (`media/docxIsland.js`, 60 tests)
 - [x] WP-27 Render copy + DOM mapping (`renderCopy.ts`, `media/docxMap.js`, 24 tests)
 - [x] WP-28 Paragraph writer (`paragraphWriter.ts`, 29 tests)
-- [ ] WP-29 Paragraph structure ops
+- [x] WP-29 Paragraph structure ops (`ops.ts`: split/merge/insert/remove, `blockInfos`; 29 tests; 33 outputs open in real Word)
 - [ ] WP-30 Styles and lists, write side
 - [x] WP-31 Docx validators + protection detection (`validate.ts`, `protection.ts`, 21 tests)
 - [ ] WP-33 Docx provider edit path
@@ -388,3 +388,4 @@
 - [ ] WP-29/33/34: call `model.refresh()` after finishing the builder; use `BuildOptions.omit` for split halves; rebuild the island when `commitParagraph` returns `changed:false, reinsertedAtoms:true`
 - [ ] Make `prettyDocx()` (tests/office/_roundtrip.mjs) a package Word opens, or stop writing `pretty-edit.docx` to tests/.out for the Word check
 
+- [ ] Fold the WP-29 deviations (log.md 2026-11-21) into spec §8.5/§6.3
