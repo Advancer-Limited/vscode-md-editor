@@ -5,6 +5,7 @@ import { GltfEditorProvider } from './gltfEditorProvider.js';
 import { DocxEditorProvider } from './office/docxEditorProvider.js';
 import { XlsxEditorProvider } from './office/xlsxEditorProvider.js';
 import { PdfEditorProvider } from './pdf/pdfEditorProvider.js';
+import { OfficeDocument, envSaveHooks } from './office/officeDocument.js';
 import { CHOOSE_DOCUMENT_EDITORS_COMMAND, chooseDocumentEditors } from './office/chooseDocumentEditors.js';
 import { isMarkdownFile } from './utils.js';
 import { LanguageToolService } from './languageToolService.js';
@@ -79,6 +80,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // OFFICE_FLAGS.docxEdit, on since 1.6). Independent of
   // the editors above, and cheap here: nothing is read until a .docx is opened.
   context.subscriptions.push(DocxEditorProvider.register(context));
+  // Gate R2's manual verification-failure hook (VSMD_OFFICE_CORRUPT_SAVE): Development/Test mode only.
+  OfficeDocument.saveHooks = envSaveHooks(process.env, context.extensionMode);
 
   // 2e. Register the Excel workbook viewer/editor (docs/office-viewers-spec.md §4.1; editing per
   // OFFICE_FLAGS.xlsxEdit / xlsxStructure, on since 1.6). Same rules as 2d.

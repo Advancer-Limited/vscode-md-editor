@@ -182,12 +182,20 @@ export interface SaveTestHooks {
   corrupt?(bytes: Uint8Array): Uint8Array;
 }
 
+/** The extension modes in which `envSaveHooks` may enable its hook: an Extension Development Host or a test run. */
+const SAVE_HOOK_MODES: readonly vscode.ExtensionMode[] = [2 /* Development */, 3 /* Test */];
+
 /**
  * `VSMD_OFFICE_CORRUPT_SAVE=1` in the Extension Development Host's environment flips one byte of
  * every serialised output, so the verification-failure UX can be checked by hand (Gate R2). It can
- * only make saves fail, never write anything.
+ * only make saves fail, never write anything. Ignored unless the extension runs in Development or
+ * Test mode (`ExtensionContext.extensionMode`): an installed extension never reads it.
  */
-export function envSaveHooks(env: Record<string, string | undefined> | undefined): SaveTestHooks | undefined {
+export function envSaveHooks(
+  env: Record<string, string | undefined> | undefined,
+  mode: vscode.ExtensionMode | undefined,
+): SaveTestHooks | undefined {
+  if (mode === undefined || !SAVE_HOOK_MODES.includes(mode)) return undefined;
   if (env?.VSMD_OFFICE_CORRUPT_SAVE !== '1') return undefined;
   return {
     corrupt(bytes: Uint8Array): Uint8Array {
@@ -327,8 +335,11 @@ export class OfficeDocument implements vscode.CustomDocument {
   static diskCheckDelayMs = 300;
   /** How long a save/backup waits for `flushed` before going on with the committed state (§6.5). */
   static flushTimeoutMs = 1500;
-  /** See SaveTestHooks. Tests assign it; the environment variable sets it for manual checks. */
-  static saveHooks: SaveTestHooks | undefined = envSaveHooks(typeof process === 'undefined' ? undefined : process.env);
+  /**
+   * See SaveTestHooks. Tests assign it; `activate` sets it from the environment variable for manual
+   * checks, in Development/Test mode only (`envSaveHooks`).
+   */
+  static saveHooks: SaveTestHooks | undefined = undefined;
   /**
    * Quiet period before a backup serialises (Gate R2 F5 a): an edit landing meanwhile restarts it,
    * so a burst of typing costs one serialisation. VS Code cancels a superseded backup itself. Tests set 0.

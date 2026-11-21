@@ -834,13 +834,20 @@ test('beforeFirstSerialize: in the written bytes only, never in the document or 
 
 // ---------------------------------------------------------------------------------------------
 
-test('envSaveHooks: only VSMD_OFFICE_CORRUPT_SAVE=1 enables the manual verification-failure hook', () => {
-  assert.strictEqual(host.envSaveHooks(undefined), undefined);
-  assert.strictEqual(host.envSaveHooks({}), undefined);
-  assert.strictEqual(host.envSaveHooks({ VSMD_OFFICE_CORRUPT_SAVE: 'true' }), undefined);
-  const h = host.envSaveHooks({ VSMD_OFFICE_CORRUPT_SAVE: '1' });
-  const b = new Uint8Array([1, 2, 3]);
-  assert.deepStrictEqual([...h.corrupt(b)], [1, 0xfd, 3]);
+test('envSaveHooks: only VSMD_OFFICE_CORRUPT_SAVE=1 in Development or Test mode enables the manual verification-failure hook', () => {
+  const PRODUCTION = 1, DEVELOPMENT = 2, TEST = 3;   // vscode.ExtensionMode
+  const on = { VSMD_OFFICE_CORRUPT_SAVE: '1' };
+  for (const mode of [DEVELOPMENT, TEST]) {
+    assert.strictEqual(host.envSaveHooks(undefined, mode), undefined);
+    assert.strictEqual(host.envSaveHooks({}, mode), undefined);
+    assert.strictEqual(host.envSaveHooks({ VSMD_OFFICE_CORRUPT_SAVE: 'true' }, mode), undefined);
+    const h = host.envSaveHooks(on, mode);
+    const b = new Uint8Array([1, 2, 3]);
+    assert.deepStrictEqual([...h.corrupt(b)], [1, 0xfd, 3]);
+  }
+  // An installed extension (Production) never honours it, nor does a caller that does not know the mode.
+  assert.strictEqual(host.envSaveHooks(on, PRODUCTION), undefined);
+  assert.strictEqual(host.envSaveHooks(on, undefined), undefined);
 });
 
 // ---------------------------------------------------------------------------------------------
